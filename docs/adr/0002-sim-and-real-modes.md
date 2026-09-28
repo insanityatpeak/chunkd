@@ -25,7 +25,7 @@ The sim build must stay browser-sized. Protobuf services are generated into a se
 
 ## Consequences
 
-- A failing sim run prints its seed and replays identically. `TestSameSeedSameStateSequence` checks 400 consecutive states for equality across two runs.
+- A sim run is a pure function of its seed and step sequence. `TestSameSeedSameStateSequence` checks 400 consecutive states for equality across two runs; chaos tests in later phases will print the seed on failure.
 - Anything nondeterministic must enter through an interface. Map iteration is a hidden source: sim stores and trackers sort before returning.
 - Real mode needs its own tests for what the sim cannot model: gRPC framing, address learning, process restarts. `grpcnet.TestHeartbeatOverGRPC` runs the same heartbeat core over real sockets.
 - If a dependency cannot build for `js/wasm` (hashicorp/raft's TCP transport is the expected first case), it stays behind its interface in `internal/real`, the sim gets its own implementation, and the choice is recorded in an ADR.

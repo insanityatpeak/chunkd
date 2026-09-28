@@ -16,7 +16,7 @@ chunkd is a metadata service, storage nodes and a gateway that talk over RPC, st
 | Raft | hashicorp/raft (Consul, Nomad), etcd/raft | openraft, raft-rs (TiKV) | Apache Ratis, JRaft |
 | Linearizability checking | porcupine | stateright, custom | Jepsen/Knossos via Clojure |
 | WASM | `GOOS=js GOARCH=wasm` in the standard toolchain; 7-8 MiB binary here | Best-in-class size (hundreds of KiB) | TeaVM/CheerpJ; not practical for this code |
-| Debuggability | pprof, race detector, trace, delve built in | Good; async stacks harder to read | Excellent (JFR, JMX) |
+| Debuggability | pprof, race detector, execution tracer; Delve debugger | Good; async stacks harder to read | Excellent (JFR, JMX) |
 | Performance | GC pauses in the sub-ms range; fine for an I/O-bound store | No GC; highest ceiling | JIT; high throughput, larger memory |
 | Build speed | Seconds | Minutes for a clean build | Tens of seconds |
 
