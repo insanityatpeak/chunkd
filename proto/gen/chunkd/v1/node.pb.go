@@ -416,6 +416,146 @@ func (x *GetChunkResponse) GetData() []byte {
 	return nil
 }
 
+// ReplicateChunk tells a node to pull a chunk from source and store it
+// (repair). Completion is the node's incremental block report.
+type ReplicateChunk struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	CopyId        uint64                 `protobuf:"varint,1,opt,name=copy_id,json=copyId,proto3" json:"copy_id,omitempty"`
+	ChunkId       []byte                 `protobuf:"bytes,2,opt,name=chunk_id,json=chunkId,proto3" json:"chunk_id,omitempty"`
+	Source        string                 `protobuf:"bytes,3,opt,name=source,proto3" json:"source,omitempty"`
+	SourceAddr    string                 `protobuf:"bytes,4,opt,name=source_addr,json=sourceAddr,proto3" json:"source_addr,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *ReplicateChunk) Reset() {
+	*x = ReplicateChunk{}
+	mi := &file_chunkd_v1_node_proto_msgTypes[7]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *ReplicateChunk) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*ReplicateChunk) ProtoMessage() {}
+
+func (x *ReplicateChunk) ProtoReflect() protoreflect.Message {
+	mi := &file_chunkd_v1_node_proto_msgTypes[7]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use ReplicateChunk.ProtoReflect.Descriptor instead.
+func (*ReplicateChunk) Descriptor() ([]byte, []int) {
+	return file_chunkd_v1_node_proto_rawDescGZIP(), []int{7}
+}
+
+func (x *ReplicateChunk) GetCopyId() uint64 {
+	if x != nil {
+		return x.CopyId
+	}
+	return 0
+}
+
+func (x *ReplicateChunk) GetChunkId() []byte {
+	if x != nil {
+		return x.ChunkId
+	}
+	return nil
+}
+
+func (x *ReplicateChunk) GetSource() string {
+	if x != nil {
+		return x.Source
+	}
+	return ""
+}
+
+func (x *ReplicateChunk) GetSourceAddr() string {
+	if x != nil {
+		return x.SourceAddr
+	}
+	return ""
+}
+
+// ReplicateFailed tells the metadata server a copy will not complete, so
+// its throttle slots free up before the copy timeout.
+type ReplicateFailed struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	CopyId        uint64                 `protobuf:"varint,1,opt,name=copy_id,json=copyId,proto3" json:"copy_id,omitempty"`
+	ChunkId       []byte                 `protobuf:"bytes,2,opt,name=chunk_id,json=chunkId,proto3" json:"chunk_id,omitempty"`
+	Node          string                 `protobuf:"bytes,3,opt,name=node,proto3" json:"node,omitempty"`
+	Error         string                 `protobuf:"bytes,4,opt,name=error,proto3" json:"error,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *ReplicateFailed) Reset() {
+	*x = ReplicateFailed{}
+	mi := &file_chunkd_v1_node_proto_msgTypes[8]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *ReplicateFailed) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*ReplicateFailed) ProtoMessage() {}
+
+func (x *ReplicateFailed) ProtoReflect() protoreflect.Message {
+	mi := &file_chunkd_v1_node_proto_msgTypes[8]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use ReplicateFailed.ProtoReflect.Descriptor instead.
+func (*ReplicateFailed) Descriptor() ([]byte, []int) {
+	return file_chunkd_v1_node_proto_rawDescGZIP(), []int{8}
+}
+
+func (x *ReplicateFailed) GetCopyId() uint64 {
+	if x != nil {
+		return x.CopyId
+	}
+	return 0
+}
+
+func (x *ReplicateFailed) GetChunkId() []byte {
+	if x != nil {
+		return x.ChunkId
+	}
+	return nil
+}
+
+func (x *ReplicateFailed) GetNode() string {
+	if x != nil {
+		return x.Node
+	}
+	return ""
+}
+
+func (x *ReplicateFailed) GetError() string {
+	if x != nil {
+		return x.Error
+	}
+	return ""
+}
+
 var File_chunkd_v1_node_proto protoreflect.FileDescriptor
 
 const file_chunkd_v1_node_proto_rawDesc = "" +
@@ -446,7 +586,18 @@ const file_chunkd_v1_node_proto_rawDesc = "" +
 	"\x0fGetChunkRequest\x12\x0e\n" +
 	"\x02id\x18\x01 \x01(\fR\x02id\"&\n" +
 	"\x10GetChunkResponse\x12\x12\n" +
-	"\x04data\x18\x01 \x01(\fR\x04dataB?Z=github.com/insanityatpeak/chunkd/proto/gen/chunkd/v1;chunkdv1b\x06proto3"
+	"\x04data\x18\x01 \x01(\fR\x04data\"}\n" +
+	"\x0eReplicateChunk\x12\x17\n" +
+	"\acopy_id\x18\x01 \x01(\x04R\x06copyId\x12\x19\n" +
+	"\bchunk_id\x18\x02 \x01(\fR\achunkId\x12\x16\n" +
+	"\x06source\x18\x03 \x01(\tR\x06source\x12\x1f\n" +
+	"\vsource_addr\x18\x04 \x01(\tR\n" +
+	"sourceAddr\"o\n" +
+	"\x0fReplicateFailed\x12\x17\n" +
+	"\acopy_id\x18\x01 \x01(\x04R\x06copyId\x12\x19\n" +
+	"\bchunk_id\x18\x02 \x01(\fR\achunkId\x12\x12\n" +
+	"\x04node\x18\x03 \x01(\tR\x04node\x12\x14\n" +
+	"\x05error\x18\x04 \x01(\tR\x05errorB?Z=github.com/insanityatpeak/chunkd/proto/gen/chunkd/v1;chunkdv1b\x06proto3"
 
 var (
 	file_chunkd_v1_node_proto_rawDescOnce sync.Once
@@ -460,7 +611,7 @@ func file_chunkd_v1_node_proto_rawDescGZIP() []byte {
 	return file_chunkd_v1_node_proto_rawDescData
 }
 
-var file_chunkd_v1_node_proto_msgTypes = make([]protoimpl.MessageInfo, 7)
+var file_chunkd_v1_node_proto_msgTypes = make([]protoimpl.MessageInfo, 9)
 var file_chunkd_v1_node_proto_goTypes = []any{
 	(*Heartbeat)(nil),        // 0: chunkd.v1.Heartbeat
 	(*HeartbeatAck)(nil),     // 1: chunkd.v1.HeartbeatAck
@@ -469,6 +620,8 @@ var file_chunkd_v1_node_proto_goTypes = []any{
 	(*PutChunkResponse)(nil), // 4: chunkd.v1.PutChunkResponse
 	(*GetChunkRequest)(nil),  // 5: chunkd.v1.GetChunkRequest
 	(*GetChunkResponse)(nil), // 6: chunkd.v1.GetChunkResponse
+	(*ReplicateChunk)(nil),   // 7: chunkd.v1.ReplicateChunk
+	(*ReplicateFailed)(nil),  // 8: chunkd.v1.ReplicateFailed
 }
 var file_chunkd_v1_node_proto_depIdxs = []int32{
 	0, // [0:0] is the sub-list for method output_type
@@ -489,7 +642,7 @@ func file_chunkd_v1_node_proto_init() {
 			GoPackagePath: reflect.TypeOf(x{}).PkgPath(),
 			RawDescriptor: unsafe.Slice(unsafe.StringData(file_chunkd_v1_node_proto_rawDesc), len(file_chunkd_v1_node_proto_rawDesc)),
 			NumEnums:      0,
-			NumMessages:   7,
+			NumMessages:   9,
 			NumExtensions: 0,
 			NumServices:   0,
 		},

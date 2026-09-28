@@ -106,6 +106,13 @@ type Caller interface {
 	Hedge(ctx context.Context, calls []Call, after time.Duration, accept func(i int, r Result) bool) HedgeResult
 }
 
+// AsyncCaller issues requests from inside an event loop, where blocking
+// Caller methods are forbidden. cb runs exactly once, on the owner's loop,
+// with the response or a CodeUnavailable error after the caller's timeout.
+type AsyncCaller interface {
+	Go(c Call, cb func(Result))
+}
+
 // Timer is a pending callback scheduled on a Clock.
 type Timer interface {
 	// Stop cancels the timer and reports whether it had not yet fired.

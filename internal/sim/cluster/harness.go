@@ -11,6 +11,7 @@ import (
 	"maps"
 	"math/rand/v2"
 	"slices"
+	"time"
 
 	"github.com/insanityatpeak/chunkd/internal/client"
 	"github.com/insanityatpeak/chunkd/internal/iface"
@@ -117,4 +118,71 @@ func (c *Cluster) AssertInvariants() error {
 		return fmt.Errorf("seed %d at t=%v: %w", c.seed, iface.Instant(now), err)
 	}
 	return nil
+}
+
+// UnderReplicated counts chunks of live files with fewer than Replicas
+// reported copies on alive nodes.
+func (c *Cluster) UnderReplicated() int {
+	n := 0
+	cl := c.meta.Cluster()
+	seen := map[iface.ChunkID]bool{}
+	for _, e := range c.meta.State().List("/") {
+		for _, id := range e.Chunks {
+			if seen[id] {
+				continue
+			}
+			seen[id] = true
+			live := 0
+			for _, nd := range cl.Locations(id) {
+				if cl.Alive(nd) {
+					live++
+				}
+			}
+			if live < c.cfg.Meta.Replicas {
+				n++
+			}
+		}
+	}
+	return n
+}
+
+// BytesOn sums the sizes of live files' chunks reported on node id.
+func (c *Cluster) BytesOn(id iface.NodeID) int64 {
+	var total int64
+	seen := map[iface.ChunkID]bool{}
+	for _, e := range c.meta.State().List("/") {
+		for _, ch := range e.Chunks {
+			if seen[ch] || !slices.Contains(c.meta.Cluster().Locations(ch), id) {
+				continue
+			}
+			seen[ch] = true
+			ci, _ := c.meta.State().Chunk(ch)
+			total += ci.Size
+		}
+	}
+	return total
+}
+
+// RepairBound is the documented time to restore RF after a node holding
+// bytes dies (ADR-0011):
+//
+//	dead timeout + repair delay + bytes / throttle rate
+//	  + one copy timeout (a lost command or completion report)
+//	  + 5 s (heartbeat phase, detector tick, copy latency)
+func (c *Cluster) RepairBound(bytes int64) time.Duration {
+	r := c.cfg.Meta.Repair
+	return c.cfg.Meta.Detector.DeadAfter + r.Delay + time.Duration(bytes*int64(time.Second)/r.BytesPerSec) + r.CopyTimeout + 5*time.Second
+}
+
+// Settle ticks until no chunk is under-replicated or limit passes, and
+// reports how long it took.
+func (c *Cluster) Settle(limit time.Duration) (time.Duration, bool) {
+	start := c.clock.Now()
+	for c.clock.Now().Sub(start) <= limit {
+		if c.UnderReplicated() == 0 {
+			return c.clock.Now().Sub(start), true
+		}
+		c.Tick(250 * time.Millisecond)
+	}
+	return c.clock.Now().Sub(start), false
 }

@@ -12,6 +12,7 @@ import (
 	"github.com/insanityatpeak/chunkd/internal/core/node"
 	"github.com/insanityatpeak/chunkd/internal/iface"
 	"github.com/insanityatpeak/chunkd/internal/real/blockstore"
+	"github.com/insanityatpeak/chunkd/internal/real/grpcnet"
 	"github.com/insanityatpeak/chunkd/internal/real/server"
 )
 
@@ -39,7 +40,10 @@ func main() {
 		Peers: map[iface.NodeID]string{cfg.Meta: *metaAddr},
 	}
 	err = server.Run("node", sc, func(p *server.Process) error {
-		n := node.New(node.Deps{Clock: p.Clock, Net: p.Net, Store: store, Rand: p.Rand, Log: p.Log}, cfg)
+		// Repair pulls chunks from peers: a 4 MiB stream per copy.
+		// Lives as long as the process.
+		peers := grpcnet.NewCaller(nil, 30*time.Second)
+		n := node.New(node.Deps{Clock: p.Clock, Net: p.Net, Async: peers.Async(p.Loop), Store: store, Rand: p.Rand, Log: p.Log}, cfg)
 		n.Start()
 
 		heartbeats := p.Metrics.Gauge("chunkd_node_heartbeats_sent", "Heartbeats sent to the metadata server.")

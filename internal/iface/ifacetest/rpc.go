@@ -20,6 +20,9 @@ type RPCEnv interface {
 	Clock(id iface.NodeID) iface.Clock
 	// Caller must time out unanswered calls within about one second.
 	Caller() iface.Caller
+	// Async returns an AsyncCaller for handlers running on server id's
+	// loop, with a timeout of about 300 ms (well inside Caller's).
+	Async(id iface.NodeID) iface.AsyncCaller
 }
 
 // RPC runs the request/response conformance suite.
@@ -183,6 +186,37 @@ func RPC(t *testing.T, newEnv func(t *testing.T) RPCEnv) {
 					t.Fatalf("winner latency %v", h.Results[tc.winner].Latency)
 				}
 			})
+		}
+	})
+
+	t.Run("async call from inside a handler", func(t *testing.T) {
+		env := newEnv(t)
+		env.Server("s1").Serve("s1", "test.echo", echo, iface.ServeOpts{})
+		env.Server("s1").Serve("s1", "test.silent", func(iface.Message, iface.Responder) {}, iface.ServeOpts{})
+		async := env.Async("s2")
+		// s2 relays each request to s1 with the async caller and answers
+		// from the callback, which must run on s2's loop.
+		env.Server("s2").Serve("s2", "test.relay", func(m iface.Message, respond iface.Responder) {
+			async.Go(iface.Call{To: "s1", Addr: env.Addr("s1"), Kind: string(m.Body), Body: []byte("via s2")}, func(r iface.Result) {
+				if r.Err != nil {
+					respond([]byte(iface.CodeOf(r.Err).String()), nil)
+					return
+				}
+				respond(r.Body, nil)
+			})
+		}, iface.ServeOpts{})
+		relay := func(kind string) string {
+			r := env.Caller().Do(ctx, []iface.Call{{To: "s2", Addr: env.Addr("s2"), Kind: "test.relay", Body: []byte(kind)}})
+			if r[0].Err != nil {
+				t.Fatalf("relay %s: %v", kind, r[0].Err)
+			}
+			return string(r[0].Body)
+		}
+		if got := relay("test.echo"); got != "via s2" {
+			t.Fatalf("echo through async = %q", got)
+		}
+		if got := relay("test.silent"); got != iface.CodeUnavailable.String() {
+			t.Fatalf("silent peer through async = %q, want unavailable", got)
 		}
 	})
 }

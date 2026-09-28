@@ -8,6 +8,7 @@
 package meta
 
 import (
+	"bytes"
 	"cmp"
 	"maps"
 	"path"
@@ -293,6 +294,13 @@ func (s *State) Chunk(id iface.ChunkID) (ChunkInfo, bool) {
 		return ChunkInfo{}, false
 	}
 	return *c, true
+}
+
+// Chunks calls fn for every chunk record, in chunk ID order.
+func (s *State) Chunks(fn func(iface.ChunkID, ChunkInfo)) {
+	for _, id := range slices.SortedFunc(maps.Keys(s.chunks), func(a, b iface.ChunkID) int { return bytes.Compare(a[:], b[:]) }) {
+		fn(id, *s.chunks[id])
+	}
 }
 
 // PendingUploads reports how many uploads are pending; used by invariants.

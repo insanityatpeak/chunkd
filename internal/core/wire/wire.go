@@ -13,6 +13,10 @@ const (
 	KindHeartbeat    = "node.heartbeat"
 	KindHeartbeatAck = "node.heartbeat_ack"
 	KindBlockReport  = "node.block_report"
+
+	// Repair: metadata server to target node, and failures back.
+	KindReplicate       = "node.replicate"
+	KindReplicateFailed = "node.replicate_failed"
 )
 
 // RPCs. Kinds starting with "chunk." carry chunk data and are streamed in

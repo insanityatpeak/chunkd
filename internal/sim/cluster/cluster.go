@@ -75,14 +75,46 @@ func New(seed uint64, cfg Config, w io.Writer) *Cluster {
 	}
 	for i := 1; i <= cfg.Nodes; i++ {
 		id := iface.NodeID(fmt.Sprintf("node-%d", i))
-		rack := fmt.Sprintf("r%d", (i-1)%max(cfg.Racks, 1)+1)
-		store := sim.NewBlockStore()
-		n := node.New(node.Deps{Clock: c.clock, Net: c.net, Store: store, Rand: c.rng, Log: c.logger(id)}, node.DefaultConfig(id, MetaID, rack))
-		n.Start()
-		c.nodes = append(c.nodes, &Node{Node: n, Rack: rack, Store: store})
+		nd := &Node{Rack: fmt.Sprintf("r%d", (i-1)%max(cfg.Racks, 1)+1), Store: sim.NewBlockStore()}
+		c.nodes = append(c.nodes, nd)
+		c.startNode(id, nd)
 	}
 	return c
 }
+
+// startNode runs a fresh node process (new incarnation) over nd's store.
+func (c *Cluster) startNode(id iface.NodeID, nd *Node) {
+	nd.Node = node.New(node.Deps{Clock: c.clock, Net: c.net, Async: c.net.AsyncCaller(id, c.cfg.CallTimeout), Store: nd.Store, Rand: c.rng, Log: c.logger(id)},
+		node.DefaultConfig(id, MetaID, nd.Rack))
+	nd.Node.Start()
+}
+
+func (c *Cluster) node(id iface.NodeID) *Node {
+	for _, n := range c.nodes {
+		if n.ID() == id {
+			return n
+		}
+	}
+	panic(fmt.Sprintf("no node %s", id))
+}
+
+// KillNode stops a node's process and cuts it off. Its disk survives.
+func (c *Cluster) KillNode(id iface.NodeID) {
+	c.node(id).Stop()
+	c.net.Crash(id)
+}
+
+// RestartNode starts a new process for a killed node over the same disk.
+func (c *Cluster) RestartNode(id iface.NodeID) {
+	nd := c.node(id)
+	nd.Stop()
+	c.net.Restart(id)
+	c.startNode(id, nd)
+}
+
+// WipeNode replaces a killed node's disk with an empty one, as after a disk
+// failure; RestartNode brings it back empty.
+func (c *Cluster) WipeNode(id iface.NodeID) { c.node(id).Store = sim.NewBlockStore() }
 
 func (c *Cluster) logger(id iface.NodeID) *slog.Logger {
 	return obs.NewLogger(c.log, string(id), slog.LevelInfo)

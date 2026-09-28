@@ -13,6 +13,7 @@ import (
 	"github.com/insanityatpeak/chunkd/internal/core/chunk"
 	"github.com/insanityatpeak/chunkd/internal/core/detector"
 	"github.com/insanityatpeak/chunkd/internal/core/placement"
+	"github.com/insanityatpeak/chunkd/internal/core/repair"
 	"github.com/insanityatpeak/chunkd/internal/core/wire"
 	"github.com/insanityatpeak/chunkd/internal/iface"
 	chunkdv1 "github.com/insanityatpeak/chunkd/proto/gen/chunkd/v1"
@@ -34,13 +35,14 @@ type Config struct {
 	MinReplicas   int
 	ChunkSize     int
 	Detector      detector.Config
+	Repair        repair.Config
 	SnapshotEvery int
 }
 
 // DefaultConfig is N=3, commit at 2 (ADR-0007), 4 MiB chunks (ADR-0005),
 // suspect after 3 s and dead after 10 s of silence (ADR-0010).
 func DefaultConfig(id iface.NodeID) Config {
-	return Config{ID: id, Replicas: 3, MinReplicas: 2, ChunkSize: chunk.DefaultSize, Detector: detector.DefaultConfig(), SnapshotEvery: 1000}
+	return Config{ID: id, Replicas: 3, MinReplicas: 2, ChunkSize: chunk.DefaultSize, Detector: detector.DefaultConfig(), Repair: repair.DefaultConfig(), SnapshotEvery: 1000}
 }
 
 // Server is the metadata server. Everything runs on its event loop.
@@ -49,6 +51,7 @@ type Server struct {
 	cfg       Config
 	state     *State
 	cluster   *Cluster
+	repair    *repair.Scheduler
 	applied   iface.Index
 	sinceSnap int
 }
@@ -68,6 +71,9 @@ func NewServer(ctx context.Context, d Deps, cfg Config) (*Server, error) {
 		return nil, fmt.Errorf("restore snapshot at %d: %w", at, err)
 	}
 	s := &Server{d: d, cfg: cfg, state: state, cluster: NewCluster(cfg.Detector), applied: at}
+	rc := cfg.Repair
+	rc.Replicas = cfg.Replicas
+	s.repair = repair.New(rc, d.Clock, repairView{s}, s.sendCopy)
 	err = d.Store.Replay(ctx, at+1, func(i iface.Index, b []byte) error {
 		var op chunkdv1.Op
 		if err := proto.Unmarshal(b, &op); err != nil {
@@ -99,11 +105,16 @@ func (s *Server) Start() {
 		s.d.Net.Serve(s.cfg.ID, kind, h, iface.ServeOpts{})
 	}
 	s.d.Clock.AfterFunc(s.cfg.Detector.TickEvery, s.tick)
+	s.repair.Start()
 }
 
 func (s *Server) tick() {
-	for _, tr := range s.cluster.Tick(s.d.Clock.Now()) {
+	trs := s.cluster.Tick(s.d.Clock.Now())
+	for _, tr := range trs {
 		s.transition(tr)
+	}
+	if len(trs) > 0 {
+		s.repair.Scan()
 	}
 	s.d.Clock.AfterFunc(s.cfg.Detector.TickEvery, s.tick)
 }
@@ -138,6 +149,7 @@ func (s *Server) handle(m iface.Message) {
 			Chunks: hb.GetChunkCount(), Draining: hb.GetDraining()}, detector.Beat{Incarnation: hb.GetIncarnation(), Seq: hb.GetSeq()}, s.d.Clock.Now())
 		if changed {
 			s.transition(tr)
+			s.repair.Scan()
 		}
 		s.d.Net.Send(m.From, iface.Message{From: s.cfg.ID, Kind: wire.KindHeartbeatAck,
 			Body: wire.Marshal(&chunkdv1.HeartbeatAck{Seq: hb.GetSeq(), NeedFullReport: need})})
@@ -153,11 +165,26 @@ func (s *Server) handle(m iface.Message) {
 				ids = append(ids, id)
 			}
 		}
+		node := iface.NodeID(r.GetNode())
 		if r.GetFull() {
-			s.cluster.FullReport(iface.NodeID(r.GetNode()), ids)
+			s.cluster.FullReport(node, ids)
+			// A full report can restore replicas a scan counted as missing.
+			s.repair.Scan()
 		} else {
-			s.cluster.Received(iface.NodeID(r.GetNode()), ids)
+			s.cluster.Received(node, ids)
 		}
+		s.repair.Reported(node, ids)
+	case wire.KindReplicateFailed:
+		var f chunkdv1.ReplicateFailed
+		if err := wire.Decode(m.Body, &f); err != nil {
+			return
+		}
+		id, err := wire.ChunkID(f.GetChunkId())
+		if err != nil {
+			return
+		}
+		s.d.Log.Warn("repair copy failed", "copy", f.GetCopyId(), "node", f.GetNode(), "err", f.GetError())
+		s.repair.Failed(f.GetCopyId(), id)
 	}
 }
 

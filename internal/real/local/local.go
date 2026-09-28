@@ -103,7 +103,9 @@ func Start(dir string, n int, cfg meta.Config) (*Cluster, error) {
 		}
 		ncfg := node.DefaultConfig(iface.NodeID(fmt.Sprintf("node-%d", i)), "meta-1", fmt.Sprintf("r%d", (i-1)%3+1))
 		ncfg.Addr, ncfg.Heartbeat = np.addr, 100*time.Millisecond
-		nd := node.New(node.Deps{Clock: np.clock, Net: np.net, Store: bs, Rand: runtime.NewRand(), Log: log}, ncfg)
+		peers := grpcnet.NewCaller(nil, 30*time.Second)
+		c.closers = append(c.closers, peers.Close)
+		nd := node.New(node.Deps{Clock: np.clock, Net: np.net, Async: peers.Async(np.loop), Store: bs, Rand: runtime.NewRand(), Log: log}, ncfg)
 		np.loop.Do(nd.Start)
 	}
 

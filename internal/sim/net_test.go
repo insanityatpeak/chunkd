@@ -156,6 +156,9 @@ func (e *simEnv) Server(iface.NodeID) iface.Transport { return e.net }
 func (e *simEnv) Addr(iface.NodeID) string            { return "" }
 func (e *simEnv) Clock(iface.NodeID) iface.Clock      { return e.clock }
 func (e *simEnv) Caller() iface.Caller                { return e.caller }
+func (e *simEnv) Async(id iface.NodeID) iface.AsyncCaller {
+	return e.net.AsyncCaller(id, 300*time.Millisecond)
+}
 
 func TestRPCConformance(t *testing.T) {
 	ifacetest.RPC(t, func(*testing.T) ifacetest.RPCEnv {

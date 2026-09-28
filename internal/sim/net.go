@@ -43,7 +43,19 @@ type Net struct {
 	down     map[iface.NodeID]bool
 	frozen   map[iface.NodeID][]iface.Message // held until Thaw
 	slow     map[iface.NodeID]time.Duration
+	async    map[asyncKey]*asyncCall
 	stats    NetStats
+}
+
+type asyncKey struct {
+	id  iface.NodeID
+	req uint64
+}
+
+type asyncCall struct {
+	cb    func(iface.Result)
+	timer iface.Timer
+	sent  iface.Instant
 }
 
 type link struct{ from, to iface.NodeID }
@@ -66,6 +78,7 @@ func NewNet(c *Clock, r iface.Rand, f Faults) *Net {
 		down:     map[iface.NodeID]bool{},
 		frozen:   map[iface.NodeID][]iface.Message{},
 		slow:     map[iface.NodeID]time.Duration{},
+		async:    map[asyncKey]*asyncCall{},
 	}
 }
 
@@ -132,6 +145,20 @@ func (n *Net) deliver(m iface.Message) {
 	if _, ok := n.frozen[m.To]; ok {
 		n.frozen[m.To] = append(n.frozen[m.To], m)
 		return
+	}
+	if m.Kind == KindResponse {
+		if a, ok := n.async[asyncKey{m.To, m.ReqID}]; ok {
+			delete(n.async, asyncKey{m.To, m.ReqID})
+			a.timer.Stop()
+			n.stats.Delivered++
+			n.stats.Bytes += uint64(len(m.Body))
+			r := iface.Result{Body: m.Body, Latency: n.clock.Now().Sub(a.sent)}
+			if m.Err != nil {
+				r = iface.Result{Err: m.Err, Latency: r.Latency}
+			}
+			a.cb(r)
+			return
+		}
 	}
 	if h, ok := n.rpcs[rpcKey{m.To, m.Kind}]; ok {
 		n.stats.Delivered++
@@ -361,6 +388,34 @@ func (c *Caller) Hedge(ctx context.Context, calls []iface.Call, after time.Durat
 		}
 	}
 	return out
+}
+
+// AsyncCaller returns an iface.AsyncCaller for code running as node id.
+// Responses are matched by request ID before id's Listen handler sees them.
+func (n *Net) AsyncCaller(id iface.NodeID, timeout time.Duration) iface.AsyncCaller {
+	return &asyncCaller{net: n, id: id, timeout: timeout}
+}
+
+type asyncCaller struct {
+	net     *Net
+	id      iface.NodeID
+	timeout time.Duration
+	next    uint64
+}
+
+func (a *asyncCaller) Go(c iface.Call, cb func(iface.Result)) {
+	a.next++
+	key := asyncKey{a.id, a.next}
+	sent := a.net.clock.Now()
+	timer := a.net.clock.AfterFunc(a.timeout, func() {
+		if _, ok := a.net.async[key]; !ok {
+			return
+		}
+		delete(a.net.async, key)
+		cb(iface.Result{Err: iface.Errorf(iface.CodeUnavailable, "%s to %s: timed out after %v", c.Kind, c.To, a.timeout), Latency: a.timeout})
+	})
+	a.net.async[key] = &asyncCall{cb: cb, timer: timer, sent: sent}
+	a.net.Send(c.To, iface.Message{From: a.id, Kind: c.Kind, ReqID: a.next, Body: c.Body})
 }
 
 // Freeze stops a node without killing it, like a long GC pause or a

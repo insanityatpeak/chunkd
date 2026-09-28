@@ -47,3 +47,21 @@ message GetChunkRequest {
 message GetChunkResponse {
   bytes data = 1;
 }
+
+// ReplicateChunk tells a node to pull a chunk from source and store it
+// (repair). Completion is the node's incremental block report.
+message ReplicateChunk {
+  uint64 copy_id = 1;
+  bytes chunk_id = 2;
+  string source = 3;
+  string source_addr = 4;
+}
+
+// ReplicateFailed tells the metadata server a copy will not complete, so
+// its throttle slots free up before the copy timeout.
+message ReplicateFailed {
+  uint64 copy_id = 1;
+  bytes chunk_id = 2;
+  string node = 3;
+  string error = 4;
+}

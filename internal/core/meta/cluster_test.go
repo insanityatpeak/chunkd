@@ -70,8 +70,12 @@ func TestClusterLiveness(t *testing.T) {
 	if c.Readable("n1") {
 		t.Fatal("dead node readable")
 	}
-	if got := c.Locations(a); len(got) != 0 {
-		t.Fatalf("dead node still listed for chunk: %v", got)
+	if n, _ := c.Node("n1"); n.DeadSince != sec(10.5) {
+		t.Fatalf("DeadSince = %v", n.DeadSince)
+	}
+	// Kept, so repair can tell a recent death from an old one.
+	if got := c.Locations(a); len(got) != 1 {
+		t.Fatalf("dead node's locations dropped: %v", got)
 	}
 	// Back: it must send a full report before its chunks count again.
 	if !beat(c, "n1", 2, sec(20)) {
@@ -90,13 +94,21 @@ func TestClusterLiveness(t *testing.T) {
 	}
 }
 
-func TestClusterRestartForgetsLocations(t *testing.T) {
+func TestClusterRestartKeepsLocationsUntilReport(t *testing.T) {
 	c := NewCluster(detector.DefaultConfig())
 	beat(c, "n1", 1, 0)
-	c.FullReport("n1", []iface.ChunkID{{1}})
+	c.FullReport("n1", []iface.ChunkID{{1}, {2}})
 	// Restarted within the suspect window: new incarnation, seq back at 1.
 	_, _, need := c.Heartbeat(NodeState{ID: "n1"}, detector.Beat{Incarnation: 2, Seq: 1}, iface.Instant(time.Second))
-	if !need || len(c.Locations(iface.ChunkID{1})) != 0 {
-		t.Fatal("restarted node kept stale locations")
+	if !need {
+		t.Fatal("restarted node not asked for a full report")
+	}
+	if c.Alive("n1") || len(c.Locations(iface.ChunkID{1})) != 1 {
+		t.Fatal("restarted node should be suspect with its locations kept")
+	}
+	// Its disk lost chunk 2: the report, not the restart, removes it.
+	c.FullReport("n1", []iface.ChunkID{{1}})
+	if len(c.Locations(iface.ChunkID{2})) != 0 || len(c.Locations(iface.ChunkID{1})) != 1 {
+		t.Fatal("full report did not replace locations")
 	}
 }

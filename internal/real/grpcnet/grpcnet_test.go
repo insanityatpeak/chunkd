@@ -72,7 +72,7 @@ func TestNodeAndMetaOverGRPC(t *testing.T) {
 	})
 	cfg := node.DefaultConfig("n1", "meta", "r1")
 	cfg.Heartbeat, cfg.Addr = 50*time.Millisecond, np.addr
-	n := node.New(node.Deps{Clock: np.clock, Net: np.net, Store: sim.NewBlockStore(), Rand: np.rng, Log: np.log}, cfg)
+	n := node.New(node.Deps{Clock: np.clock, Net: np.net, Async: NewCaller(nil, time.Second).Async(np.loop), Store: sim.NewBlockStore(), Rand: np.rng, Log: np.log}, cfg)
 	np.loop.Do(n.Start)
 
 	waitFor(t, func() bool {
@@ -138,6 +138,11 @@ func (e *realEnv) Server(id iface.NodeID) iface.Transport { return e.proc(id).ne
 func (e *realEnv) Addr(id iface.NodeID) string            { return e.proc(id).addr }
 func (e *realEnv) Clock(id iface.NodeID) iface.Clock      { return e.proc(id).clock }
 func (e *realEnv) Caller() iface.Caller                   { return e.caller }
+func (e *realEnv) Async(id iface.NodeID) iface.AsyncCaller {
+	c := NewCaller(nil, 300*time.Millisecond)
+	e.t.Cleanup(c.Close)
+	return c.Async(e.proc(id).loop)
+}
 
 func TestRPCConformance(t *testing.T) {
 	ifacetest.RPC(t, func(t *testing.T) ifacetest.RPCEnv {

@@ -34,7 +34,7 @@ func newEnv(t *testing.T, nodes int) *env {
 	e.startMeta(t)
 	for i := 1; i <= nodes; i++ {
 		id := iface.NodeID(fmt.Sprintf("n%d", i))
-		n := node.New(node.Deps{Clock: e.clock, Net: e.net, Store: sim.NewBlockStore(), Rand: e.rng, Log: e.log},
+		n := node.New(node.Deps{Clock: e.clock, Net: e.net, Async: e.net.AsyncCaller(id, 10*time.Second), Store: sim.NewBlockStore(), Rand: e.rng, Log: e.log},
 			node.DefaultConfig(id, "meta", fmt.Sprintf("r%d", i)))
 		n.Start()
 	}

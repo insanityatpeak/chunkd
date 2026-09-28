@@ -313,6 +313,22 @@ func (c *Caller) Do(ctx context.Context, calls []iface.Call) []iface.Result {
 	return out
 }
 
+// Async returns an iface.AsyncCaller whose callbacks run on loop. Each call
+// runs on its own goroutine, so a slow peer never blocks the loop.
+func (c *Caller) Async(loop *runtime.Loop) iface.AsyncCaller { return &async{c: c, loop: loop} }
+
+type async struct {
+	c    *Caller
+	loop *runtime.Loop
+}
+
+func (a *async) Go(call iface.Call, cb func(iface.Result)) {
+	go func() {
+		r := a.c.Do(context.Background(), []iface.Call{call})[0]
+		a.loop.Post(func() { cb(r) })
+	}()
+}
+
 // Hedge implements iface.Caller. Losing calls are cancelled when it returns.
 func (c *Caller) Hedge(ctx context.Context, calls []iface.Call, after time.Duration, accept func(int, iface.Result) bool) iface.HedgeResult {
 	out := iface.HedgeResult{Winner: -1, Results: make([]iface.Result, len(calls))}

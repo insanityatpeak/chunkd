@@ -21,6 +21,9 @@ type NodeState struct {
 	Draining bool
 	State    detector.State
 	LastSeen iface.Instant
+	// DeadSince is when the detector declared the node dead; repair waits
+	// a delay from here before replacing its replicas.
+	DeadSince iface.Instant
 	// reported is false until a full block report arrives; until then the
 	// node's locations are unknown, not empty.
 	reported bool
@@ -74,19 +77,23 @@ func (c *Cluster) Tick(now iface.Instant) []detector.Transition {
 	return trs
 }
 
-// apply keeps the node table in step with the detector. A dead or restarted
-// node's locations are forgotten: what it holds when it returns is whatever
-// its next full report says (its disk may have been replaced).
+// apply keeps the node table in step with the detector. Locations are
+// never dropped on a transition, only replaced by the node's next full
+// report: dropping a restarted node's locations made its chunks look lost
+// for the round trip before that report and started needless repairs
+// (bugs-found #4). A dead or restarted node must send a full report before
+// it is trusted again, and until it is alive its copies do not count
+// toward commit.
 func (c *Cluster) apply(tr detector.Transition) {
 	n := c.nodes[tr.Node]
 	if n == nil {
 		return
 	}
 	n.State = tr.To
+	if tr.To == detector.Dead {
+		n.DeadSince = tr.At
+	}
 	if tr.To == detector.Dead || tr.Restarted {
-		for ch := range c.byNode[tr.Node] {
-			c.drop(tr.Node, ch)
-		}
 		n.reported = false
 	}
 }
@@ -149,7 +156,7 @@ func (c *Cluster) state(id iface.NodeID) detector.State { return c.det.State(id)
 func (c *Cluster) Detector() *detector.Detector { return c.det }
 
 // Locations returns the nodes reported to hold ch, sorted by ID. It includes
-// suspect nodes; callers filter with Alive or Readable.
+// suspect and dead nodes; callers filter with Alive or Readable.
 func (c *Cluster) Locations(ch iface.ChunkID) []iface.NodeID {
 	return slices.Sorted(maps.Keys(c.byChunk[ch]))
 }
