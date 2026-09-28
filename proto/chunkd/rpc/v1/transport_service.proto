@@ -1,0 +1,14 @@
+syntax = "proto3";
+
+package chunkd.rpc.v1;
+
+import "chunkd/v1/transport.proto";
+
+option go_package = "github.com/insanityatpeak/chunkd/proto/gen/chunkd/rpc/v1;rpcv1";
+
+// TransportService is the real-mode carrier for core messages. Delivery is
+// best effort: the RPC returning OK means the peer queued the message, not
+// that it was processed.
+service TransportService {
+  rpc Deliver(chunkd.v1.DeliverRequest) returns (chunkd.v1.DeliverResponse);
+}

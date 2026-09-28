@@ -1,0 +1,23 @@
+syntax = "proto3";
+
+package chunkd.v1;
+
+option go_package = "github.com/insanityatpeak/chunkd/proto/gen/chunkd/v1;chunkdv1";
+
+// Envelope carries one iface.Message between processes in real mode.
+message Envelope {
+  string from = 1;
+  string to = 2;
+  string kind = 3;
+  uint64 req_id = 4;
+  bytes body = 5;
+  // gRPC address the sender listens on, so receivers can reply without a
+  // static peer table.
+  string from_addr = 6;
+}
+
+message DeliverRequest {
+  Envelope envelope = 1;
+}
+
+message DeliverResponse {}
