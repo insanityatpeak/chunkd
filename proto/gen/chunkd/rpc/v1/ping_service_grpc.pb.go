@@ -2,12 +2,13 @@
 // versions:
 // - protoc-gen-go-grpc v1.6.2
 // - protoc             (unknown)
-// source: chunkd/v1/ping.proto
+// source: chunkd/rpc/v1/ping_service.proto
 
-package chunkdv1
+package rpcv1
 
 import (
 	context "context"
+	v1 "github.com/insanityatpeak/chunkd/proto/gen/chunkd/v1"
 	grpc "google.golang.org/grpc"
 	codes "google.golang.org/grpc/codes"
 	status "google.golang.org/grpc/status"
@@ -19,7 +20,7 @@ import (
 const _ = grpc.SupportPackageIsVersion9
 
 const (
-	PingService_Ping_FullMethodName = "/chunkd.v1.PingService/Ping"
+	PingService_Ping_FullMethodName = "/chunkd.rpc.v1.PingService/Ping"
 )
 
 // PingServiceClient is the client API for PingService service.
@@ -29,7 +30,7 @@ const (
 // PingService checks liveness. Storage nodes also use Ping as their heartbeat
 // to the metadata server until a dedicated heartbeat carries chunk reports.
 type PingServiceClient interface {
-	Ping(ctx context.Context, in *PingRequest, opts ...grpc.CallOption) (*PingResponse, error)
+	Ping(ctx context.Context, in *v1.PingRequest, opts ...grpc.CallOption) (*v1.PingResponse, error)
 }
 
 type pingServiceClient struct {
@@ -40,9 +41,9 @@ func NewPingServiceClient(cc grpc.ClientConnInterface) PingServiceClient {
 	return &pingServiceClient{cc}
 }
 
-func (c *pingServiceClient) Ping(ctx context.Context, in *PingRequest, opts ...grpc.CallOption) (*PingResponse, error) {
+func (c *pingServiceClient) Ping(ctx context.Context, in *v1.PingRequest, opts ...grpc.CallOption) (*v1.PingResponse, error) {
 	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
-	out := new(PingResponse)
+	out := new(v1.PingResponse)
 	err := c.cc.Invoke(ctx, PingService_Ping_FullMethodName, in, out, cOpts...)
 	if err != nil {
 		return nil, err
@@ -57,7 +58,7 @@ func (c *pingServiceClient) Ping(ctx context.Context, in *PingRequest, opts ...g
 // PingService checks liveness. Storage nodes also use Ping as their heartbeat
 // to the metadata server until a dedicated heartbeat carries chunk reports.
 type PingServiceServer interface {
-	Ping(context.Context, *PingRequest) (*PingResponse, error)
+	Ping(context.Context, *v1.PingRequest) (*v1.PingResponse, error)
 	mustEmbedUnimplementedPingServiceServer()
 }
 
@@ -68,7 +69,7 @@ type PingServiceServer interface {
 // pointer dereference when methods are called.
 type UnimplementedPingServiceServer struct{}
 
-func (UnimplementedPingServiceServer) Ping(context.Context, *PingRequest) (*PingResponse, error) {
+func (UnimplementedPingServiceServer) Ping(context.Context, *v1.PingRequest) (*v1.PingResponse, error) {
 	return nil, status.Error(codes.Unimplemented, "method Ping not implemented")
 }
 func (UnimplementedPingServiceServer) mustEmbedUnimplementedPingServiceServer() {}
@@ -93,7 +94,7 @@ func RegisterPingServiceServer(s grpc.ServiceRegistrar, srv PingServiceServer) {
 }
 
 func _PingService_Ping_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
-	in := new(PingRequest)
+	in := new(v1.PingRequest)
 	if err := dec(in); err != nil {
 		return nil, err
 	}
@@ -105,7 +106,7 @@ func _PingService_Ping_Handler(srv interface{}, ctx context.Context, dec func(in
 		FullMethod: PingService_Ping_FullMethodName,
 	}
 	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
-		return srv.(PingServiceServer).Ping(ctx, req.(*PingRequest))
+		return srv.(PingServiceServer).Ping(ctx, req.(*v1.PingRequest))
 	}
 	return interceptor(ctx, in, info, handler)
 }
@@ -114,7 +115,7 @@ func _PingService_Ping_Handler(srv interface{}, ctx context.Context, dec func(in
 // It's only intended for direct use with grpc.RegisterService,
 // and not to be introspected or modified (even as a copy)
 var PingService_ServiceDesc = grpc.ServiceDesc{
-	ServiceName: "chunkd.v1.PingService",
+	ServiceName: "chunkd.rpc.v1.PingService",
 	HandlerType: (*PingServiceServer)(nil),
 	Methods: []grpc.MethodDesc{
 		{
@@ -123,5 +124,5 @@ var PingService_ServiceDesc = grpc.ServiceDesc{
 		},
 	},
 	Streams:  []grpc.StreamDesc{},
-	Metadata: "chunkd/v1/ping.proto",
+	Metadata: "chunkd/rpc/v1/ping_service.proto",
 }

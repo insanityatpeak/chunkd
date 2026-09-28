@@ -139,9 +139,7 @@ const file_chunkd_v1_ping_proto_rawDesc = "" +
 	"\x03seq\x18\x02 \x01(\x04R\x03seq\"4\n" +
 	"\fPingResponse\x12\x12\n" +
 	"\x04from\x18\x01 \x01(\tR\x04from\x12\x10\n" +
-	"\x03seq\x18\x02 \x01(\x04R\x03seq2F\n" +
-	"\vPingService\x127\n" +
-	"\x04Ping\x12\x16.chunkd.v1.PingRequest\x1a\x17.chunkd.v1.PingResponseB?Z=github.com/insanityatpeak/chunkd/proto/gen/chunkd/v1;chunkdv1b\x06proto3"
+	"\x03seq\x18\x02 \x01(\x04R\x03seqB?Z=github.com/insanityatpeak/chunkd/proto/gen/chunkd/v1;chunkdv1b\x06proto3"
 
 var (
 	file_chunkd_v1_ping_proto_rawDescOnce sync.Once
@@ -161,10 +159,8 @@ var file_chunkd_v1_ping_proto_goTypes = []any{
 	(*PingResponse)(nil), // 1: chunkd.v1.PingResponse
 }
 var file_chunkd_v1_ping_proto_depIdxs = []int32{
-	0, // 0: chunkd.v1.PingService.Ping:input_type -> chunkd.v1.PingRequest
-	1, // 1: chunkd.v1.PingService.Ping:output_type -> chunkd.v1.PingResponse
-	1, // [1:2] is the sub-list for method output_type
-	0, // [0:1] is the sub-list for method input_type
+	0, // [0:0] is the sub-list for method output_type
+	0, // [0:0] is the sub-list for method input_type
 	0, // [0:0] is the sub-list for extension type_name
 	0, // [0:0] is the sub-list for extension extendee
 	0, // [0:0] is the sub-list for field type_name
@@ -183,7 +179,7 @@ func file_chunkd_v1_ping_proto_init() {
 			NumEnums:      0,
 			NumMessages:   2,
 			NumExtensions: 0,
-			NumServices:   1,
+			NumServices:   0,
 		},
 		GoTypes:           file_chunkd_v1_ping_proto_goTypes,
 		DependencyIndexes: file_chunkd_v1_ping_proto_depIdxs,

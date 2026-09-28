@@ -21,6 +21,9 @@ func wasm() error {
 		return err
 	}
 	env := []string{"GOOS=js", "GOARCH=wasm", "CGO_ENABLED=0"}
+	if err := checkWasmDeps(env); err != nil {
+		return err
+	}
 	if err := goCmd(env, "build", "-trimpath", "-ldflags=-s -w", "-o", wasmOut, "./cmd/chunkd-wasm"); err != nil {
 		return err
 	}
@@ -46,6 +49,27 @@ func wasm() error {
 		return fmt.Errorf("cluster.wasm exceeds the %d MiB budget", wasmMaxSize>>20)
 	case size > wasmWarnSize:
 		fmt.Println("warning: cluster.wasm is above the target size")
+	}
+	return nil
+}
+
+// wasmBannedDeps are server-side packages that must never reach the browser
+// build; gRPC alone added over 12 MiB before services moved to chunkd.rpc.v1.
+var wasmBannedDeps = []string{"google.golang.org/grpc", "net/http"}
+
+func checkWasmDeps(env []string) error {
+	cmd := exec.Command("go", "list", "-deps", "./cmd/chunkd-wasm")
+	cmd.Env = append(os.Environ(), env...)
+	out, err := cmd.Output()
+	if err != nil {
+		return fmt.Errorf("go list -deps: %w", err)
+	}
+	for _, dep := range strings.Fields(string(out)) {
+		for _, b := range wasmBannedDeps {
+			if dep == b || strings.HasPrefix(dep, b+"/") {
+				return fmt.Errorf("cmd/chunkd-wasm depends on %s; keep server-only code out of the sim build", dep)
+			}
+		}
 	}
 	return nil
 }

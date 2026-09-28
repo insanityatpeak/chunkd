@@ -17,7 +17,10 @@ type Faults struct {
 
 // NetStats counts message outcomes since the network was created.
 type NetStats struct {
-	Sent, Delivered, Dropped, Duplicated uint64
+	Sent       uint64 `json:"sent"`
+	Delivered  uint64 `json:"delivered"`
+	Dropped    uint64 `json:"dropped"`
+	Duplicated uint64 `json:"duplicated"`
 }
 
 // Net is an in-memory Transport. Every delivery is an event on the shared

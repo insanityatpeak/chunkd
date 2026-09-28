@@ -4,11 +4,8 @@ package chunkd.v1;
 
 option go_package = "github.com/insanityatpeak/chunkd/proto/gen/chunkd/v1;chunkdv1";
 
-// PingService checks liveness. Storage nodes also use Ping as their heartbeat
-// to the metadata server until a dedicated heartbeat carries chunk reports.
-service PingService {
-  rpc Ping(PingRequest) returns (PingResponse);
-}
+// Message types only. Services live in chunkd.rpc.v1 so that core and the
+// WASM build link these types without pulling in gRPC and net/http.
 
 message PingRequest {
   // Node ID of the sender.

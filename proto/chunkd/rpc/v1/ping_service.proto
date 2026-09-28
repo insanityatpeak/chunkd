@@ -1,0 +1,13 @@
+syntax = "proto3";
+
+package chunkd.rpc.v1;
+
+import "chunkd/v1/ping.proto";
+
+option go_package = "github.com/insanityatpeak/chunkd/proto/gen/chunkd/rpc/v1;rpcv1";
+
+// PingService checks liveness. Storage nodes also use Ping as their heartbeat
+// to the metadata server until a dedicated heartbeat carries chunk reports.
+service PingService {
+  rpc Ping(chunkd.v1.PingRequest) returns (chunkd.v1.PingResponse);
+}

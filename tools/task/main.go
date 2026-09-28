@@ -113,6 +113,9 @@ func lint([]string) error {
 	if err := goCmd(nil, "vet", "./..."); err != nil {
 		return err
 	}
+	if err := goCmd([]string{"GOOS=js", "GOARCH=wasm"}, "vet", "./cmd/chunkd-wasm"); err != nil {
+		return err
+	}
 	return goCmd(nil, "run", staticcheck, "./...")
 }
 
