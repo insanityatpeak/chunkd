@@ -7,7 +7,9 @@
 | `internal/core/` | Chunking, placement, metadata state machine, failure detection, repair, scrub, GC | `internal/iface`, `internal/obs`, generated message types, stdlib minus the environment (see below) |
 | `internal/iface/` | `Transport`, `Clock`, `BlockStore`, `MetaStore`, `Rand` | stdlib types only |
 | `internal/sim/` | Fake clock, seeded RNG, fault-injecting in-memory network and stores, cluster harness | anything that builds for `js/wasm` |
-| `internal/real/` | gRPC transport, event loop, wall clock, disk and bbolt stores, process bootstrap | anything |
+| `internal/real/` | gRPC transport and caller, event loop, wall clock, disk block store, WAL + bbolt metastore, HTTP gateway, process bootstrap, in-process cluster (`local`) | anything |
+| `internal/client/` | Client library (`Direct` over any `iface.Caller`) and the HTTP client for the gateway | no environment packages in `Direct`; `httpclient` may use `net/http` |
+| `internal/e2e/` | Scenarios run against both the sim cluster and `real/local` | anything |
 | `internal/obs/` | `slog` JSON logging with request IDs, metrics registry | no network or OS packages |
 | `cmd/` | `chunkd-meta`, `chunkd-node`, `chunkd-gateway`, `chunkd` (CLI), `chunkd-wasm` | everything; the only place wiring happens |
 | `proto/` | `.proto` sources; generated Go in `proto/gen` (committed) | |
@@ -34,11 +36,14 @@ Everything runs through `go run ./tools/task <command>` so it behaves the same o
 | `proto` | `buf generate` in Docker; nothing to install |
 | `wasm` | Builds `web/public/cluster.wasm`, copies `wasm_exec.js` from the same toolchain, fails above 20 MiB or if gRPC/`net/http` reach the WASM build |
 | `web` | `npm ci` and `npm run build` into `web/dist` |
-| `up` / `down` | Compose cluster; `up --small` runs 1 meta + 3 nodes |
+| `up` / `down` | Compose cluster; `up --small` runs 1 meta + 3 nodes; `down -v` deletes the volumes |
+| `e2e` | Builds the CLI, puts and gets 20 MiB through the compose gateway, compares hashes (`--up`, `--down`) |
 | `trace-check` | Fails on attribution trailers in tracked files or unpushed commit messages; run before every push |
 | `ci` | build, lint, lint-imports, test, wasm, web in CI order |
 
-Local dashboard: `go run ./tools/task wasm && cd web && npm run dev`.
+Local dashboard: `go run ./tools/task wasm && cd web && npm run dev`. Add `?gateway=http://localhost:8080` to point it at the compose cluster.
+
+Conformance suites in `internal/iface/ifacetest` run against every implementation of a seam (`BlockStore`, RPC). A new implementation must pass them.
 
 ## Commits
 
