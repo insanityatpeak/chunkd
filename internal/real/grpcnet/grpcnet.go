@@ -304,10 +304,75 @@ func (c *Caller) Do(ctx context.Context, calls []iface.Call) []iface.Result {
 		wg.Add(1)
 		go func() {
 			defer wg.Done()
+			start := time.Now()
 			out[i] = c.one(ctx, call)
+			out[i].Latency = time.Since(start)
 		}()
 	}
 	wg.Wait()
+	return out
+}
+
+// Hedge implements iface.Caller. Losing calls are cancelled when it returns.
+func (c *Caller) Hedge(ctx context.Context, calls []iface.Call, after time.Duration, accept func(int, iface.Result) bool) iface.HedgeResult {
+	out := iface.HedgeResult{Winner: -1, Results: make([]iface.Result, len(calls))}
+	if len(calls) == 0 {
+		return out
+	}
+	ctx, cancel := context.WithCancel(ctx)
+	defer cancel()
+	type done struct {
+		i int
+		r iface.Result
+	}
+	ch := make(chan done, len(calls)) // buffered: losers finish after we return
+	starts := make([]time.Time, len(calls))
+	settled := make([]bool, len(calls))
+	finished := 0
+	timer := time.NewTimer(after)
+	defer timer.Stop()
+	launch := func() {
+		i := out.Launched
+		out.Launched++
+		starts[i] = time.Now()
+		go func() {
+			r := c.one(ctx, calls[i])
+			r.Latency = time.Since(starts[i])
+			ch <- done{i, r}
+		}()
+		timer.Reset(after)
+	}
+	launch()
+loop:
+	for {
+		select {
+		case d := <-ch:
+			out.Results[d.i], settled[d.i] = d.r, true
+			finished++
+			if d.r.Err == nil && accept(d.i, d.r) {
+				out.Winner = d.i
+				break loop
+			}
+			if finished == out.Launched {
+				if out.Launched == len(calls) {
+					break loop
+				}
+				launch()
+			}
+		case <-timer.C:
+			if out.Launched < len(calls) {
+				launch()
+			}
+		case <-ctx.Done():
+			break loop
+		}
+	}
+	for i := range out.Launched {
+		if !settled[i] {
+			out.Results[i] = iface.Result{Err: iface.Errorf(iface.CodeUnavailable, "%s to %s: abandoned", calls[i].Kind, calls[i].To),
+				Latency: time.Since(starts[i]), Pending: true}
+		}
+	}
 	return out
 }
 

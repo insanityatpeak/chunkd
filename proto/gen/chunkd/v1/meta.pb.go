@@ -791,7 +791,9 @@ type Replica struct {
 	state protoimpl.MessageState `protogen:"open.v1"`
 	Node  string                 `protobuf:"bytes,1,opt,name=node,proto3" json:"node,omitempty"`
 	// gRPC address in real mode; empty in sim.
-	Addr          string `protobuf:"bytes,2,opt,name=addr,proto3" json:"addr,omitempty"`
+	Addr string `protobuf:"bytes,2,opt,name=addr,proto3" json:"addr,omitempty"`
+	// The detector suspects the node: readable, tried after alive replicas.
+	Suspect       bool `protobuf:"varint,3,opt,name=suspect,proto3" json:"suspect,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -838,6 +840,13 @@ func (x *Replica) GetAddr() string {
 		return x.Addr
 	}
 	return ""
+}
+
+func (x *Replica) GetSuspect() bool {
+	if x != nil {
+		return x.Suspect
+	}
+	return false
 }
 
 type ChunkPlacement struct {
@@ -1903,10 +1912,11 @@ const file_chunkd_v1_meta_proto_rawDesc = "" +
 	"\x05files\x18\x01 \x03(\v2\x15.chunkd.v1.FileRecordR\x05files\x12.\n" +
 	"\x06chunks\x18\x02 \x03(\v2\x16.chunkd.v1.ChunkRecordR\x06chunks\x121\n" +
 	"\auploads\x18\x03 \x03(\v2\x17.chunkd.v1.UploadRecordR\auploads\x12$\n" +
-	"\x0elast_upload_id\x18\x04 \x01(\x04R\flastUploadId\"1\n" +
+	"\x0elast_upload_id\x18\x04 \x01(\x04R\flastUploadId\"K\n" +
 	"\aReplica\x12\x12\n" +
 	"\x04node\x18\x01 \x01(\tR\x04node\x12\x12\n" +
-	"\x04addr\x18\x02 \x01(\tR\x04addr\"@\n" +
+	"\x04addr\x18\x02 \x01(\tR\x04addr\x12\x18\n" +
+	"\asuspect\x18\x03 \x01(\bR\asuspect\"@\n" +
 	"\x0eChunkPlacement\x12.\n" +
 	"\breplicas\x18\x01 \x03(\v2\x12.chunkd.v1.ReplicaR\breplicas\"g\n" +
 	"\x12BeginUploadRequest\x12\x12\n" +

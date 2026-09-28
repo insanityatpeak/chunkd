@@ -78,14 +78,32 @@ type Call struct {
 type Result struct {
 	Body []byte
 	Err  error
+	// Latency is the time from send to response. With Pending set it is a
+	// lower bound: Hedge returned before this call finished.
+	Latency time.Duration
+	Pending bool
+}
+
+// HedgeResult is the outcome of Caller.Hedge.
+type HedgeResult struct {
+	// Winner indexes the accepted result, or is -1 if none was accepted.
+	Winner int
+	// Results has one entry per call; only the first Launched were sent.
+	Results  []Result
+	Launched int
 }
 
 // Caller issues requests from outside the event loops (clients, CLI,
-// gateway). Calls in one batch run concurrently; results are in call order.
-// In the sim, Do advances the clock until every call finishes or times out,
-// so it must never be called from inside a handler or timer.
+// gateway). In the sim, Do and Hedge advance the clock until they finish,
+// so they must never be called from inside a handler or timer.
 type Caller interface {
+	// Do runs a batch concurrently; results are in call order.
 	Do(ctx context.Context, calls []Call) []Result
+	// Hedge sends calls[0] at once and calls[i] after another `after`
+	// passes with no accepted answer, or at once when every call sent so far
+	// has failed or been rejected. It returns at the first result accept
+	// takes; accept runs on the caller's goroutine.
+	Hedge(ctx context.Context, calls []Call, after time.Duration, accept func(i int, r Result) bool) HedgeResult
 }
 
 // Timer is a pending callback scheduled on a Clock.

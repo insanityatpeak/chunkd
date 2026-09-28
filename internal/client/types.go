@@ -28,6 +28,8 @@ type ChunkRef struct {
 	ServedBy string `json:"servedBy,omitempty"`
 	// Rejected lists replicas whose data failed verification, set by Get.
 	Rejected []string `json:"rejected,omitempty"`
+	// Hedged is set when Get read more than one replica for this chunk.
+	Hedged bool `json:"hedged,omitempty"`
 }
 
 // Manifest is a file's metadata including its chunk layout.

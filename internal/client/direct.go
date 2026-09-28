@@ -30,12 +30,16 @@ type Options struct {
 	// Sleep waits between retries: time.Sleep in real mode, advancing the
 	// simulated clock in sim.
 	Sleep func(time.Duration)
+	// NoHedge reads one replica at a time, moving on only after an error or
+	// timeout. Tests use it as the baseline hedging is measured against.
+	NoHedge bool
 }
 
 // Direct talks to the metadata server and storage nodes itself.
 type Direct struct {
 	caller iface.Caller
 	opts   Options
+	health *health
 }
 
 var _ API = (*Direct)(nil)
@@ -48,7 +52,7 @@ func New(caller iface.Caller, opts Options) *Direct {
 	if opts.Sleep == nil {
 		opts.Sleep = time.Sleep
 	}
-	return &Direct{caller: caller, opts: opts}
+	return &Direct{caller: caller, opts: opts, health: newHealth()}
 }
 
 // meta calls the metadata server, retrying while it is unreachable. Every
@@ -247,6 +251,9 @@ func (c *Direct) Get(ctx context.Context, path string, w io.Writer) (Manifest, e
 	return m, nil
 }
 
+// fetch reads one chunk, hedged: the best-scored replica first, the next one
+// after the recent p95 read latency, or at once if a replica fails or
+// returns data that does not match the chunk hash.
 func (c *Direct) fetch(ctx context.Context, loc *chunkdv1.ChunkLocation, ref *ChunkRef) ([]byte, error) {
 	var errs []error
 	// Two passes: a replica that timed out may answer the second time.
@@ -259,29 +266,56 @@ func (c *Direct) fetch(ctx context.Context, loc *chunkdv1.ChunkLocation, ref *Ch
 }
 
 func (c *Direct) fetchPass(ctx context.Context, loc *chunkdv1.ChunkLocation, ref *ChunkRef, errs *[]error) ([]byte, bool) {
-	for _, r := range loc.GetReplicas() {
-		res := c.caller.Do(ctx, []iface.Call{{To: iface.NodeID(r.GetNode()), Addr: r.GetAddr(), Kind: wire.KindGetChunk, Body: wire.Marshal(&chunkdv1.GetChunkRequest{Id: loc.GetId()})}})
-		if res[0].Err != nil {
-			*errs = append(*errs, fmt.Errorf("%s: %w", r.GetNode(), res[0].Err))
-			continue
-		}
+	reps := c.health.order(loc.GetReplicas())
+	if len(reps) == 0 {
+		return nil, false
+	}
+	body := wire.Marshal(&chunkdv1.GetChunkRequest{Id: loc.GetId()})
+	calls := make([]iface.Call, len(reps))
+	for i, r := range reps {
+		calls[i] = iface.Call{To: iface.NodeID(r.GetNode()), Addr: r.GetAddr(), Kind: wire.KindGetChunk, Body: body}
+	}
+	after := c.health.hedgeDelay()
+	if c.opts.NoHedge {
+		after = noHedge
+	}
+	var data []byte
+	rejected := make([]bool, len(reps))
+	h := c.caller.Hedge(ctx, calls, after, func(i int, r iface.Result) bool {
 		var resp chunkdv1.GetChunkResponse
-		if err := wire.Decode(res[0].Body, &resp); err != nil {
-			*errs = append(*errs, err)
-			continue
+		if err := wire.Decode(r.Body, &resp); err != nil {
+			rejected[i] = true
+			*errs = append(*errs, fmt.Errorf("%s: %w", reps[i].GetNode(), err))
+			return false
 		}
 		if sum := sha256.Sum256(resp.GetData()); !bytes.Equal(sum[:], loc.GetId()) {
-			if !slices.Contains(ref.Rejected, r.GetNode()) {
-				ref.Rejected = append(ref.Rejected, r.GetNode())
+			rejected[i] = true
+			if !slices.Contains(ref.Rejected, reps[i].GetNode()) {
+				ref.Rejected = append(ref.Rejected, reps[i].GetNode())
 			}
-			*errs = append(*errs, fmt.Errorf("%s: data does not match chunk hash", r.GetNode()))
-			continue
+			*errs = append(*errs, fmt.Errorf("%s: data does not match chunk hash", reps[i].GetNode()))
+			return false
 		}
-		ref.ServedBy = r.GetNode()
-		return resp.GetData(), true
+		data = resp.GetData()
+		return true
+	})
+	for i := range h.Launched {
+		r := h.Results[i]
+		c.health.observe(reps[i].GetNode(), r, i == h.Winner)
+		if r.Err != nil && !r.Pending {
+			*errs = append(*errs, fmt.Errorf("%s: %w", reps[i].GetNode(), r.Err))
+		}
 	}
-	return nil, false
+	if h.Winner < 0 {
+		return nil, false
+	}
+	ref.ServedBy = reps[h.Winner].GetNode()
+	ref.Hedged = h.Launched > 1
+	return data, true
 }
+
+// noHedge is a hedge delay no read reaches.
+const noHedge = time.Duration(1) << 60
 
 // List returns live files under prefix.
 func (c *Direct) List(ctx context.Context, prefix string) ([]FileInfo, error) {

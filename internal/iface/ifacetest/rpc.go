@@ -128,4 +128,61 @@ func RPC(t *testing.T, newEnv func(t *testing.T) RPCEnv) {
 			t.Fatalf("err = %v, want unavailable", r[0].Err)
 		}
 	})
+
+	t.Run("hedge", func(t *testing.T) {
+		env := newEnv(t)
+		for _, id := range []iface.NodeID{"fast", "slow", "bad", "down"} {
+			clk := env.Clock(id)
+			env.Server(id).Serve(id, "test.hedge", func(m iface.Message, respond iface.Responder) {
+				switch m.To {
+				case "slow":
+					clk.AfterFunc(400*time.Millisecond, func() { respond([]byte("ok"), nil) })
+				case "bad":
+					respond([]byte("corrupt"), nil)
+				case "down":
+					respond(nil, iface.Errorf(iface.CodeInternal, "disk"))
+				default:
+					respond([]byte("ok"), nil)
+				}
+			}, iface.ServeOpts{})
+		}
+		mk := func(ids ...iface.NodeID) []iface.Call {
+			var out []iface.Call
+			for _, id := range ids {
+				out = append(out, iface.Call{To: id, Addr: env.Addr(id), Kind: "test.hedge"})
+			}
+			return out
+		}
+		okBody := func(_ int, r iface.Result) bool { return string(r.Body) == "ok" }
+		const long = time.Hour // a hedge that must never be what launched the next call
+
+		tests := []struct {
+			name         string
+			calls        []iface.Call
+			after        time.Duration
+			winner       int
+			launched     int
+			firstPending bool
+		}{
+			{"fast first: no hedge sent", mk("fast", "slow"), 100 * time.Millisecond, 0, 1, false},
+			{"slow first: hedge wins", mk("slow", "fast"), 50 * time.Millisecond, 1, 2, true},
+			{"error: next sent at once", mk("down", "fast"), long, 1, 2, false},
+			{"rejected answer: next sent at once", mk("bad", "fast"), long, 1, 2, false},
+			{"nothing acceptable", mk("bad", "down"), long, -1, 2, false},
+		}
+		for _, tc := range tests {
+			t.Run(tc.name, func(t *testing.T) {
+				h := env.Caller().Hedge(ctx, tc.calls, tc.after, okBody)
+				if h.Winner != tc.winner || h.Launched != tc.launched {
+					t.Fatalf("winner %d launched %d, want %d and %d (%+v)", h.Winner, h.Launched, tc.winner, tc.launched, h.Results)
+				}
+				if h.Results[0].Pending != tc.firstPending {
+					t.Fatalf("first call pending = %v, want %v", h.Results[0].Pending, tc.firstPending)
+				}
+				if tc.winner >= 0 && h.Results[tc.winner].Latency >= 400*time.Millisecond {
+					t.Fatalf("winner latency %v", h.Results[tc.winner].Latency)
+				}
+			})
+		}
+	})
 }

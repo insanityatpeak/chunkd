@@ -41,6 +41,8 @@ type Net struct {
 	rpcs     map[rpcKey]iface.RPCHandler
 	blocked  map[link]bool
 	down     map[iface.NodeID]bool
+	frozen   map[iface.NodeID][]iface.Message // held until Thaw
+	slow     map[iface.NodeID]time.Duration
 	stats    NetStats
 }
 
@@ -62,6 +64,8 @@ func NewNet(c *Clock, r iface.Rand, f Faults) *Net {
 		rpcs:     map[rpcKey]iface.RPCHandler{},
 		blocked:  map[link]bool{},
 		down:     map[iface.NodeID]bool{},
+		frozen:   map[iface.NodeID][]iface.Message{},
+		slow:     map[iface.NodeID]time.Duration{},
 	}
 }
 
@@ -93,6 +97,10 @@ func (n *Net) Send(to iface.NodeID, m iface.Message) {
 		n.stats.Dropped++
 		return
 	}
+	if _, ok := n.frozen[m.From]; ok {
+		n.frozen[m.From] = append(n.frozen[m.From], m)
+		return
+	}
 	n.schedule(m)
 	if chance(n.rng, n.faults.DupRate) {
 		n.stats.Duplicated++
@@ -112,12 +120,17 @@ func (n *Net) schedule(m iface.Message) {
 	if bps := n.faults.BytesPerSec; bps > 0 {
 		d += time.Duration(int64(len(m.Body)) * int64(time.Second) / bps)
 	}
+	d += n.slow[m.From] + n.slow[m.To]
 	n.clock.AfterFunc(d, func() { n.deliver(m) })
 }
 
 func (n *Net) deliver(m iface.Message) {
 	if n.cut(m.From, m.To) {
 		n.stats.Dropped++
+		return
+	}
+	if _, ok := n.frozen[m.To]; ok {
+		n.frozen[m.To] = append(n.frozen[m.To], m)
 		return
 	}
 	if h, ok := n.rpcs[rpcKey{m.To, m.Kind}]; ok {
@@ -176,15 +189,21 @@ func (n *Net) Crash(id iface.NodeID) { n.down[id] = true }
 // Restart makes a crashed node reachable again.
 func (n *Net) Restart(id iface.NodeID) { delete(n.down, id) }
 
-// Caller is an iface.Caller on the sim network. Do advances the shared clock
-// until every call is answered or times out, so a client written as
-// blocking code still runs deterministically on the sim goroutine.
+// Caller is an iface.Caller on the sim network. Do and Hedge advance the
+// shared clock until their calls are answered or time out, so a client
+// written as blocking code still runs deterministically on the sim goroutine.
 type Caller struct {
 	net     *Net
 	id      iface.NodeID
 	timeout time.Duration
 	nextReq uint64
-	pending map[uint64]*iface.Result
+	pending map[uint64]*call
+}
+
+type call struct {
+	res      *iface.Result
+	sent     iface.Instant
+	deadline iface.Instant
 }
 
 var _ iface.Caller = (*Caller)(nil)
@@ -192,37 +211,55 @@ var _ iface.Caller = (*Caller)(nil)
 // NewCaller registers a client endpoint id on the network. Each call times
 // out after timeout of simulated time.
 func (n *Net) NewCaller(id iface.NodeID, timeout time.Duration) *Caller {
-	c := &Caller{net: n, id: id, timeout: timeout, pending: map[uint64]*iface.Result{}}
+	c := &Caller{net: n, id: id, timeout: timeout, pending: map[uint64]*call{}}
 	n.Listen(id, c.handle)
 	return c
 }
 
 func (c *Caller) handle(m iface.Message) {
-	r, ok := c.pending[m.ReqID]
+	p, ok := c.pending[m.ReqID]
 	if !ok || m.Kind != KindResponse {
 		return // late or duplicate response
 	}
 	if m.Err != nil {
-		r.Err = m.Err
+		p.res.Err = m.Err
 	} else {
-		r.Body = m.Body
+		p.res.Body = m.Body
 	}
+	p.res.Latency = c.net.clock.Now().Sub(p.sent)
 	delete(c.pending, m.ReqID)
 }
 
 // Sleep advances simulated time; clients use it to back off between retries.
 func (c *Caller) Sleep(d time.Duration) { c.net.clock.Advance(d) }
 
+func (c *Caller) send(ic iface.Call, res *iface.Result) uint64 {
+	c.nextReq++
+	now := c.net.clock.Now()
+	c.pending[c.nextReq] = &call{res: res, sent: now, deadline: now.Add(c.timeout)}
+	c.net.Send(ic.To, iface.Message{From: c.id, Kind: ic.Kind, ReqID: c.nextReq, Body: ic.Body})
+	return c.nextReq
+}
+
+// expire fails a pending call as unavailable.
+func (c *Caller) expire(req uint64, ic iface.Call, ctx context.Context) {
+	p := c.pending[req]
+	delete(c.pending, req)
+	p.res.Latency = c.net.clock.Now().Sub(p.sent)
+	if ctx.Err() != nil {
+		p.res.Err = iface.Errorf(iface.CodeUnavailable, "%s to %s: %v", ic.Kind, ic.To, ctx.Err())
+	} else {
+		p.res.Err = iface.Errorf(iface.CodeUnavailable, "%s to %s: timed out after %v", ic.Kind, ic.To, c.timeout)
+	}
+}
+
 // Do sends every call, then steps the clock until all are answered, the
 // timeout passes, or ctx is cancelled.
 func (c *Caller) Do(ctx context.Context, calls []iface.Call) []iface.Result {
 	results := make([]iface.Result, len(calls))
 	ids := make([]uint64, len(calls))
-	for i, call := range calls {
-		c.nextReq++
-		ids[i] = c.nextReq
-		c.pending[ids[i]] = &results[i]
-		c.net.Send(call.To, iface.Message{From: c.id, Kind: call.Kind, ReqID: ids[i], Body: call.Body})
+	for i, ic := range calls {
+		ids[i] = c.send(ic, &results[i])
 	}
 	deadline := c.net.clock.Now().Add(c.timeout)
 	open := func() bool {
@@ -243,15 +280,125 @@ func (c *Caller) Do(ctx context.Context, calls []iface.Call) []iface.Result {
 	}
 	for i, id := range ids {
 		if _, ok := c.pending[id]; ok {
-			delete(c.pending, id)
-			if ctx.Err() != nil {
-				results[i].Err = iface.Errorf(iface.CodeUnavailable, "%s to %s: %v", calls[i].Kind, calls[i].To, ctx.Err())
-			} else {
-				results[i].Err = iface.Errorf(iface.CodeUnavailable, "%s to %s: timed out after %v", calls[i].Kind, calls[i].To, c.timeout)
-			}
+			c.expire(id, calls[i], ctx)
 		}
 	}
 	return results
+}
+
+// Hedge implements iface.Caller. Launches, timeouts and deliveries all
+// happen at clock instants, so the winner is a function of the seed.
+func (c *Caller) Hedge(ctx context.Context, calls []iface.Call, after time.Duration, accept func(int, iface.Result) bool) iface.HedgeResult {
+	out := iface.HedgeResult{Winner: -1, Results: make([]iface.Result, len(calls))}
+	if len(calls) == 0 {
+		return out
+	}
+	ids := make([]uint64, len(calls))
+	settled := make([]bool, len(calls))
+	var lastLaunch iface.Instant
+	launch := func() {
+		i := out.Launched
+		ids[i] = c.send(calls[i], &out.Results[i])
+		out.Launched++
+		lastLaunch = c.net.clock.Now()
+	}
+	launch()
+	for ctx.Err() == nil {
+		now := c.net.clock.Now()
+		allFailed := true
+		for i := range out.Launched {
+			if settled[i] {
+				continue
+			}
+			p, open := c.pending[ids[i]]
+			if open && now >= p.deadline {
+				c.expire(ids[i], calls[i], ctx)
+				open = false
+			}
+			if open {
+				allFailed = false
+				continue
+			}
+			settled[i] = true
+			if out.Results[i].Err == nil && accept(i, out.Results[i]) {
+				out.Winner = i
+				break
+			}
+		}
+		if out.Winner >= 0 {
+			break
+		}
+		more := out.Launched < len(calls)
+		if more && (allFailed || now >= lastLaunch.Add(after)) {
+			launch()
+			continue
+		}
+		if allFailed && !more {
+			break
+		}
+		// Wake at the next launch, the next deadline, or the next event.
+		wake := iface.Instant(-1)
+		if more {
+			wake = lastLaunch.Add(after)
+		}
+		for i := range out.Launched {
+			if p, open := c.pending[ids[i]]; open && (wake < 0 || p.deadline < wake) {
+				wake = p.deadline
+			}
+		}
+		if next, ok := c.net.clock.Next(); ok && next <= wake {
+			c.net.clock.Step()
+		} else {
+			c.net.clock.Advance(wake.Sub(now))
+		}
+	}
+	now := c.net.clock.Now()
+	for i := range out.Launched {
+		if p, open := c.pending[ids[i]]; open {
+			delete(c.pending, ids[i])
+			out.Results[i] = iface.Result{Err: iface.Errorf(iface.CodeUnavailable, "%s to %s: abandoned", calls[i].Kind, calls[i].To),
+				Latency: now.Sub(p.sent), Pending: true}
+		}
+	}
+	return out
+}
+
+// Freeze stops a node without killing it, like a long GC pause or a
+// SIGSTOP: messages to and from it are held, then released by Thaw.
+// SIMPLIFIED: the node's timers keep firing, so its heartbeats queue up and
+// arrive as a burst on thaw. A real paused process fires them late instead.
+func (n *Net) Freeze(id iface.NodeID) {
+	if _, ok := n.frozen[id]; !ok {
+		n.frozen[id] = []iface.Message{}
+	}
+}
+
+// Thaw releases a frozen node's held messages, each with a fresh delay.
+func (n *Net) Thaw(id iface.NodeID) {
+	held, ok := n.frozen[id]
+	if !ok {
+		return
+	}
+	delete(n.frozen, id)
+	for _, m := range held {
+		n.schedule(m)
+	}
+}
+
+// Frozen reports whether a node is frozen.
+func (n *Net) Frozen(id iface.NodeID) bool {
+	_, ok := n.frozen[id]
+	return ok
+}
+
+// SetSlow adds d to every message to or from id: a gray failure, alive to
+// the detector but slow to serve. Zero clears it.
+func (n *Net) SetSlow(id iface.NodeID, d time.Duration) {
+	if d <= 0 {
+		delete(n.slow, id)
+		return
+	}
+	n.slow[id] = d
 }
 
 // Crashed reports whether a node is crashed.

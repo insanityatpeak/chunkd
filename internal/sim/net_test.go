@@ -195,3 +195,52 @@ func TestCrashedNodeUnreachable(t *testing.T) {
 		t.Fatalf("call after restart: %v", r[0].Err)
 	}
 }
+
+func TestFreezeHoldsThenReleases(t *testing.T) {
+	c := NewClock()
+	n := NewNet(c, NewRand(1), Faults{MinDelay: time.Millisecond, MaxDelay: time.Millisecond})
+	var got []string
+	for _, id := range []iface.NodeID{"a", "b"} {
+		n.Listen(id, func(m iface.Message) { got = append(got, fmt.Sprintf("%s->%s", m.From, m.To)) })
+	}
+	n.Freeze("b")
+	n.Send("b", iface.Message{From: "a"})
+	n.Send("a", iface.Message{From: "b"})
+	c.Advance(time.Minute)
+	if len(got) != 0 || !n.Frozen("b") {
+		t.Fatalf("frozen node exchanged messages: %v", got)
+	}
+	n.Thaw("b")
+	c.Advance(time.Second)
+	slices.Sort(got)
+	if !slices.Equal(got, []string{"a->b", "b->a"}) {
+		t.Fatalf("after thaw got %v", got)
+	}
+	if n.Stats().Dropped != 0 {
+		t.Fatalf("freeze dropped %d messages", n.Stats().Dropped)
+	}
+}
+
+func TestSlowAddsDelayBothWays(t *testing.T) {
+	c := NewClock()
+	n := NewNet(c, NewRand(1), Faults{})
+	var at []time.Duration
+	for _, id := range []iface.NodeID{"a", "b", "c"} {
+		n.Listen(id, func(iface.Message) { at = append(at, time.Duration(c.Now())) })
+	}
+	n.SetSlow("b", 300*time.Millisecond)
+	n.Send("b", iface.Message{From: "a"})
+	n.Send("a", iface.Message{From: "b"})
+	n.Send("c", iface.Message{From: "a"})
+	c.Advance(time.Second)
+	if !slices.Equal(at, []time.Duration{0, 300 * time.Millisecond, 300 * time.Millisecond}) {
+		t.Fatalf("delivery times %v", at)
+	}
+	n.SetSlow("b", 0)
+	at = nil
+	n.Send("b", iface.Message{From: "a"})
+	c.Advance(time.Second)
+	if !slices.Equal(at, []time.Duration{time.Second}) {
+		t.Fatalf("after clear %v", at)
+	}
+}

@@ -184,7 +184,7 @@ func (s *Server) apply(op *chunkdv1.Op) (Result, error) {
 
 func (s *Server) replica(id iface.NodeID) *chunkdv1.Replica {
 	n, _ := s.cluster.Node(id)
-	return &chunkdv1.Replica{Node: string(id), Addr: n.Addr}
+	return &chunkdv1.Replica{Node: string(id), Addr: n.Addr, Suspect: n.State == detector.Suspect}
 }
 
 func (s *Server) begin(m iface.Message, respond iface.Responder) {

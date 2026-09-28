@@ -93,6 +93,8 @@ message Replica {
   string node = 1;
   // gRPC address in real mode; empty in sim.
   string addr = 2;
+  // The detector suspects the node: readable, tried after alive replicas.
+  bool suspect = 3;
 }
 
 message ChunkPlacement {
