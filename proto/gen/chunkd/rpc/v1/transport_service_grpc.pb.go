@@ -20,7 +20,9 @@ import (
 const _ = grpc.SupportPackageIsVersion9
 
 const (
-	TransportService_Deliver_FullMethodName = "/chunkd.rpc.v1.TransportService/Deliver"
+	TransportService_Deliver_FullMethodName    = "/chunkd.rpc.v1.TransportService/Deliver"
+	TransportService_Call_FullMethodName       = "/chunkd.rpc.v1.TransportService/Call"
+	TransportService_CallStream_FullMethodName = "/chunkd.rpc.v1.TransportService/CallStream"
 )
 
 // TransportServiceClient is the client API for TransportService service.
@@ -32,6 +34,11 @@ const (
 // that it was processed.
 type TransportServiceClient interface {
 	Deliver(ctx context.Context, in *v1.DeliverRequest, opts ...grpc.CallOption) (*v1.DeliverResponse, error)
+	// Call is request/response for control messages up to 1 MiB.
+	Call(ctx context.Context, in *v1.CallRequest, opts ...grpc.CallOption) (*v1.CallResponse, error)
+	// CallStream is request/response for chunk transfers, framed in 1 MiB
+	// pieces so no single gRPC message exceeds the 4 MiB default limit.
+	CallStream(ctx context.Context, opts ...grpc.CallOption) (grpc.BidiStreamingClient[v1.CallStreamRequest, v1.CallStreamResponse], error)
 }
 
 type transportServiceClient struct {
@@ -52,6 +59,29 @@ func (c *transportServiceClient) Deliver(ctx context.Context, in *v1.DeliverRequ
 	return out, nil
 }
 
+func (c *transportServiceClient) Call(ctx context.Context, in *v1.CallRequest, opts ...grpc.CallOption) (*v1.CallResponse, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(v1.CallResponse)
+	err := c.cc.Invoke(ctx, TransportService_Call_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *transportServiceClient) CallStream(ctx context.Context, opts ...grpc.CallOption) (grpc.BidiStreamingClient[v1.CallStreamRequest, v1.CallStreamResponse], error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	stream, err := c.cc.NewStream(ctx, &TransportService_ServiceDesc.Streams[0], TransportService_CallStream_FullMethodName, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	x := &grpc.GenericClientStream[v1.CallStreamRequest, v1.CallStreamResponse]{ClientStream: stream}
+	return x, nil
+}
+
+// This type alias is provided for backwards compatibility with existing code that references the prior non-generic stream type by name.
+type TransportService_CallStreamClient = grpc.BidiStreamingClient[v1.CallStreamRequest, v1.CallStreamResponse]
+
 // TransportServiceServer is the server API for TransportService service.
 // All implementations must embed UnimplementedTransportServiceServer
 // for forward compatibility.
@@ -61,6 +91,11 @@ func (c *transportServiceClient) Deliver(ctx context.Context, in *v1.DeliverRequ
 // that it was processed.
 type TransportServiceServer interface {
 	Deliver(context.Context, *v1.DeliverRequest) (*v1.DeliverResponse, error)
+	// Call is request/response for control messages up to 1 MiB.
+	Call(context.Context, *v1.CallRequest) (*v1.CallResponse, error)
+	// CallStream is request/response for chunk transfers, framed in 1 MiB
+	// pieces so no single gRPC message exceeds the 4 MiB default limit.
+	CallStream(grpc.BidiStreamingServer[v1.CallStreamRequest, v1.CallStreamResponse]) error
 	mustEmbedUnimplementedTransportServiceServer()
 }
 
@@ -73,6 +108,12 @@ type UnimplementedTransportServiceServer struct{}
 
 func (UnimplementedTransportServiceServer) Deliver(context.Context, *v1.DeliverRequest) (*v1.DeliverResponse, error) {
 	return nil, status.Error(codes.Unimplemented, "method Deliver not implemented")
+}
+func (UnimplementedTransportServiceServer) Call(context.Context, *v1.CallRequest) (*v1.CallResponse, error) {
+	return nil, status.Error(codes.Unimplemented, "method Call not implemented")
+}
+func (UnimplementedTransportServiceServer) CallStream(grpc.BidiStreamingServer[v1.CallStreamRequest, v1.CallStreamResponse]) error {
+	return status.Error(codes.Unimplemented, "method CallStream not implemented")
 }
 func (UnimplementedTransportServiceServer) mustEmbedUnimplementedTransportServiceServer() {}
 func (UnimplementedTransportServiceServer) testEmbeddedByValue()                          {}
@@ -113,6 +154,31 @@ func _TransportService_Deliver_Handler(srv interface{}, ctx context.Context, dec
 	return interceptor(ctx, in, info, handler)
 }
 
+func _TransportService_Call_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(v1.CallRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(TransportServiceServer).Call(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: TransportService_Call_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(TransportServiceServer).Call(ctx, req.(*v1.CallRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+func _TransportService_CallStream_Handler(srv interface{}, stream grpc.ServerStream) error {
+	return srv.(TransportServiceServer).CallStream(&grpc.GenericServerStream[v1.CallStreamRequest, v1.CallStreamResponse]{ServerStream: stream})
+}
+
+// This type alias is provided for backwards compatibility with existing code that references the prior non-generic stream type by name.
+type TransportService_CallStreamServer = grpc.BidiStreamingServer[v1.CallStreamRequest, v1.CallStreamResponse]
+
 // TransportService_ServiceDesc is the grpc.ServiceDesc for TransportService service.
 // It's only intended for direct use with grpc.RegisterService,
 // and not to be introspected or modified (even as a copy)
@@ -124,7 +190,18 @@ var TransportService_ServiceDesc = grpc.ServiceDesc{
 			MethodName: "Deliver",
 			Handler:    _TransportService_Deliver_Handler,
 		},
+		{
+			MethodName: "Call",
+			Handler:    _TransportService_Call_Handler,
+		},
 	},
-	Streams:  []grpc.StreamDesc{},
+	Streams: []grpc.StreamDesc{
+		{
+			StreamName:    "CallStream",
+			Handler:       _TransportService_CallStream_Handler,
+			ServerStreams: true,
+			ClientStreams: true,
+		},
+	},
 	Metadata: "chunkd/rpc/v1/transport_service.proto",
 }

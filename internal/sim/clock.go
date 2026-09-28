@@ -59,6 +59,14 @@ func (c *Clock) Step() bool {
 	return true
 }
 
+// Next returns the deadline of the earliest pending event.
+func (c *Clock) Next() (iface.Instant, bool) {
+	if len(c.q) == 0 {
+		return 0, false
+	}
+	return c.q[0].at, true
+}
+
 // Pending returns the number of scheduled events that have not fired.
 func (c *Clock) Pending() int { return len(c.q) }
 

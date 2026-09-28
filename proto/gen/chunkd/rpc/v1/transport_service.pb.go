@@ -25,19 +25,30 @@ var File_chunkd_rpc_v1_transport_service_proto protoreflect.FileDescriptor
 
 const file_chunkd_rpc_v1_transport_service_proto_rawDesc = "" +
 	"\n" +
-	"%chunkd/rpc/v1/transport_service.proto\x12\rchunkd.rpc.v1\x1a\x19chunkd/v1/transport.proto2T\n" +
+	"%chunkd/rpc/v1/transport_service.proto\x12\rchunkd.rpc.v1\x1a\x19chunkd/v1/transport.proto2\xdc\x01\n" +
 	"\x10TransportService\x12@\n" +
-	"\aDeliver\x12\x19.chunkd.v1.DeliverRequest\x1a\x1a.chunkd.v1.DeliverResponseB@Z>github.com/insanityatpeak/chunkd/proto/gen/chunkd/rpc/v1;rpcv1b\x06proto3"
+	"\aDeliver\x12\x19.chunkd.v1.DeliverRequest\x1a\x1a.chunkd.v1.DeliverResponse\x127\n" +
+	"\x04Call\x12\x16.chunkd.v1.CallRequest\x1a\x17.chunkd.v1.CallResponse\x12M\n" +
+	"\n" +
+	"CallStream\x12\x1c.chunkd.v1.CallStreamRequest\x1a\x1d.chunkd.v1.CallStreamResponse(\x010\x01B@Z>github.com/insanityatpeak/chunkd/proto/gen/chunkd/rpc/v1;rpcv1b\x06proto3"
 
 var file_chunkd_rpc_v1_transport_service_proto_goTypes = []any{
-	(*v1.DeliverRequest)(nil),  // 0: chunkd.v1.DeliverRequest
-	(*v1.DeliverResponse)(nil), // 1: chunkd.v1.DeliverResponse
+	(*v1.DeliverRequest)(nil),     // 0: chunkd.v1.DeliverRequest
+	(*v1.CallRequest)(nil),        // 1: chunkd.v1.CallRequest
+	(*v1.CallStreamRequest)(nil),  // 2: chunkd.v1.CallStreamRequest
+	(*v1.DeliverResponse)(nil),    // 3: chunkd.v1.DeliverResponse
+	(*v1.CallResponse)(nil),       // 4: chunkd.v1.CallResponse
+	(*v1.CallStreamResponse)(nil), // 5: chunkd.v1.CallStreamResponse
 }
 var file_chunkd_rpc_v1_transport_service_proto_depIdxs = []int32{
 	0, // 0: chunkd.rpc.v1.TransportService.Deliver:input_type -> chunkd.v1.DeliverRequest
-	1, // 1: chunkd.rpc.v1.TransportService.Deliver:output_type -> chunkd.v1.DeliverResponse
-	1, // [1:2] is the sub-list for method output_type
-	0, // [0:1] is the sub-list for method input_type
+	1, // 1: chunkd.rpc.v1.TransportService.Call:input_type -> chunkd.v1.CallRequest
+	2, // 2: chunkd.rpc.v1.TransportService.CallStream:input_type -> chunkd.v1.CallStreamRequest
+	3, // 3: chunkd.rpc.v1.TransportService.Deliver:output_type -> chunkd.v1.DeliverResponse
+	4, // 4: chunkd.rpc.v1.TransportService.Call:output_type -> chunkd.v1.CallResponse
+	5, // 5: chunkd.rpc.v1.TransportService.CallStream:output_type -> chunkd.v1.CallStreamResponse
+	3, // [3:6] is the sub-list for method output_type
+	0, // [0:3] is the sub-list for method input_type
 	0, // [0:0] is the sub-list for extension type_name
 	0, // [0:0] is the sub-list for extension extendee
 	0, // [0:0] is the sub-list for field type_name

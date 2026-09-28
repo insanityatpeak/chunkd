@@ -84,7 +84,7 @@ func Run(component string, cfg Config, setup func(*Process) error) error {
 		if err != nil {
 			return err
 		}
-		gs = grpc.NewServer(grpc.UnaryInterceptor(requestIDInterceptor))
+		gs = grpc.NewServer(grpc.UnaryInterceptor(requestIDInterceptor), grpc.MaxRecvMsgSize(grpcnet.MaxUnary), grpc.MaxSendMsgSize(grpcnet.MaxUnary))
 		p.Net.Register(gs)
 		rpcv1.RegisterPingServiceServer(gs, pingServer{id: cfg.ID})
 		go func() { errc <- gs.Serve(lis) }()

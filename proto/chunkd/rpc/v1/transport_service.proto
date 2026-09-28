@@ -11,4 +11,9 @@ option go_package = "github.com/insanityatpeak/chunkd/proto/gen/chunkd/rpc/v1;rp
 // that it was processed.
 service TransportService {
   rpc Deliver(chunkd.v1.DeliverRequest) returns (chunkd.v1.DeliverResponse);
+  // Call is request/response for control messages up to 1 MiB.
+  rpc Call(chunkd.v1.CallRequest) returns (chunkd.v1.CallResponse);
+  // CallStream is request/response for chunk transfers, framed in 1 MiB
+  // pieces so no single gRPC message exceeds the 4 MiB default limit.
+  rpc CallStream(stream chunkd.v1.CallStreamRequest) returns (stream chunkd.v1.CallStreamResponse);
 }

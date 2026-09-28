@@ -31,7 +31,10 @@ type Envelope struct {
 	Body  []byte                 `protobuf:"bytes,5,opt,name=body,proto3" json:"body,omitempty"`
 	// gRPC address the sender listens on, so receivers can reply without a
 	// static peer table.
-	FromAddr      string `protobuf:"bytes,6,opt,name=from_addr,json=fromAddr,proto3" json:"from_addr,omitempty"`
+	FromAddr string `protobuf:"bytes,6,opt,name=from_addr,json=fromAddr,proto3" json:"from_addr,omitempty"`
+	// Set on failed RPC responses: iface.Code and message.
+	ErrCode       uint32 `protobuf:"varint,7,opt,name=err_code,json=errCode,proto3" json:"err_code,omitempty"`
+	ErrMsg        string `protobuf:"bytes,8,opt,name=err_msg,json=errMsg,proto3" json:"err_msg,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -104,6 +107,20 @@ func (x *Envelope) GetBody() []byte {
 func (x *Envelope) GetFromAddr() string {
 	if x != nil {
 		return x.FromAddr
+	}
+	return ""
+}
+
+func (x *Envelope) GetErrCode() uint32 {
+	if x != nil {
+		return x.ErrCode
+	}
+	return 0
+}
+
+func (x *Envelope) GetErrMsg() string {
+	if x != nil {
+		return x.ErrMsg
 	}
 	return ""
 }
@@ -188,21 +205,228 @@ func (*DeliverResponse) Descriptor() ([]byte, []int) {
 	return file_chunkd_v1_transport_proto_rawDescGZIP(), []int{2}
 }
 
+type CallRequest struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	Envelope      *Envelope              `protobuf:"bytes,1,opt,name=envelope,proto3" json:"envelope,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *CallRequest) Reset() {
+	*x = CallRequest{}
+	mi := &file_chunkd_v1_transport_proto_msgTypes[3]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *CallRequest) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*CallRequest) ProtoMessage() {}
+
+func (x *CallRequest) ProtoReflect() protoreflect.Message {
+	mi := &file_chunkd_v1_transport_proto_msgTypes[3]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use CallRequest.ProtoReflect.Descriptor instead.
+func (*CallRequest) Descriptor() ([]byte, []int) {
+	return file_chunkd_v1_transport_proto_rawDescGZIP(), []int{3}
+}
+
+func (x *CallRequest) GetEnvelope() *Envelope {
+	if x != nil {
+		return x.Envelope
+	}
+	return nil
+}
+
+type CallResponse struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	Envelope      *Envelope              `protobuf:"bytes,1,opt,name=envelope,proto3" json:"envelope,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *CallResponse) Reset() {
+	*x = CallResponse{}
+	mi := &file_chunkd_v1_transport_proto_msgTypes[4]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *CallResponse) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*CallResponse) ProtoMessage() {}
+
+func (x *CallResponse) ProtoReflect() protoreflect.Message {
+	mi := &file_chunkd_v1_transport_proto_msgTypes[4]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use CallResponse.ProtoReflect.Descriptor instead.
+func (*CallResponse) Descriptor() ([]byte, []int) {
+	return file_chunkd_v1_transport_proto_rawDescGZIP(), []int{4}
+}
+
+func (x *CallResponse) GetEnvelope() *Envelope {
+	if x != nil {
+		return x.Envelope
+	}
+	return nil
+}
+
+// CallStream frames carry a large request or response in pieces: the first
+// frame has the envelope (with an empty body), the rest carry body bytes in
+// order.
+type CallStreamRequest struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	Header        *Envelope              `protobuf:"bytes,1,opt,name=header,proto3" json:"header,omitempty"`
+	Data          []byte                 `protobuf:"bytes,2,opt,name=data,proto3" json:"data,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *CallStreamRequest) Reset() {
+	*x = CallStreamRequest{}
+	mi := &file_chunkd_v1_transport_proto_msgTypes[5]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *CallStreamRequest) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*CallStreamRequest) ProtoMessage() {}
+
+func (x *CallStreamRequest) ProtoReflect() protoreflect.Message {
+	mi := &file_chunkd_v1_transport_proto_msgTypes[5]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use CallStreamRequest.ProtoReflect.Descriptor instead.
+func (*CallStreamRequest) Descriptor() ([]byte, []int) {
+	return file_chunkd_v1_transport_proto_rawDescGZIP(), []int{5}
+}
+
+func (x *CallStreamRequest) GetHeader() *Envelope {
+	if x != nil {
+		return x.Header
+	}
+	return nil
+}
+
+func (x *CallStreamRequest) GetData() []byte {
+	if x != nil {
+		return x.Data
+	}
+	return nil
+}
+
+type CallStreamResponse struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	Header        *Envelope              `protobuf:"bytes,1,opt,name=header,proto3" json:"header,omitempty"`
+	Data          []byte                 `protobuf:"bytes,2,opt,name=data,proto3" json:"data,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *CallStreamResponse) Reset() {
+	*x = CallStreamResponse{}
+	mi := &file_chunkd_v1_transport_proto_msgTypes[6]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *CallStreamResponse) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*CallStreamResponse) ProtoMessage() {}
+
+func (x *CallStreamResponse) ProtoReflect() protoreflect.Message {
+	mi := &file_chunkd_v1_transport_proto_msgTypes[6]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use CallStreamResponse.ProtoReflect.Descriptor instead.
+func (*CallStreamResponse) Descriptor() ([]byte, []int) {
+	return file_chunkd_v1_transport_proto_rawDescGZIP(), []int{6}
+}
+
+func (x *CallStreamResponse) GetHeader() *Envelope {
+	if x != nil {
+		return x.Header
+	}
+	return nil
+}
+
+func (x *CallStreamResponse) GetData() []byte {
+	if x != nil {
+		return x.Data
+	}
+	return nil
+}
+
 var File_chunkd_v1_transport_proto protoreflect.FileDescriptor
 
 const file_chunkd_v1_transport_proto_rawDesc = "" +
 	"\n" +
-	"\x19chunkd/v1/transport.proto\x12\tchunkd.v1\"\x8a\x01\n" +
+	"\x19chunkd/v1/transport.proto\x12\tchunkd.v1\"\xbe\x01\n" +
 	"\bEnvelope\x12\x12\n" +
 	"\x04from\x18\x01 \x01(\tR\x04from\x12\x0e\n" +
 	"\x02to\x18\x02 \x01(\tR\x02to\x12\x12\n" +
 	"\x04kind\x18\x03 \x01(\tR\x04kind\x12\x15\n" +
 	"\x06req_id\x18\x04 \x01(\x04R\x05reqId\x12\x12\n" +
 	"\x04body\x18\x05 \x01(\fR\x04body\x12\x1b\n" +
-	"\tfrom_addr\x18\x06 \x01(\tR\bfromAddr\"A\n" +
+	"\tfrom_addr\x18\x06 \x01(\tR\bfromAddr\x12\x19\n" +
+	"\berr_code\x18\a \x01(\rR\aerrCode\x12\x17\n" +
+	"\aerr_msg\x18\b \x01(\tR\x06errMsg\"A\n" +
 	"\x0eDeliverRequest\x12/\n" +
 	"\benvelope\x18\x01 \x01(\v2\x13.chunkd.v1.EnvelopeR\benvelope\"\x11\n" +
-	"\x0fDeliverResponseB?Z=github.com/insanityatpeak/chunkd/proto/gen/chunkd/v1;chunkdv1b\x06proto3"
+	"\x0fDeliverResponse\">\n" +
+	"\vCallRequest\x12/\n" +
+	"\benvelope\x18\x01 \x01(\v2\x13.chunkd.v1.EnvelopeR\benvelope\"?\n" +
+	"\fCallResponse\x12/\n" +
+	"\benvelope\x18\x01 \x01(\v2\x13.chunkd.v1.EnvelopeR\benvelope\"T\n" +
+	"\x11CallStreamRequest\x12+\n" +
+	"\x06header\x18\x01 \x01(\v2\x13.chunkd.v1.EnvelopeR\x06header\x12\x12\n" +
+	"\x04data\x18\x02 \x01(\fR\x04data\"U\n" +
+	"\x12CallStreamResponse\x12+\n" +
+	"\x06header\x18\x01 \x01(\v2\x13.chunkd.v1.EnvelopeR\x06header\x12\x12\n" +
+	"\x04data\x18\x02 \x01(\fR\x04dataB?Z=github.com/insanityatpeak/chunkd/proto/gen/chunkd/v1;chunkdv1b\x06proto3"
 
 var (
 	file_chunkd_v1_transport_proto_rawDescOnce sync.Once
@@ -216,19 +440,27 @@ func file_chunkd_v1_transport_proto_rawDescGZIP() []byte {
 	return file_chunkd_v1_transport_proto_rawDescData
 }
 
-var file_chunkd_v1_transport_proto_msgTypes = make([]protoimpl.MessageInfo, 3)
+var file_chunkd_v1_transport_proto_msgTypes = make([]protoimpl.MessageInfo, 7)
 var file_chunkd_v1_transport_proto_goTypes = []any{
-	(*Envelope)(nil),        // 0: chunkd.v1.Envelope
-	(*DeliverRequest)(nil),  // 1: chunkd.v1.DeliverRequest
-	(*DeliverResponse)(nil), // 2: chunkd.v1.DeliverResponse
+	(*Envelope)(nil),           // 0: chunkd.v1.Envelope
+	(*DeliverRequest)(nil),     // 1: chunkd.v1.DeliverRequest
+	(*DeliverResponse)(nil),    // 2: chunkd.v1.DeliverResponse
+	(*CallRequest)(nil),        // 3: chunkd.v1.CallRequest
+	(*CallResponse)(nil),       // 4: chunkd.v1.CallResponse
+	(*CallStreamRequest)(nil),  // 5: chunkd.v1.CallStreamRequest
+	(*CallStreamResponse)(nil), // 6: chunkd.v1.CallStreamResponse
 }
 var file_chunkd_v1_transport_proto_depIdxs = []int32{
 	0, // 0: chunkd.v1.DeliverRequest.envelope:type_name -> chunkd.v1.Envelope
-	1, // [1:1] is the sub-list for method output_type
-	1, // [1:1] is the sub-list for method input_type
-	1, // [1:1] is the sub-list for extension type_name
-	1, // [1:1] is the sub-list for extension extendee
-	0, // [0:1] is the sub-list for field type_name
+	0, // 1: chunkd.v1.CallRequest.envelope:type_name -> chunkd.v1.Envelope
+	0, // 2: chunkd.v1.CallResponse.envelope:type_name -> chunkd.v1.Envelope
+	0, // 3: chunkd.v1.CallStreamRequest.header:type_name -> chunkd.v1.Envelope
+	0, // 4: chunkd.v1.CallStreamResponse.header:type_name -> chunkd.v1.Envelope
+	5, // [5:5] is the sub-list for method output_type
+	5, // [5:5] is the sub-list for method input_type
+	5, // [5:5] is the sub-list for extension type_name
+	5, // [5:5] is the sub-list for extension extendee
+	0, // [0:5] is the sub-list for field type_name
 }
 
 func init() { file_chunkd_v1_transport_proto_init() }
@@ -242,7 +474,7 @@ func file_chunkd_v1_transport_proto_init() {
 			GoPackagePath: reflect.TypeOf(x{}).PkgPath(),
 			RawDescriptor: unsafe.Slice(unsafe.StringData(file_chunkd_v1_transport_proto_rawDesc), len(file_chunkd_v1_transport_proto_rawDesc)),
 			NumEnums:      0,
-			NumMessages:   3,
+			NumMessages:   7,
 			NumExtensions: 0,
 			NumServices:   0,
 		},

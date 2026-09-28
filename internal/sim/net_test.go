@@ -1,12 +1,14 @@
 package sim
 
 import (
+	"context"
 	"fmt"
 	"slices"
 	"testing"
 	"time"
 
 	"github.com/insanityatpeak/chunkd/internal/iface"
+	"github.com/insanityatpeak/chunkd/internal/iface/ifacetest"
 )
 
 var lossy = Faults{DropRate: 0.2, DupRate: 0.1, MinDelay: time.Millisecond, MaxDelay: 50 * time.Millisecond}
@@ -141,5 +143,55 @@ func TestNetBlockIsOneWay(t *testing.T) {
 	c.Advance(time.Second)
 	if !slices.Equal(got, []iface.NodeID{"a"}) {
 		t.Fatalf("deliveries to %v, want only a", got)
+	}
+}
+
+type simEnv struct {
+	clock  *Clock
+	net    *Net
+	caller *Caller
+}
+
+func (e *simEnv) Server(iface.NodeID) iface.Transport { return e.net }
+func (e *simEnv) Addr(iface.NodeID) string            { return "" }
+func (e *simEnv) Clock(iface.NodeID) iface.Clock      { return e.clock }
+func (e *simEnv) Caller() iface.Caller                { return e.caller }
+
+func TestRPCConformance(t *testing.T) {
+	ifacetest.RPC(t, func(*testing.T) ifacetest.RPCEnv {
+		c := NewClock()
+		n := NewNet(c, NewRand(1), Faults{MinDelay: time.Millisecond, MaxDelay: 5 * time.Millisecond, BytesPerSec: 100 << 20})
+		return &simEnv{clock: c, net: n, caller: n.NewCaller("client", time.Second)}
+	})
+}
+
+func TestCallerRepliesSurviveReordering(t *testing.T) {
+	c := NewClock()
+	n := NewNet(c, NewRand(3), Faults{MinDelay: 0, MaxDelay: 50 * time.Millisecond, DupRate: 0.5})
+	n.Serve("s", "echo", func(m iface.Message, respond iface.Responder) { respond(m.Body, nil) }, iface.ServeOpts{})
+	caller := n.NewCaller("c", time.Second)
+	var calls []iface.Call
+	for i := range 50 {
+		calls = append(calls, iface.Call{To: "s", Kind: "echo", Body: []byte(fmt.Sprint(i))})
+	}
+	for i, r := range caller.Do(context.Background(), calls) {
+		if r.Err != nil || string(r.Body) != fmt.Sprint(i) {
+			t.Fatalf("result %d = %q, %v", i, r.Body, r.Err)
+		}
+	}
+}
+
+func TestCrashedNodeUnreachable(t *testing.T) {
+	c := NewClock()
+	n := NewNet(c, NewRand(1), Faults{})
+	n.Serve("s", "echo", func(m iface.Message, respond iface.Responder) { respond(m.Body, nil) }, iface.ServeOpts{})
+	caller := n.NewCaller("c", time.Second)
+	n.Crash("s")
+	if r := caller.Do(context.Background(), []iface.Call{{To: "s", Kind: "echo"}}); iface.CodeOf(r[0].Err) != iface.CodeUnavailable {
+		t.Fatalf("call to crashed node: %v", r[0].Err)
+	}
+	n.Restart("s")
+	if r := caller.Do(context.Background(), []iface.Call{{To: "s", Kind: "echo", Body: []byte("x")}}); r[0].Err != nil {
+		t.Fatalf("call after restart: %v", r[0].Err)
 	}
 }

@@ -14,6 +14,9 @@ message Envelope {
   // gRPC address the sender listens on, so receivers can reply without a
   // static peer table.
   string from_addr = 6;
+  // Set on failed RPC responses: iface.Code and message.
+  uint32 err_code = 7;
+  string err_msg = 8;
 }
 
 message DeliverRequest {
@@ -21,3 +24,24 @@ message DeliverRequest {
 }
 
 message DeliverResponse {}
+
+message CallRequest {
+  Envelope envelope = 1;
+}
+
+message CallResponse {
+  Envelope envelope = 1;
+}
+
+// CallStream frames carry a large request or response in pieces: the first
+// frame has the envelope (with an empty body), the rest carry body bytes in
+// order.
+message CallStreamRequest {
+  Envelope header = 1;
+  bytes data = 2;
+}
+
+message CallStreamResponse {
+  Envelope header = 1;
+  bytes data = 2;
+}

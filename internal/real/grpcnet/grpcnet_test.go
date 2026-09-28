@@ -12,6 +12,7 @@ import (
 
 	"github.com/insanityatpeak/chunkd/internal/core/heartbeat"
 	"github.com/insanityatpeak/chunkd/internal/iface"
+	"github.com/insanityatpeak/chunkd/internal/iface/ifacetest"
 	"github.com/insanityatpeak/chunkd/internal/real/runtime"
 )
 
@@ -36,7 +37,7 @@ func start(t *testing.T, ctx context.Context, peers map[iface.NodeID]string) *pr
 	p := &proc{addr: lis.Addr().String(), loop: loop, clock: runtime.NewClock(loop)}
 	p.net = New(p.addr, peers, loop, log)
 	p.deps = heartbeat.Deps{Clock: p.clock, Net: p.net, Rand: runtime.NewRand(), Log: log}
-	s := grpc.NewServer()
+	s := grpc.NewServer(grpc.MaxRecvMsgSize(MaxUnary), grpc.MaxSendMsgSize(MaxUnary))
 	p.net.Register(s)
 	go func() { _ = s.Serve(lis) }()
 	go loop.Run(ctx)
@@ -81,4 +82,35 @@ func TestSendToUnknownNodeIsDropped(t *testing.T) {
 	defer cancel()
 	p := start(t, ctx, nil)
 	p.net.Send("nobody", iface.Message{From: "x", Kind: "k"}) // must not panic or block
+}
+
+type realEnv struct {
+	t      *testing.T
+	ctx    context.Context
+	procs  map[iface.NodeID]*proc
+	caller *Caller
+}
+
+func (e *realEnv) proc(id iface.NodeID) *proc {
+	if p, ok := e.procs[id]; ok {
+		return p
+	}
+	p := start(e.t, e.ctx, nil)
+	e.procs[id] = p
+	return p
+}
+
+func (e *realEnv) Server(id iface.NodeID) iface.Transport { return e.proc(id).net }
+func (e *realEnv) Addr(id iface.NodeID) string            { return e.proc(id).addr }
+func (e *realEnv) Clock(id iface.NodeID) iface.Clock      { return e.proc(id).clock }
+func (e *realEnv) Caller() iface.Caller                   { return e.caller }
+
+func TestRPCConformance(t *testing.T) {
+	ifacetest.RPC(t, func(t *testing.T) ifacetest.RPCEnv {
+		ctx, cancel := context.WithCancel(context.Background())
+		t.Cleanup(cancel)
+		c := NewCaller(nil, time.Second)
+		t.Cleanup(c.Close)
+		return &realEnv{t: t, ctx: ctx, procs: map[iface.NodeID]*proc{}, caller: c}
+	})
 }

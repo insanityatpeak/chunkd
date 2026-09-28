@@ -54,3 +54,17 @@ func CodeOf(err error) Code {
 	}
 	return CodeUnknown
 }
+
+// AsError converts err to an *Error for the wire, using def when err carries
+// no code.
+func AsError(err error, def Code) *Error {
+	var e *Error
+	if errors.As(err, &e) {
+		return e
+	}
+	c := CodeOf(err)
+	if c == CodeUnknown {
+		c = def
+	}
+	return &Error{Code: c, Msg: err.Error()}
+}
