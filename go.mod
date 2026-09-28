@@ -3,6 +3,7 @@ module github.com/insanityatpeak/chunkd
 go 1.25.0
 
 require (
+	go.etcd.io/bbolt v1.5.0
 	google.golang.org/grpc v1.84.0
 	google.golang.org/protobuf v1.36.12
 )
