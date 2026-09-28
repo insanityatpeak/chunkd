@@ -1,20 +1,103 @@
-import type { ClusterAPI, ClusterState } from './cluster';
+import { ChunkdError, type ClusterAPI, type ClusterView, type Download, type FileInfo, type Manifest, type NodeView } from './cluster';
+import { sha256Hex } from '../verify';
 
-// HttpClusterAPI will poll a real gateway's state endpoint once the gateway
-// exposes one. Until then it fails loudly instead of showing fake data.
+const POLL_MS = 1000;
+
+// HttpClusterAPI talks to a real gateway. It does not trust the gateway: a
+// download is checked chunk by chunk against the manifest's hashes, and the
+// whole file against its SHA-256, with WebCrypto.
 export class HttpClusterAPI implements ClusterAPI {
-  constructor(private readonly baseUrl: string) {}
+  readonly kind = 'http' as const;
+  readonly label: string;
+  private subs = new Set<(v: ClusterView) => void>();
+  private timer?: ReturnType<typeof setInterval>;
 
-  start(_seed: number): Promise<void> {
-    return Promise.reject(new Error(`HttpClusterAPI(${this.baseUrl}) is not implemented yet`));
+  constructor(private readonly base: string) {
+    this.base = base.replace(/\/+$/, '');
+    this.label = `Gateway at ${this.base}`;
   }
 
-  subscribe(_fn: (s: ClusterState) => void): () => void {
-    return () => {};
+  async start(_seed: number): Promise<void> {
+    await this.poll();
+    this.timer = setInterval(() => void this.poll().catch(() => {}), POLL_MS);
+  }
+
+  subscribe(fn: (v: ClusterView) => void): () => void {
+    this.subs.add(fn);
+    return () => this.subs.delete(fn);
+  }
+
+  private async poll() {
+    const [cluster, files] = await Promise.all([
+      this.json<{ nodes: NodeView[] | null }>('/cluster'),
+      this.json<FileInfo[] | null>('/files?prefix=/'),
+    ]);
+    const view: ClusterView = { nodes: cluster.nodes ?? [], files: files ?? [] };
+    this.subs.forEach((fn) => fn(view));
+  }
+
+  private async json<T>(path: string, init?: RequestInit): Promise<T> {
+    let resp: Response;
+    try {
+      resp = await fetch(this.base + path, init);
+    } catch (e) {
+      throw new ChunkdError(`gateway unreachable: ${(e as Error).message}`, 'unavailable');
+    }
+    if (!resp.ok) throw await toError(resp);
+    return (await resp.json()) as T;
+  }
+
+  upload(path: string, data: Uint8Array): Promise<Manifest> {
+    return this.json<Manifest>(`/files${encodePath(path)}`, { method: 'POST', body: data as BodyInit });
+  }
+
+  stat(path: string): Promise<Manifest> {
+    return this.json<Manifest>(`/files${encodePath(path)}?manifest=1`);
+  }
+
+  async download(path: string): Promise<Download> {
+    const manifest = await this.stat(path);
+    const resp = await fetch(`${this.base}/files${encodePath(path)}`);
+    if (!resp.ok) throw await toError(resp);
+    if (resp.headers.get('X-Chunkd-Version') !== String(manifest.version)) {
+      throw new ChunkdError('file changed between manifest and download; retry', 'conflict');
+    }
+    const data = new Uint8Array(await resp.arrayBuffer());
+    let off = 0;
+    for (const c of manifest.chunkList ?? []) {
+      const got = await sha256Hex(data.subarray(off, off + c.size));
+      if (got !== c.id) throw new ChunkdError(`chunk ${c.index}: data does not match its hash`, 'internal');
+      off += c.size;
+    }
+    if (off !== data.length) throw new ChunkdError(`${data.length - off} bytes beyond the manifest`, 'internal');
+    return { manifest, data };
+  }
+
+  async remove(path: string): Promise<void> {
+    await this.json(`/files${encodePath(path)}`, { method: 'DELETE' });
   }
 
   pause() {}
   resume() {}
   setSpeed(_simMsPerSec: number) {}
-  dispose() {}
+  crash(_node: string) {}
+  restart(_node: string) {}
+
+  dispose() {
+    clearInterval(this.timer);
+    this.subs.clear();
+  }
+}
+
+function encodePath(p: string) {
+  return p.split('/').map(encodeURIComponent).join('/');
+}
+
+async function toError(resp: Response): Promise<ChunkdError> {
+  try {
+    const body = (await resp.json()) as { code: string; error: string };
+    return new ChunkdError(body.error, body.code);
+  } catch {
+    return new ChunkdError(`${resp.status} ${resp.statusText}`, 'internal');
+  }
 }

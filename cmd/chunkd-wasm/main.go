@@ -1,23 +1,63 @@
 //go:build js && wasm
 
 // Command chunkd-wasm runs the simulated cluster inside a browser Web Worker.
-// It exposes a global `chunkd` object with start(seed), tick(ms) and state();
-// state() returns JSON. The worker drives tick in fixed steps so a seed
-// always yields the same state sequence.
+// It exposes a global `chunkd` object:
+//
+//	start(seed)             build a cluster
+//	tick(ms)                advance simulated time
+//	state()                 JSON snapshot
+//	upload(path, bytes)     JSON manifest; runs the real client, advancing sim time
+//	download(path)          {manifest: JSON, data: Uint8Array}; verified by the client
+//	stat(path)              JSON manifest with replica locations
+//	remove(path)            JSON {version}
+//	crash(node), restart(node)
+//
+// Errors come back as {"error": "..."} JSON. The worker only calls tick with
+// a fixed step, so a seed always yields the same state sequence.
 package main
 
 import (
+	"bytes"
+	"context"
 	"encoding/json"
 	"io"
 	"syscall/js"
 	"time"
 
+	"github.com/insanityatpeak/chunkd/internal/client"
+	"github.com/insanityatpeak/chunkd/internal/iface"
 	"github.com/insanityatpeak/chunkd/internal/sim/cluster"
 )
 
-func main() {
-	var c *cluster.Cluster
+var c *cluster.Cluster
 
+func jsonValue(v any, err error) any {
+	if err != nil {
+		return errorValue(err)
+	}
+	b, err := json.Marshal(v)
+	if err != nil {
+		return errorValue(err)
+	}
+	return string(b)
+}
+
+func errorValue(err error) any {
+	b, _ := json.Marshal(map[string]string{"error": err.Error(), "code": iface.CodeOf(err).String()})
+	return string(b)
+}
+
+func needCluster(f func(args []js.Value) any) js.Func {
+	return js.FuncOf(func(_ js.Value, args []js.Value) any {
+		if c == nil {
+			return errorValue(iface.Errorf(iface.CodeUnavailable, "cluster not started"))
+		}
+		return f(args)
+	})
+}
+
+func main() {
+	ctx := context.Background()
 	api := map[string]any{
 		"start": js.FuncOf(func(_ js.Value, args []js.Value) any {
 			seed := uint64(1)
@@ -27,21 +67,41 @@ func main() {
 			c = cluster.New(seed, cluster.DefaultConfig(), io.Discard)
 			return nil
 		}),
-		"tick": js.FuncOf(func(_ js.Value, args []js.Value) any {
-			if c != nil && len(args) > 0 {
-				c.Tick(time.Duration(args[0].Int()) * time.Millisecond)
-			}
+		"tick": needCluster(func(args []js.Value) any {
+			c.Tick(time.Duration(args[0].Int()) * time.Millisecond)
 			return nil
 		}),
-		"state": js.FuncOf(func(js.Value, []js.Value) any {
-			if c == nil {
-				return js.Null()
+		"state": needCluster(func([]js.Value) any { return jsonValue(c.State(), nil) }),
+		"upload": needCluster(func(args []js.Value) any {
+			data := make([]byte, args[1].Get("length").Int())
+			js.CopyBytesToGo(data, args[1])
+			m, err := c.Client().Put(ctx, args[0].String(), bytes.NewReader(data), int64(len(data)), client.PutOptions{Overwrite: true})
+			return jsonValue(m, err)
+		}),
+		"download": needCluster(func(args []js.Value) any {
+			var buf bytes.Buffer
+			m, err := c.Client().Get(ctx, args[0].String(), &buf)
+			out := js.Global().Get("Object").New()
+			out.Set("manifest", jsonValue(m, err))
+			if err == nil {
+				arr := js.Global().Get("Uint8Array").New(buf.Len())
+				js.CopyBytesToJS(arr, buf.Bytes())
+				out.Set("data", arr)
 			}
-			b, err := json.Marshal(c.State())
-			if err != nil {
-				return js.Null()
-			}
-			return string(b)
+			return out
+		}),
+		"stat": needCluster(func(args []js.Value) any { return jsonValue(c.Client().Stat(ctx, args[0].String())) }),
+		"remove": needCluster(func(args []js.Value) any {
+			v, err := c.Client().Delete(ctx, args[0].String(), 0)
+			return jsonValue(map[string]uint64{"version": v}, err)
+		}),
+		"crash": needCluster(func(args []js.Value) any {
+			c.Net().Crash(iface.NodeID(args[0].String()))
+			return nil
+		}),
+		"restart": needCluster(func(args []js.Value) any {
+			c.Net().Restart(iface.NodeID(args[0].String()))
+			return nil
 		}),
 	}
 	js.Global().Set("chunkd", js.ValueOf(api))

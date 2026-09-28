@@ -1,12 +1,16 @@
-import type { ClusterAPI, ClusterState } from './cluster';
-import type { FromWorker, ToWorker } from './protocol';
+import { ChunkdError, type ClusterAPI, type ClusterView, type Download, type Manifest } from './cluster';
+import type { FromWorker, Method, ToWorker } from './protocol';
 
-// WasmClusterAPI runs the simulated cluster in a Web Worker so ticking never
-// blocks the UI thread.
+// WasmClusterAPI runs the simulated cluster in a Web Worker so ticking and
+// hashing never block the UI thread.
 export class WasmClusterAPI implements ClusterAPI {
+  readonly kind = 'sim' as const;
+  readonly label = 'Simulated cluster in this browser';
   private worker = new Worker(new URL('../worker.ts', import.meta.url), { type: 'module' });
-  private subs = new Set<(s: ClusterState) => void>();
+  private subs = new Set<(v: ClusterView) => void>();
   private ready?: { resolve: () => void; reject: (e: Error) => void };
+  private nextId = 1;
+  private pending = new Map<number, { resolve: (v: unknown) => void; reject: (e: Error) => void }>();
 
   constructor() {
     this.worker.onmessage = (e: MessageEvent<FromWorker>) => {
@@ -21,6 +25,13 @@ export class WasmClusterAPI implements ClusterAPI {
         case 'error':
           this.ready?.reject(new Error(m.message));
           break;
+        case 'result': {
+          const p = this.pending.get(m.id);
+          this.pending.delete(m.id);
+          if (m.error) p?.reject(new ChunkdError(m.error.message, m.error.code));
+          else p?.resolve(m.value);
+          break;
+        }
       }
     };
   }
@@ -32,9 +43,25 @@ export class WasmClusterAPI implements ClusterAPI {
     });
   }
 
-  subscribe(fn: (s: ClusterState) => void): () => void {
+  subscribe(fn: (v: ClusterView) => void): () => void {
     this.subs.add(fn);
     return () => this.subs.delete(fn);
+  }
+
+  upload(path: string, data: Uint8Array): Promise<Manifest> {
+    return this.call('upload', [path, data]) as Promise<Manifest>;
+  }
+
+  download(path: string): Promise<Download> {
+    return this.call('download', [path]) as Promise<Download>;
+  }
+
+  stat(path: string): Promise<Manifest> {
+    return this.call('stat', [path]) as Promise<Manifest>;
+  }
+
+  async remove(path: string): Promise<void> {
+    await this.call('remove', [path]);
   }
 
   pause() {
@@ -49,9 +76,27 @@ export class WasmClusterAPI implements ClusterAPI {
     this.send({ type: 'speed', simMsPerSec });
   }
 
+  crash(node: string) {
+    void this.call('crash', [node]);
+  }
+
+  restart(node: string) {
+    void this.call('restart', [node]);
+  }
+
   dispose() {
     this.worker.terminate();
     this.subs.clear();
+    this.pending.forEach((p) => p.reject(new Error('disposed')));
+    this.pending.clear();
+  }
+
+  private call(method: Method, args: unknown[]): Promise<unknown> {
+    const id = this.nextId++;
+    return new Promise((resolve, reject) => {
+      this.pending.set(id, { resolve, reject });
+      this.send({ type: 'call', id, method, args });
+    });
   }
 
   private send(m: ToWorker) {

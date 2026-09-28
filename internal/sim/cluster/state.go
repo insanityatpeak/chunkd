@@ -48,7 +48,7 @@ type FileView struct {
 // State returns the current snapshot.
 func (c *Cluster) State() State {
 	now := c.clock.Now()
-	s := State{Seed: c.seed, NowMs: int64(now) / int64(time.Millisecond), Net: c.net.Stats(),
+	s := State{Seed: c.seed, NowMs: int64(now) / int64(time.Millisecond), Net: c.net.Stats(), Files: []FileView{},
 		Meta: MetaView{ID: MetaID, Applied: uint64(c.meta.Applied()), Pending: c.meta.State().PendingUploads()}}
 	for _, n := range c.nodes {
 		v := NodeView{ID: n.ID(), Rack: n.Rack, Crashed: c.net.Crashed(n.ID()), Heartbeats: n.Stats().Heartbeats, Acks: n.Stats().Acks}

@@ -1,6 +1,6 @@
 /// <reference lib="webworker" />
-import { STEP_MS, type FromWorker, type ToWorker } from './api/protocol';
-import type { ClusterState } from './api/cluster';
+import { STEP_MS, type FromWorker, type Method, type ToWorker } from './api/protocol';
+import type { ClusterView } from './api/cluster';
 
 declare const self: DedicatedWorkerGlobalScope;
 
@@ -12,7 +12,13 @@ interface GoRuntime {
 interface ChunkdGlobal {
   start(seed: number): void;
   tick(ms: number): void;
-  state(): string | null;
+  state(): string;
+  upload(path: string, data: Uint8Array): string;
+  download(path: string): { manifest: string; data?: Uint8Array };
+  stat(path: string): string;
+  remove(path: string): string;
+  crash(node: string): void;
+  restart(node: string): void;
 }
 
 const g = globalThis as unknown as { Go: new () => GoRuntime; chunkd?: ChunkdGlobal };
@@ -23,8 +29,8 @@ let running = false;
 let timer: ReturnType<typeof setInterval> | undefined;
 let owed = 0; // fractional steps carried between frames
 
-function post(m: FromWorker) {
-  self.postMessage(m);
+function post(m: FromWorker, transfer: Transferable[] = []) {
+  self.postMessage(m, transfer);
 }
 
 async function load(baseUrl: string) {
@@ -56,7 +62,40 @@ function frame() {
 
 function publish() {
   const raw = g.chunkd?.state();
-  if (raw) post({ type: 'state', state: JSON.parse(raw) as ClusterState });
+  if (raw) post({ type: 'state', state: JSON.parse(raw) as ClusterView });
+}
+
+// Go returns JSON; errors arrive as {"error": ..., "code": ...}.
+function parse(raw: string): unknown {
+  const v = JSON.parse(raw) as { error?: string; code?: string };
+  if (v && typeof v === 'object' && 'error' in v && v.error) throw { message: v.error, code: v.code ?? 'unknown' };
+  return v;
+}
+
+// Calls run the client synchronously in Go; simulated time advances by the
+// transfer time while they run, and the dashboard sees the jump.
+function call(method: Method, args: unknown[]): { value: unknown; transfer: Transferable[] } {
+  const api = g.chunkd!;
+  const [a, b] = args as [string, Uint8Array];
+  switch (method) {
+    case 'upload':
+      return { value: parse(api.upload(a, b)), transfer: [] };
+    case 'download': {
+      const r = api.download(a);
+      const manifest = parse(r.manifest);
+      return { value: { manifest, data: r.data }, transfer: r.data ? [r.data.buffer] : [] };
+    }
+    case 'stat':
+      return { value: parse(api.stat(a)), transfer: [] };
+    case 'remove':
+      return { value: parse(api.remove(a)), transfer: [] };
+    case 'crash':
+      api.crash(a);
+      return { value: null, transfer: [] };
+    case 'restart':
+      api.restart(a);
+      return { value: null, transfer: [] };
+  }
 }
 
 self.onmessage = async (e: MessageEvent<ToWorker>) => {
@@ -80,6 +119,16 @@ self.onmessage = async (e: MessageEvent<ToWorker>) => {
         break;
       case 'speed':
         simMsPerSec = m.simMsPerSec;
+        break;
+      case 'call':
+        try {
+          const { value, transfer } = call(m.method, m.args);
+          post({ type: 'result', id: m.id, value }, transfer);
+        } catch (err) {
+          const e = err as { message?: string; code?: string };
+          post({ type: 'result', id: m.id, error: { message: e.message ?? String(err), code: e.code ?? 'unknown' } });
+        }
+        publish();
         break;
     }
   } catch (err) {

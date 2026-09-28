@@ -1,19 +1,37 @@
-// ClusterAPI is the dashboard's only view of a cluster. WasmClusterAPI runs the
-// sim in a Web Worker; HttpClusterAPI will talk to a real gateway.
+// ClusterAPI is the dashboard's only view of a cluster. WasmClusterAPI runs
+// the simulated cluster in a Web Worker; HttpClusterAPI talks to a real
+// gateway (docker compose up). Shapes mirror internal/client in Go.
 
-export interface PeerView {
+export interface FileInfo {
+  path: string;
+  version: number;
+  size: number;
+  sha256: string;
+  chunks: number;
+}
+
+export interface ChunkRef {
+  index: number;
   id: string;
-  pings: number;
-  lastSeq: number;
-  lastSeen: number; // sim nanoseconds
-  alive: boolean;
+  size: number;
+  replicas: string[] | null;
+  servedBy?: string;
+  rejected?: string[] | null;
+}
+
+export interface Manifest extends FileInfo {
+  chunkSize: number;
+  chunkList: ChunkRef[] | null;
 }
 
 export interface NodeView {
   id: string;
-  sent: number;
-  acked: number;
-  lastAckSeq: number;
+  rack: string;
+  alive: boolean;
+  crashed?: boolean;
+  usedBytes: number;
+  chunks: number;
+  heartbeats?: number;
 }
 
 export interface NetStats {
@@ -21,23 +39,45 @@ export interface NetStats {
   delivered: number;
   dropped: number;
   duplicated: number;
+  bytes: number;
 }
 
-// Mirrors cluster.State in internal/sim/cluster.
-export interface ClusterState {
-  seed: number;
-  nowMs: number;
-  meta: { id: string; peers: PeerView[] | null };
+export interface ClusterView {
+  nowMs?: number; // sim only
   nodes: NodeView[];
-  net: NetStats;
+  files: FileInfo[];
+  net?: NetStats; // sim only
+  meta?: { id: string; applied: number; pendingUploads: number };
+}
+
+export interface Download {
+  manifest: Manifest;
+  data: Uint8Array;
 }
 
 export interface ClusterAPI {
+  readonly kind: 'sim' | 'http';
+  readonly label: string;
   start(seed: number): Promise<void>;
-  subscribe(fn: (s: ClusterState) => void): () => void;
+  subscribe(fn: (v: ClusterView) => void): () => void;
+  upload(path: string, data: Uint8Array): Promise<Manifest>;
+  download(path: string): Promise<Download>;
+  stat(path: string): Promise<Manifest>;
+  remove(path: string): Promise<void>;
+  // Sim controls; no-ops against a real cluster.
   pause(): void;
   resume(): void;
-  // Simulated milliseconds advanced per wall-clock second.
   setSpeed(simMsPerSec: number): void;
+  crash(node: string): void;
+  restart(node: string): void;
   dispose(): void;
+}
+
+export class ChunkdError extends Error {
+  constructor(
+    message: string,
+    readonly code: string,
+  ) {
+    super(message);
+  }
 }
