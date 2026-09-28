@@ -3,6 +3,7 @@ package sim
 import (
 	"bytes"
 	"context"
+	"crypto/sha256"
 	"slices"
 	"sync"
 
@@ -22,10 +23,38 @@ var _ iface.BlockStore = (*BlockStore)(nil)
 func NewBlockStore() *BlockStore { return &BlockStore{chunks: map[iface.ChunkID][]byte{}} }
 
 func (s *BlockStore) Put(_ context.Context, id iface.ChunkID, data []byte) error {
+	if sha256.Sum256(data) != id {
+		return iface.Errorf(iface.CodeInvalid, "data does not hash to %s", id)
+	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	s.chunks[id] = bytes.Clone(data)
+	// Keep an intact copy; replace a missing or rotted one.
+	if old, ok := s.chunks[id]; !ok || sha256.Sum256(old) != id {
+		s.chunks[id] = bytes.Clone(data)
+	}
 	return nil
+}
+
+// Corrupt flips a byte of a stored chunk, simulating bit rot. It reports
+// whether the chunk existed.
+func (s *BlockStore) Corrupt(id iface.ChunkID) bool {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	b, ok := s.chunks[id]
+	if ok && len(b) > 0 {
+		b[0] ^= 0xff
+	}
+	return ok
+}
+
+func (s *BlockStore) Usage(context.Context) (iface.Usage, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	u := iface.Usage{Chunks: int64(len(s.chunks))}
+	for _, b := range s.chunks {
+		u.Bytes += int64(len(b))
+	}
+	return u, nil
 }
 
 func (s *BlockStore) Get(_ context.Context, id iface.ChunkID) ([]byte, error) {

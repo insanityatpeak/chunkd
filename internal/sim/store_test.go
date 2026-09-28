@@ -1,6 +1,7 @@
 package sim
 
 import (
+	"bytes"
 	"context"
 	"crypto/sha256"
 	"errors"
@@ -8,6 +9,7 @@ import (
 	"testing"
 
 	"github.com/insanityatpeak/chunkd/internal/iface"
+	"github.com/insanityatpeak/chunkd/internal/iface/ifacetest"
 )
 
 func TestBlockStore(t *testing.T) {
@@ -38,14 +40,16 @@ func TestBlockStore(t *testing.T) {
 func TestBlockStoreListIsSorted(t *testing.T) {
 	ctx := context.Background()
 	s := NewBlockStore()
+	var want []iface.ChunkID
 	for _, b := range []byte{9, 3, 7, 1} {
-		var id iface.ChunkID
-		id[0] = b
-		_ = s.Put(ctx, id, nil)
+		id := iface.ChunkID(sha256.Sum256([]byte{b}))
+		_ = s.Put(ctx, id, []byte{b})
+		want = append(want, id)
 	}
-	var got []byte
-	_ = s.List(ctx, func(id iface.ChunkID) error { got = append(got, id[0]); return nil })
-	if want := []byte{1, 3, 7, 9}; !slices.Equal(got, want) {
+	slices.SortFunc(want, func(a, b iface.ChunkID) int { return bytes.Compare(a[:], b[:]) })
+	var got []iface.ChunkID
+	_ = s.List(ctx, func(id iface.ChunkID) error { got = append(got, id); return nil })
+	if !slices.Equal(got, want) {
 		t.Fatalf("List order = %v, want %v", got, want)
 	}
 }
@@ -84,4 +88,8 @@ func TestMetaStore(t *testing.T) {
 	if at, snap, _ := s.LoadSnapshot(ctx); at != 2 || string(snap) != "state" {
 		t.Fatalf("snapshot = %d %q, want 2 state", at, snap)
 	}
+}
+
+func TestBlockStoreConformance(t *testing.T) {
+	ifacetest.BlockStore(t, func(*testing.T) iface.BlockStore { return NewBlockStore() })
 }

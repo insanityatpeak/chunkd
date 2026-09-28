@@ -1,0 +1,81 @@
+package blockstore
+
+import (
+	"bytes"
+	"context"
+	"crypto/sha256"
+	"os"
+	"path/filepath"
+	"testing"
+
+	"github.com/insanityatpeak/chunkd/internal/iface"
+	"github.com/insanityatpeak/chunkd/internal/iface/ifacetest"
+)
+
+func open(t *testing.T, root string) *Store {
+	t.Helper()
+	s, err := Open(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return s
+}
+
+func TestConformance(t *testing.T) {
+	ifacetest.BlockStore(t, func(t *testing.T) iface.BlockStore { return open(t, t.TempDir()) })
+}
+
+func TestLayout(t *testing.T) {
+	root := t.TempDir()
+	s := open(t, root)
+	data := []byte("hello")
+	id := iface.ChunkID(sha256.Sum256(data))
+	if err := s.Put(context.Background(), id, data); err != nil {
+		t.Fatal(err)
+	}
+	h := id.String()
+	if _, err := os.Stat(filepath.Join(root, h[:2], h[2:4], h)); err != nil {
+		t.Fatalf("chunk not at root/ab/cd/<hash>: %v", err)
+	}
+}
+
+func TestPutRepairsRottedCopy(t *testing.T) {
+	root := t.TempDir()
+	s := open(t, root)
+	ctx := context.Background()
+	data := []byte("precious bytes")
+	id := iface.ChunkID(sha256.Sum256(data))
+	_ = s.Put(ctx, id, data)
+	h := id.String()
+	os.WriteFile(filepath.Join(root, h[:2], h[2:4], h), []byte("rotten"), 0o644)
+
+	if err := s.Put(ctx, id, data); err != nil {
+		t.Fatal(err)
+	}
+	got, _ := s.Get(ctx, id)
+	if !bytes.Equal(got, data) {
+		t.Fatalf("after re-put Get = %q, want the original", got)
+	}
+	if u, _ := s.Usage(ctx); u != (iface.Usage{Chunks: 1, Bytes: int64(len(data))}) {
+		t.Fatalf("usage = %+v", u)
+	}
+}
+
+func TestReopenRecountsAndCleansTemp(t *testing.T) {
+	root := t.TempDir()
+	s := open(t, root)
+	ctx := context.Background()
+	for _, d := range []string{"a", "bb", "ccc"} {
+		_ = s.Put(ctx, sha256.Sum256([]byte(d)), []byte(d))
+	}
+	// A crash mid-Put leaves a temp file behind.
+	os.WriteFile(filepath.Join(root, tmpDir, "put-crashed"), []byte("partial"), 0o644)
+
+	s = open(t, root)
+	if u, _ := s.Usage(ctx); u != (iface.Usage{Chunks: 3, Bytes: 6}) {
+		t.Fatalf("usage after reopen = %+v, want 3 chunks 6 bytes", u)
+	}
+	if entries, _ := os.ReadDir(filepath.Join(root, tmpDir)); len(entries) != 0 {
+		t.Fatalf("temp files survived reopen: %v", entries)
+	}
+}

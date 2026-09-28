@@ -67,13 +67,22 @@ func (c ChunkID) String() string { return hex.EncodeToString(c[:]) }
 // ErrNotFound is returned by stores when a key does not exist.
 var ErrNotFound = errors.New("not found")
 
-// BlockStore holds chunk bytes addressed by content hash.
+// Usage is how much a BlockStore holds.
+type Usage struct {
+	Chunks int64
+	Bytes  int64
+}
+
+// BlockStore holds chunk bytes addressed by content hash. Put rejects data
+// whose SHA-256 is not id (CodeInvalid) and is idempotent: storing a chunk
+// that is already present and intact succeeds without rewriting it.
 type BlockStore interface {
 	Put(ctx context.Context, id ChunkID, data []byte) error
 	Get(ctx context.Context, id ChunkID) ([]byte, error)
 	Delete(ctx context.Context, id ChunkID) error
 	// List calls fn for every stored chunk; iteration order is unspecified.
 	List(ctx context.Context, fn func(ChunkID) error) error
+	Usage(ctx context.Context) (Usage, error)
 }
 
 // Index is a position in the metadata log. The first entry has index 1.
