@@ -122,7 +122,7 @@ func proto([]string) error {
 		return err
 	}
 	return run(nil, "", "docker", "run", "--rm", "-v", wd+":/workspace", "-w", "/workspace",
-		"bufbuild/buf:1.57.0", "generate")
+		"bufbuild/buf:1.73.0", "generate")
 }
 
 func web([]string) error {
