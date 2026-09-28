@@ -1,0 +1,5 @@
+* text=auto eol=lf
+*.png binary
+*.wasm binary
+*.pb.go linguist-generated=true
+proto/gen/** linguist-generated=true

@@ -1,0 +1,25 @@
+# Go
+/bin/
+*.exe
+*.test
+*.out
+coverage.*
+
+# Node / web
+node_modules/
+web/dist/
+web/public/cluster.wasm
+web/public/wasm_exec.js
+
+# Local-only
+CLAUDE.md
+.claude/
+notes/
+prompts/
+*.local.*
+
+# OS / editors
+.DS_Store
+Thumbs.db
+.vscode/
+.idea/
