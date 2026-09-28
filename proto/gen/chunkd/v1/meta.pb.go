@@ -463,13 +463,15 @@ func (*Op_Abort) isOp_Op() {}
 func (*Op_Delete) isOp_Op() {}
 
 type FileVersion struct {
-	state         protoimpl.MessageState `protogen:"open.v1"`
-	Version       uint64                 `protobuf:"varint,1,opt,name=version,proto3" json:"version,omitempty"`
-	Size          int64                  `protobuf:"varint,2,opt,name=size,proto3" json:"size,omitempty"`
-	Sha256        []byte                 `protobuf:"bytes,3,opt,name=sha256,proto3" json:"sha256,omitempty"`
-	ChunkIds      [][]byte               `protobuf:"bytes,4,rep,name=chunk_ids,json=chunkIds,proto3" json:"chunk_ids,omitempty"`
-	ChunkSize     int32                  `protobuf:"varint,5,opt,name=chunk_size,json=chunkSize,proto3" json:"chunk_size,omitempty"`
-	State         VersionState           `protobuf:"varint,6,opt,name=state,proto3,enum=chunkd.v1.VersionState" json:"state,omitempty"`
+	state     protoimpl.MessageState `protogen:"open.v1"`
+	Version   uint64                 `protobuf:"varint,1,opt,name=version,proto3" json:"version,omitempty"`
+	Size      int64                  `protobuf:"varint,2,opt,name=size,proto3" json:"size,omitempty"`
+	Sha256    []byte                 `protobuf:"bytes,3,opt,name=sha256,proto3" json:"sha256,omitempty"`
+	ChunkIds  [][]byte               `protobuf:"bytes,4,rep,name=chunk_ids,json=chunkIds,proto3" json:"chunk_ids,omitempty"`
+	ChunkSize int32                  `protobuf:"varint,5,opt,name=chunk_size,json=chunkSize,proto3" json:"chunk_size,omitempty"`
+	State     VersionState           `protobuf:"varint,6,opt,name=state,proto3,enum=chunkd.v1.VersionState" json:"state,omitempty"`
+	// Upload that created this version; makes a retried commit idempotent.
+	UploadId      uint64 `protobuf:"varint,7,opt,name=upload_id,json=uploadId,proto3" json:"upload_id,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -544,6 +546,13 @@ func (x *FileVersion) GetState() VersionState {
 		return x.State
 	}
 	return VersionState_VERSION_STATE_UNSPECIFIED
+}
+
+func (x *FileVersion) GetUploadId() uint64 {
+	if x != nil {
+		return x.UploadId
+	}
+	return 0
 }
 
 type FileRecord struct {
@@ -1852,7 +1861,7 @@ const file_chunkd_v1_meta_proto_rawDesc = "" +
 	"\x06commit\x18\x02 \x01(\v2\x19.chunkd.v1.CommitUploadOpH\x00R\x06commit\x120\n" +
 	"\x05abort\x18\x03 \x01(\v2\x18.chunkd.v1.AbortUploadOpH\x00R\x05abort\x12-\n" +
 	"\x06delete\x18\x04 \x01(\v2\x13.chunkd.v1.DeleteOpH\x00R\x06deleteB\x04\n" +
-	"\x02op\"\xbe\x01\n" +
+	"\x02op\"\xdb\x01\n" +
 	"\vFileVersion\x12\x18\n" +
 	"\aversion\x18\x01 \x01(\x04R\aversion\x12\x12\n" +
 	"\x04size\x18\x02 \x01(\x03R\x04size\x12\x16\n" +
@@ -1860,7 +1869,8 @@ const file_chunkd_v1_meta_proto_rawDesc = "" +
 	"\tchunk_ids\x18\x04 \x03(\fR\bchunkIds\x12\x1d\n" +
 	"\n" +
 	"chunk_size\x18\x05 \x01(\x05R\tchunkSize\x12-\n" +
-	"\x05state\x18\x06 \x01(\x0e2\x17.chunkd.v1.VersionStateR\x05state\"T\n" +
+	"\x05state\x18\x06 \x01(\x0e2\x17.chunkd.v1.VersionStateR\x05state\x12\x1b\n" +
+	"\tupload_id\x18\a \x01(\x04R\buploadId\"T\n" +
 	"\n" +
 	"FileRecord\x12\x12\n" +
 	"\x04path\x18\x01 \x01(\tR\x04path\x122\n" +

@@ -10,6 +10,7 @@ import (
 	"log/slog"
 	"time"
 
+	"github.com/insanityatpeak/chunkd/internal/client"
 	"github.com/insanityatpeak/chunkd/internal/core/meta"
 	"github.com/insanityatpeak/chunkd/internal/core/node"
 	"github.com/insanityatpeak/chunkd/internal/iface"
@@ -53,6 +54,8 @@ type Cluster struct {
 	metaStore *sim.MetaStore
 	meta      *meta.Server
 	nodes     []*Node
+	client    *client.Direct
+	acked     map[string][32]byte // path -> SHA-256 of the last successful upload
 }
 
 // Node is one simulated storage node.
@@ -65,7 +68,7 @@ type Node struct {
 // New builds and starts a cluster whose every choice derives from seed. Logs
 // go to w; pass io.Discard to silence them.
 func New(seed uint64, cfg Config, w io.Writer) *Cluster {
-	c := &Cluster{seed: seed, cfg: cfg, clock: sim.NewClock(), rng: sim.NewRand(seed), log: w, metaStore: sim.NewMetaStore()}
+	c := &Cluster{seed: seed, cfg: cfg, clock: sim.NewClock(), rng: sim.NewRand(seed), log: w, metaStore: sim.NewMetaStore(), acked: map[string][32]byte{}}
 	c.net = sim.NewNet(c.clock, c.rng, cfg.Faults)
 	if err := c.startMeta(); err != nil {
 		panic(err) // an empty in-memory log cannot fail to recover

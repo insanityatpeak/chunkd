@@ -60,6 +60,8 @@ message FileVersion {
   repeated bytes chunk_ids = 4;
   int32 chunk_size = 5;
   VersionState state = 6;
+  // Upload that created this version; makes a retried commit idempotent.
+  uint64 upload_id = 7;
 }
 
 message FileRecord {

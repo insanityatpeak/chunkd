@@ -219,3 +219,44 @@ func TestSnapshotDuringOperationRecovers(t *testing.T) {
 		t.Fatal("snapshot + WAL tail did not recover the same state")
 	}
 }
+
+// Regression: a duplicated or retried commit used to fail with not_found
+// after the first copy committed, so the client reported failure for a file
+// that was in fact visible.
+func TestCommitAndDeleteAreIdempotent(t *testing.T) {
+	e := newEnv(t, 3)
+	body, _ := e.rpc(t, "meta", wire.KindBegin, wire.Marshal(&chunkdv1.BeginUploadRequest{Path: "/f", Size: 4}))
+	var begin chunkdv1.BeginUploadResponse
+	wire.Decode(body, &begin)
+	data := []byte("abcd")
+	id := sha256.Sum256(data)
+	var calls []iface.Call
+	for _, r := range begin.GetPlacement()[0].GetReplicas() {
+		calls = append(calls, iface.Call{To: iface.NodeID(r.GetNode()), Kind: wire.KindPutChunk, Body: wire.Marshal(&chunkdv1.PutChunkRequest{Id: id[:], Data: data})})
+	}
+	e.caller.Do(context.Background(), calls)
+	e.clock.Advance(100 * time.Millisecond)
+	commit := wire.Marshal(&chunkdv1.CommitUploadRequest{UploadId: begin.GetUploadId(), ChunkIds: [][]byte{id[:]}, Sha256: id[:]})
+	for i := range 3 {
+		body, err := e.rpc(t, "meta", wire.KindCommit, commit)
+		var resp chunkdv1.CommitUploadResponse
+		wire.Decode(body, &resp)
+		if err != nil || resp.GetVersion() != 1 {
+			t.Fatalf("commit attempt %d = v%d, %v; want v1 every time", i, resp.GetVersion(), err)
+		}
+	}
+	del := wire.Marshal(&chunkdv1.DeleteRequest{Path: "/f", ExpectedVersion: 1})
+	for i := range 2 {
+		body, err := e.rpc(t, "meta", wire.KindDelete, del)
+		var resp chunkdv1.DeleteResponse
+		wire.Decode(body, &resp)
+		if err != nil || resp.GetVersion() != 2 {
+			t.Fatalf("delete attempt %d = v%d, %v; want tombstone v2 every time", i, resp.GetVersion(), err)
+		}
+	}
+	// The committed-upload index survives a restart (rebuilt from versions).
+	e.startMeta(t)
+	if _, err := e.rpc(t, "meta", wire.KindCommit, commit); err != nil {
+		t.Fatalf("commit retry after restart: %v", err)
+	}
+}

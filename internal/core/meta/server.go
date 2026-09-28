@@ -213,6 +213,13 @@ func (s *Server) commit(m iface.Message, respond iface.Responder) {
 		respond(nil, err)
 		return
 	}
+	// A retried or duplicated commit of an upload that already committed
+	// succeeds with the same version: the client cannot tell a lost response
+	// from a failed commit, so commit must be idempotent.
+	if c, ok := s.state.CommittedUpload(req.GetUploadId()); ok {
+		respond(wire.Marshal(&chunkdv1.CommitUploadResponse{Version: c.Version}), nil)
+		return
+	}
 	op := &chunkdv1.Op{Op: &chunkdv1.Op_Commit{Commit: &chunkdv1.CommitUploadOp{UploadId: req.GetUploadId(), ChunkIds: req.GetChunkIds(), Sha256: req.GetSha256()}}}
 	if err := s.state.Validate(op); err != nil {
 		respond(nil, err)
@@ -255,6 +262,14 @@ func (s *Server) delete(m iface.Message, respond iface.Responder) {
 	if err := wire.Decode(m.Body, &req); err != nil {
 		respond(nil, err)
 		return
+	}
+	// Idempotent for a known version: if that exact version was already
+	// tombstoned, this is a retry of our own delete.
+	if e := req.GetExpectedVersion(); e != 0 {
+		if v, ok := s.state.Tombstoned(req.GetPath(), e); ok {
+			respond(wire.Marshal(&chunkdv1.DeleteResponse{Version: v}), nil)
+			return
+		}
 	}
 	res, err := s.apply(&chunkdv1.Op{Op: &chunkdv1.Op_Delete{Delete: &chunkdv1.DeleteOp{Path: req.GetPath(), ExpectedVersion: req.GetExpectedVersion()}}})
 	wire.Respond(respond, &chunkdv1.DeleteResponse{Version: res.Version}, err)

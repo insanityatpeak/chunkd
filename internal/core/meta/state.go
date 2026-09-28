@@ -24,6 +24,7 @@ import (
 // Version is one immutable version of a file.
 type Version struct {
 	V         uint64
+	UploadID  uint64 // 0 for tombstones
 	Size      int64
 	SHA256    [32]byte
 	Chunks    []iface.ChunkID
@@ -60,6 +61,15 @@ type State struct {
 	chunks       map[iface.ChunkID]*ChunkInfo
 	uploads      map[uint64]*Upload
 	lastUploadID uint64
+	// committed indexes versions by the upload that created them; rebuilt
+	// from files on restore, so it is not stored separately.
+	committed map[uint64]Committed
+}
+
+// Committed locates the version an upload produced.
+type Committed struct {
+	Path    string
+	Version uint64
 }
 
 // Result reports what an applied op produced.
@@ -70,7 +80,7 @@ type Result struct {
 
 // New returns empty state.
 func New() *State {
-	return &State{files: map[string]*File{}, chunks: map[iface.ChunkID]*ChunkInfo{}, uploads: map[uint64]*Upload{}}
+	return &State{files: map[string]*File{}, chunks: map[iface.ChunkID]*ChunkInfo{}, uploads: map[uint64]*Upload{}, committed: map[uint64]Committed{}}
 }
 
 // ValidPath reports whether p is an absolute, clean path to a file.
@@ -181,7 +191,7 @@ func (s *State) Apply(op *chunkdv1.Op) Result {
 	case *chunkdv1.Op_Commit:
 		c := o.Commit
 		u := s.uploads[c.GetUploadId()]
-		v := Version{V: s.lastVersion(u.Path) + 1, Size: u.Size, ChunkSize: u.ChunkSize}
+		v := Version{V: s.lastVersion(u.Path) + 1, UploadID: u.ID, Size: u.Size, ChunkSize: u.ChunkSize}
 		copy(v.SHA256[:], c.GetSha256())
 		for i, raw := range c.GetChunkIds() {
 			var id iface.ChunkID
@@ -195,6 +205,7 @@ func (s *State) Apply(op *chunkdv1.Op) Result {
 			ci.Refcount++
 		}
 		s.appendVersion(u.Path, v)
+		s.committed[u.ID] = Committed{Path: u.Path, Version: v.V}
 		delete(s.uploads, u.ID)
 		return Result{UploadID: u.ID, Version: v.V}
 	case *chunkdv1.Op_Abort:
@@ -249,6 +260,26 @@ func (s *State) List(prefix string) []Entry {
 	return out
 }
 
+// CommittedUpload reports the version an already-committed upload created.
+func (s *State) CommittedUpload(id uint64) (Committed, bool) {
+	c, ok := s.committed[id]
+	return c, ok
+}
+
+// Tombstoned reports whether the last version of p is a tombstone that
+// replaced version prev, and returns the tombstone's version.
+func (s *State) Tombstoned(p string, prev uint64) (uint64, bool) {
+	f := s.files[p]
+	if f == nil || len(f.Versions) < 2 {
+		return 0, false
+	}
+	last, before := f.Versions[len(f.Versions)-1], f.Versions[len(f.Versions)-2]
+	if !last.Tombstone || before.V != prev {
+		return 0, false
+	}
+	return last.V, true
+}
+
 // Upload returns a pending upload.
 func (s *State) Upload(id uint64) (*Upload, bool) {
 	u, ok := s.uploads[id]
@@ -274,7 +305,7 @@ func (s *State) Snapshot() []byte {
 		f := s.files[p]
 		rec := &chunkdv1.FileRecord{Path: p}
 		for _, v := range f.Versions {
-			fv := &chunkdv1.FileVersion{Version: v.V, Size: v.Size, ChunkSize: int32(v.ChunkSize), State: chunkdv1.VersionState_VERSION_STATE_COMMITTED}
+			fv := &chunkdv1.FileVersion{Version: v.V, UploadId: v.UploadID, Size: v.Size, ChunkSize: int32(v.ChunkSize), State: chunkdv1.VersionState_VERSION_STATE_COMMITTED}
 			if v.Tombstone {
 				fv.State = chunkdv1.VersionState_VERSION_STATE_TOMBSTONE
 			} else {
@@ -325,7 +356,10 @@ func Restore(data []byte) (*State, error) {
 	for _, rec := range snap.GetFiles() {
 		f := &File{Path: rec.GetPath()}
 		for _, fv := range rec.GetVersions() {
-			v := Version{V: fv.GetVersion(), Size: fv.GetSize(), ChunkSize: int(fv.GetChunkSize()), Tombstone: fv.GetState() == chunkdv1.VersionState_VERSION_STATE_TOMBSTONE}
+			v := Version{V: fv.GetVersion(), UploadID: fv.GetUploadId(), Size: fv.GetSize(), ChunkSize: int(fv.GetChunkSize()), Tombstone: fv.GetState() == chunkdv1.VersionState_VERSION_STATE_TOMBSTONE}
+			if v.UploadID != 0 {
+				s.committed[v.UploadID] = Committed{Path: rec.GetPath(), Version: v.V}
+			}
 			copy(v.SHA256[:], fv.GetSha256())
 			for _, raw := range fv.GetChunkIds() {
 				var id iface.ChunkID

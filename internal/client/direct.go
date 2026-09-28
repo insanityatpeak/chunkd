@@ -8,6 +8,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"slices"
 	"time"
 
 	"google.golang.org/protobuf/proto"
@@ -50,13 +51,27 @@ func New(caller iface.Caller, opts Options) *Direct {
 	return &Direct{caller: caller, opts: opts}
 }
 
+// meta calls the metadata server, retrying while it is unreachable. Every
+// metadata RPC is safe to repeat: reads trivially, commit and delete by
+// design, and a repeated begin only leaves an extra pending upload that GC
+// reclaims (Phase 4).
 func (c *Direct) meta(ctx context.Context, kind string, req, resp proto.Message) error {
-	r := c.caller.Do(ctx, []iface.Call{{To: c.opts.Meta, Addr: c.opts.MetaAddr, Kind: kind, Body: wire.Marshal(req)}})
-	if r[0].Err != nil {
-		return r[0].Err
+	body := wire.Marshal(req)
+	backoff := 100 * time.Millisecond
+	for attempt := 1; ; attempt++ {
+		r := c.caller.Do(ctx, []iface.Call{{To: c.opts.Meta, Addr: c.opts.MetaAddr, Kind: kind, Body: body}})
+		if r[0].Err == nil {
+			return wire.Decode(r[0].Body, resp)
+		}
+		if iface.CodeOf(r[0].Err) != iface.CodeUnavailable || attempt == metaAttempts || ctx.Err() != nil {
+			return r[0].Err
+		}
+		c.opts.Sleep(backoff)
+		backoff = min(backoff*2, 2*time.Second)
 	}
-	return wire.Decode(r[0].Body, resp)
 }
+
+const metaAttempts = 6
 
 // Put uploads r (exactly size bytes) as a new version of path.
 //
@@ -127,7 +142,7 @@ func (c *Direct) upload(ctx context.Context, path string, r io.Reader, size int6
 		if err == nil {
 			break
 		}
-		if iface.CodeOf(err) != iface.CodeRetry || waited >= c.opts.CommitTimeout {
+		if code := iface.CodeOf(err); (code != iface.CodeRetry && code != iface.CodeUnavailable) || waited >= c.opts.CommitTimeout {
 			return Manifest{}, err
 		}
 		c.opts.Sleep(backoff)
@@ -148,12 +163,20 @@ func (c *Direct) putChunk(ctx context.Context, ch chunk.Chunk, pl *chunkdv1.Chun
 	}
 	ref := ChunkRef{Index: ch.Index, ID: ch.ID.String(), Size: int64(len(ch.Data))}
 	var errs []error
-	for i, res := range c.caller.Do(ctx, calls) {
-		if res.Err != nil {
-			errs = append(errs, fmt.Errorf("%s: %w", calls[i].To, res.Err))
-			continue
+	// Two rounds: a put lost in transit is retried once (puts are
+	// idempotent), so one dropped message does not cost a replica.
+	for round := 0; round < 2 && len(calls) > 0; round++ {
+		errs = errs[:0]
+		var failed []iface.Call
+		for i, res := range c.caller.Do(ctx, calls) {
+			if res.Err != nil {
+				errs = append(errs, fmt.Errorf("%s: %w", calls[i].To, res.Err))
+				failed = append(failed, calls[i])
+				continue
+			}
+			ref.Replicas = append(ref.Replicas, string(calls[i].To))
 		}
-		ref.Replicas = append(ref.Replicas, string(calls[i].To))
+		calls = failed
 	}
 	if len(ref.Replicas) < min {
 		return ChunkRef{}, iface.Errorf(iface.CodeUnavailable, "chunk %d: %d of %d required replicas stored: %v", ch.Index, len(ref.Replicas), min, errors.Join(errs...))
@@ -226,26 +249,38 @@ func (c *Direct) Get(ctx context.Context, path string, w io.Writer) (Manifest, e
 
 func (c *Direct) fetch(ctx context.Context, loc *chunkdv1.ChunkLocation, ref *ChunkRef) ([]byte, error) {
 	var errs []error
+	// Two passes: a replica that timed out may answer the second time.
+	for pass := 0; pass < 2; pass++ {
+		if data, ok := c.fetchPass(ctx, loc, ref, &errs); ok {
+			return data, nil
+		}
+	}
+	return nil, iface.Errorf(iface.CodeUnavailable, "chunk %d (%s): no intact replica among %v: %v", ref.Index, ref.ID[:12], ref.Replicas, errors.Join(errs...))
+}
+
+func (c *Direct) fetchPass(ctx context.Context, loc *chunkdv1.ChunkLocation, ref *ChunkRef, errs *[]error) ([]byte, bool) {
 	for _, r := range loc.GetReplicas() {
 		res := c.caller.Do(ctx, []iface.Call{{To: iface.NodeID(r.GetNode()), Addr: r.GetAddr(), Kind: wire.KindGetChunk, Body: wire.Marshal(&chunkdv1.GetChunkRequest{Id: loc.GetId()})}})
 		if res[0].Err != nil {
-			errs = append(errs, fmt.Errorf("%s: %w", r.GetNode(), res[0].Err))
+			*errs = append(*errs, fmt.Errorf("%s: %w", r.GetNode(), res[0].Err))
 			continue
 		}
 		var resp chunkdv1.GetChunkResponse
 		if err := wire.Decode(res[0].Body, &resp); err != nil {
-			errs = append(errs, err)
+			*errs = append(*errs, err)
 			continue
 		}
 		if sum := sha256.Sum256(resp.GetData()); !bytes.Equal(sum[:], loc.GetId()) {
-			ref.Rejected = append(ref.Rejected, r.GetNode())
-			errs = append(errs, fmt.Errorf("%s: data does not match chunk hash", r.GetNode()))
+			if !slices.Contains(ref.Rejected, r.GetNode()) {
+				ref.Rejected = append(ref.Rejected, r.GetNode())
+			}
+			*errs = append(*errs, fmt.Errorf("%s: data does not match chunk hash", r.GetNode()))
 			continue
 		}
 		ref.ServedBy = r.GetNode()
-		return resp.GetData(), nil
+		return resp.GetData(), true
 	}
-	return nil, iface.Errorf(iface.CodeUnavailable, "chunk %d (%s): no intact replica among %v: %v", ref.Index, ref.ID[:12], ref.Replicas, errors.Join(errs...))
+	return nil, false
 }
 
 // List returns live files under prefix.
@@ -261,8 +296,17 @@ func (c *Direct) List(ctx context.Context, prefix string) ([]FileInfo, error) {
 	return out, nil
 }
 
-// Delete tombstones path; expectedVersion 0 deletes whatever is live.
+// Delete tombstones path; expectedVersion 0 deletes whatever is live. The
+// live version is resolved first so the delete itself is always
+// conditional, which is what makes a retried delete safe.
 func (c *Direct) Delete(ctx context.Context, path string, expectedVersion uint64) (uint64, error) {
+	if expectedVersion == 0 {
+		m, err := c.Stat(ctx, path)
+		if err != nil {
+			return 0, err
+		}
+		expectedVersion = m.Version
+	}
 	var resp chunkdv1.DeleteResponse
 	err := c.meta(ctx, wire.KindDelete, &chunkdv1.DeleteRequest{Path: path, ExpectedVersion: expectedVersion}, &resp)
 	return resp.GetVersion(), err
