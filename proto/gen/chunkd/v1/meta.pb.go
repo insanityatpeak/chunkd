@@ -936,10 +936,12 @@ func (x *BeginUploadRequest) GetSize() int64 {
 }
 
 type BeginUploadResponse struct {
-	state         protoimpl.MessageState `protogen:"open.v1"`
-	UploadId      uint64                 `protobuf:"varint,1,opt,name=upload_id,json=uploadId,proto3" json:"upload_id,omitempty"`
-	ChunkSize     int32                  `protobuf:"varint,2,opt,name=chunk_size,json=chunkSize,proto3" json:"chunk_size,omitempty"`
-	Placement     []*ChunkPlacement      `protobuf:"bytes,3,rep,name=placement,proto3" json:"placement,omitempty"`
+	state     protoimpl.MessageState `protogen:"open.v1"`
+	UploadId  uint64                 `protobuf:"varint,1,opt,name=upload_id,json=uploadId,proto3" json:"upload_id,omitempty"`
+	ChunkSize int32                  `protobuf:"varint,2,opt,name=chunk_size,json=chunkSize,proto3" json:"chunk_size,omitempty"`
+	Placement []*ChunkPlacement      `protobuf:"bytes,3,rep,name=placement,proto3" json:"placement,omitempty"`
+	// Acknowledged replicas per chunk the commit will require.
+	MinReplicas   int32 `protobuf:"varint,4,opt,name=min_replicas,json=minReplicas,proto3" json:"min_replicas,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -993,6 +995,13 @@ func (x *BeginUploadResponse) GetPlacement() []*ChunkPlacement {
 		return x.Placement
 	}
 	return nil
+}
+
+func (x *BeginUploadResponse) GetMinReplicas() int32 {
+	if x != nil {
+		return x.MinReplicas
+	}
+	return 0
 }
 
 type CommitUploadRequest struct {
@@ -1876,12 +1885,13 @@ const file_chunkd_v1_meta_proto_rawDesc = "" +
 	"\x12BeginUploadRequest\x12\x12\n" +
 	"\x04path\x18\x01 \x01(\tR\x04path\x12)\n" +
 	"\x10expected_version\x18\x02 \x01(\x04R\x0fexpectedVersion\x12\x12\n" +
-	"\x04size\x18\x03 \x01(\x03R\x04size\"\x8a\x01\n" +
+	"\x04size\x18\x03 \x01(\x03R\x04size\"\xad\x01\n" +
 	"\x13BeginUploadResponse\x12\x1b\n" +
 	"\tupload_id\x18\x01 \x01(\x04R\buploadId\x12\x1d\n" +
 	"\n" +
 	"chunk_size\x18\x02 \x01(\x05R\tchunkSize\x127\n" +
-	"\tplacement\x18\x03 \x03(\v2\x19.chunkd.v1.ChunkPlacementR\tplacement\"g\n" +
+	"\tplacement\x18\x03 \x03(\v2\x19.chunkd.v1.ChunkPlacementR\tplacement\x12!\n" +
+	"\fmin_replicas\x18\x04 \x01(\x05R\vminReplicas\"g\n" +
 	"\x13CommitUploadRequest\x12\x1b\n" +
 	"\tupload_id\x18\x01 \x01(\x04R\buploadId\x12\x1b\n" +
 	"\tchunk_ids\x18\x02 \x03(\fR\bchunkIds\x12\x16\n" +

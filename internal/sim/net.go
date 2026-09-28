@@ -210,6 +210,9 @@ func (c *Caller) handle(m iface.Message) {
 	delete(c.pending, m.ReqID)
 }
 
+// Sleep advances simulated time; clients use it to back off between retries.
+func (c *Caller) Sleep(d time.Duration) { c.net.clock.Advance(d) }
+
 // Do sends every call, then steps the clock until all are answered, the
 // timeout passes, or ctx is cancelled.
 func (c *Caller) Do(ctx context.Context, calls []iface.Call) []iface.Result {

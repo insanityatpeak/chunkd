@@ -188,7 +188,7 @@ func (s *Server) begin(m iface.Message, respond iface.Responder) {
 		return
 	}
 	op := &chunkdv1.BeginUploadOp{Path: req.GetPath(), ExpectedVersion: req.GetExpectedVersion(), Size: req.GetSize(), ChunkSize: int32(s.cfg.ChunkSize)}
-	resp := &chunkdv1.BeginUploadResponse{ChunkSize: int32(s.cfg.ChunkSize)}
+	resp := &chunkdv1.BeginUploadResponse{ChunkSize: int32(s.cfg.ChunkSize), MinReplicas: int32(s.cfg.MinReplicas)}
 	for _, nodes := range pl {
 		r := &chunkdv1.Replicas{}
 		cp := &chunkdv1.ChunkPlacement{}

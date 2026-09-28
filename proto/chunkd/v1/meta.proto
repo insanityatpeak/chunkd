@@ -107,6 +107,8 @@ message BeginUploadResponse {
   uint64 upload_id = 1;
   int32 chunk_size = 2;
   repeated ChunkPlacement placement = 3;
+  // Acknowledged replicas per chunk the commit will require.
+  int32 min_replicas = 4;
 }
 
 message CommitUploadRequest {

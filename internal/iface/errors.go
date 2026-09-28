@@ -28,6 +28,16 @@ func (c Code) String() string {
 	return fmt.Sprintf("code(%d)", c)
 }
 
+// ParseCode returns the Code named name, or CodeUnknown.
+func ParseCode(name string) Code {
+	for i, n := range codeNames {
+		if n == name {
+			return Code(i)
+		}
+	}
+	return CodeUnknown
+}
+
 // Error is an error with a Code.
 type Error struct {
 	Code Code
