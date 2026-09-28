@@ -1,0 +1,140 @@
+package meta
+
+import (
+	"cmp"
+	"maps"
+	"slices"
+	"time"
+
+	"github.com/insanityatpeak/chunkd/internal/core/placement"
+	"github.com/insanityatpeak/chunkd/internal/iface"
+)
+
+// NodeState is what the metadata server knows about a storage node. None of
+// it is durable.
+type NodeState struct {
+	ID       iface.NodeID
+	Rack     string
+	Addr     string
+	Used     int64
+	Chunks   int64
+	Draining bool
+	LastSeen iface.Instant
+	// reported is false until a full block report arrives; until then the
+	// node's locations are unknown, not empty.
+	reported bool
+}
+
+// Cluster tracks nodes and chunk locations, rebuilt from heartbeats and
+// block reports. As in GFS and HDFS, locations are never persisted: nodes are
+// the source of truth for what they hold, and a restarted metadata server
+// asks for full reports instead of trusting a stale copy.
+type Cluster struct {
+	nodes   map[iface.NodeID]*NodeState
+	byNode  map[iface.NodeID]map[iface.ChunkID]struct{}
+	byChunk map[iface.ChunkID]map[iface.NodeID]struct{}
+}
+
+// NewCluster returns an empty view.
+func NewCluster() *Cluster {
+	return &Cluster{
+		nodes:   map[iface.NodeID]*NodeState{},
+		byNode:  map[iface.NodeID]map[iface.ChunkID]struct{}{},
+		byChunk: map[iface.ChunkID]map[iface.NodeID]struct{}{},
+	}
+}
+
+// Heartbeat records a heartbeat and reports whether the node must send a
+// full block report.
+func (c *Cluster) Heartbeat(hb NodeState, now iface.Instant) (needFullReport bool) {
+	n := c.nodes[hb.ID]
+	if n == nil {
+		n = &NodeState{ID: hb.ID}
+		c.nodes[hb.ID] = n
+	}
+	n.Rack, n.Addr, n.Used, n.Chunks, n.Draining = hb.Rack, hb.Addr, hb.Used, hb.Chunks, hb.Draining
+	n.LastSeen = now
+	return !n.reported
+}
+
+// FullReport replaces the node's known chunks.
+func (c *Cluster) FullReport(id iface.NodeID, chunks []iface.ChunkID) {
+	for ch := range c.byNode[id] {
+		c.drop(id, ch)
+	}
+	c.byNode[id] = map[iface.ChunkID]struct{}{}
+	for _, ch := range chunks {
+		c.add(id, ch)
+	}
+	if n := c.nodes[id]; n != nil {
+		n.reported = true
+	}
+}
+
+// Received records that a node stored a chunk (incremental block report).
+func (c *Cluster) Received(id iface.NodeID, chunks []iface.ChunkID) {
+	if c.byNode[id] == nil {
+		c.byNode[id] = map[iface.ChunkID]struct{}{}
+	}
+	for _, ch := range chunks {
+		c.add(id, ch)
+	}
+}
+
+func (c *Cluster) add(id iface.NodeID, ch iface.ChunkID) {
+	c.byNode[id][ch] = struct{}{}
+	if c.byChunk[ch] == nil {
+		c.byChunk[ch] = map[iface.NodeID]struct{}{}
+	}
+	c.byChunk[ch][id] = struct{}{}
+}
+
+func (c *Cluster) drop(id iface.NodeID, ch iface.ChunkID) {
+	delete(c.byNode[id], ch)
+	if m := c.byChunk[ch]; m != nil {
+		delete(m, id)
+		if len(m) == 0 {
+			delete(c.byChunk, ch)
+		}
+	}
+}
+
+// Alive reports whether a node was heard from within deadAfter of now.
+func (c *Cluster) Alive(id iface.NodeID, now iface.Instant, deadAfter time.Duration) bool {
+	n := c.nodes[id]
+	return n != nil && now.Sub(n.LastSeen) <= deadAfter
+}
+
+// Locations returns the nodes reported to hold ch, sorted by ID. It includes
+// nodes that may since have died; callers filter with Alive.
+func (c *Cluster) Locations(ch iface.ChunkID) []iface.NodeID {
+	return slices.Sorted(maps.Keys(c.byChunk[ch]))
+}
+
+// Node returns one node's state.
+func (c *Cluster) Node(id iface.NodeID) (NodeState, bool) {
+	n := c.nodes[id]
+	if n == nil {
+		return NodeState{}, false
+	}
+	return *n, true
+}
+
+// Nodes returns every known node sorted by ID.
+func (c *Cluster) Nodes() []NodeState {
+	out := make([]NodeState, 0, len(c.nodes))
+	for _, n := range c.nodes {
+		out = append(out, *n)
+	}
+	slices.SortFunc(out, func(a, b NodeState) int { return cmp.Compare(a.ID, b.ID) })
+	return out
+}
+
+// PlacementView converts the node table for placement.Place.
+func (c *Cluster) PlacementView(now iface.Instant, deadAfter time.Duration) []placement.Node {
+	var out []placement.Node
+	for _, n := range c.Nodes() {
+		out = append(out, placement.Node{ID: n.ID, Rack: n.Rack, Used: n.Used, Alive: c.Alive(n.ID, now, deadAfter), Draining: n.Draining})
+	}
+	return out
+}

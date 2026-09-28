@@ -1,0 +1,188 @@
+syntax = "proto3";
+
+package chunkd.v1;
+
+option go_package = "github.com/insanityatpeak/chunkd/proto/gen/chunkd/v1;chunkdv1";
+
+// ---- Log operations. Each is applied deterministically; anything decided
+// from live, non-durable state (placement) is recorded in the op.
+
+message Replicas {
+  repeated string nodes = 1;
+}
+
+message BeginUploadOp {
+  string path = 1;
+  // Live version the writer expects; 0 means the path must not exist.
+  uint64 expected_version = 2;
+  int64 size = 3;
+  int32 chunk_size = 4;
+  repeated Replicas placement = 5;
+}
+
+message CommitUploadOp {
+  uint64 upload_id = 1;
+  repeated bytes chunk_ids = 2;
+  bytes sha256 = 3;
+}
+
+message AbortUploadOp {
+  uint64 upload_id = 1;
+}
+
+message DeleteOp {
+  string path = 1;
+  // 0 deletes whatever version is live.
+  uint64 expected_version = 2;
+}
+
+message Op {
+  oneof op {
+    BeginUploadOp begin = 1;
+    CommitUploadOp commit = 2;
+    AbortUploadOp abort = 3;
+    DeleteOp delete = 4;
+  }
+}
+
+// ---- Snapshot of the durable state.
+
+enum VersionState {
+  VERSION_STATE_UNSPECIFIED = 0;
+  VERSION_STATE_COMMITTED = 1;
+  VERSION_STATE_TOMBSTONE = 2;
+}
+
+message FileVersion {
+  uint64 version = 1;
+  int64 size = 2;
+  bytes sha256 = 3;
+  repeated bytes chunk_ids = 4;
+  int32 chunk_size = 5;
+  VersionState state = 6;
+}
+
+message FileRecord {
+  string path = 1;
+  repeated FileVersion versions = 2;
+}
+
+message ChunkRecord {
+  bytes id = 1;
+  uint64 refcount = 2;
+  int64 size = 3;
+}
+
+message UploadRecord {
+  uint64 id = 1;
+  BeginUploadOp begin = 2;
+}
+
+message MetaSnapshot {
+  repeated FileRecord files = 1;
+  repeated ChunkRecord chunks = 2;
+  repeated UploadRecord uploads = 3;
+  uint64 last_upload_id = 4;
+}
+
+// ---- Client RPCs to the metadata server.
+
+message Replica {
+  string node = 1;
+  // gRPC address in real mode; empty in sim.
+  string addr = 2;
+}
+
+message ChunkPlacement {
+  repeated Replica replicas = 1;
+}
+
+message BeginUploadRequest {
+  string path = 1;
+  uint64 expected_version = 2;
+  int64 size = 3;
+}
+
+message BeginUploadResponse {
+  uint64 upload_id = 1;
+  int32 chunk_size = 2;
+  repeated ChunkPlacement placement = 3;
+}
+
+message CommitUploadRequest {
+  uint64 upload_id = 1;
+  repeated bytes chunk_ids = 2;
+  bytes sha256 = 3;
+}
+
+message CommitUploadResponse {
+  uint64 version = 1;
+}
+
+message AbortUploadRequest {
+  uint64 upload_id = 1;
+}
+
+message AbortUploadResponse {}
+
+message DeleteRequest {
+  string path = 1;
+  uint64 expected_version = 2;
+}
+
+message DeleteResponse {
+  uint64 version = 1;
+}
+
+message ChunkLocation {
+  bytes id = 1;
+  int64 size = 2;
+  repeated Replica replicas = 3;
+}
+
+message StatRequest {
+  string path = 1;
+}
+
+message StatResponse {
+  string path = 1;
+  uint64 version = 2;
+  int64 size = 3;
+  bytes sha256 = 4;
+  int32 chunk_size = 5;
+  repeated ChunkLocation chunks = 6;
+}
+
+message ListRequest {
+  string prefix = 1;
+}
+
+message FileInfo {
+  string path = 1;
+  uint64 version = 2;
+  int64 size = 3;
+  bytes sha256 = 4;
+  int32 chunk_count = 5;
+}
+
+message ListResponse {
+  repeated FileInfo files = 1;
+}
+
+message NodeInfo {
+  string id = 1;
+  string rack = 2;
+  string addr = 3;
+  int64 used_bytes = 4;
+  int64 chunk_count = 5;
+  bool alive = 6;
+  bool draining = 7;
+}
+
+message ClusterRequest {}
+
+message ClusterResponse {
+  repeated NodeInfo nodes = 1;
+  int64 files = 2;
+  int64 logical_bytes = 3;
+}
