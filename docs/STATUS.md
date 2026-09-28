@@ -15,11 +15,23 @@ Current phase: **0 — bootstrap, CI and live WASM spike**
 - [x] Docker images and compose (full 9 containers, `small` profile 5)
 - [x] CI and Pages workflows
 - [x] ADRs 0001-0004, CONTRIBUTING, this file
-- [ ] CI green on GitHub and Pages live (verified after first push)
+- [x] CI green on GitHub and Pages live; `?seed=42` replays identically on the live site
+
+## Exit criteria (verified 2026-09-29)
+
+| Criterion | Evidence |
+|---|---|
+| `task test` and `lint-imports` pass locally and in CI | CI run 36470366187: go, web, compose jobs green |
+| Live page shows banner and advancing counters; `?seed=42` replays | Two browser loads of the live site: 237 shared sim times, 0 mismatches |
+| `cluster.wasm` size printed in CI, under budget | 7.63 MiB (target 15, limit 20); 2.0 MB gzipped on Pages |
+| `docker compose up` = 9 containers; `--profile small` = 5; gateway `/healthz` 200 | Local and CI `compose` job |
+| `trace-check` passes; single author | 12 conventional commits by insanityatpeak |
 
 ## Next
 
 - [ ] Phase 1: core data path (`02-phase1-core`)
+- [ ] Request/response helper over `Transport` (ReqID + Clock timeout) when the first RPC-style exchange needs it
+- [ ] `HttpClusterAPI`: gateway state endpoint for the dashboard's real-mode view
 
 ## Open decisions
 
