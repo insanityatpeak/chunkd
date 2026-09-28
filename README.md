@@ -1,5 +1,8 @@
 # chunkd
 
+[![ci](https://github.com/insanityatpeak/chunkd/actions/workflows/ci.yml/badge.svg)](https://github.com/insanityatpeak/chunkd/actions/workflows/ci.yml)
+[![pages](https://github.com/insanityatpeak/chunkd/actions/workflows/pages.yml/badge.svg)](https://insanityatpeak.github.io/chunkd/)
+
 A fault-tolerant distributed file store in Go, in the style of GFS and HDFS: a metadata service, storage nodes holding content-addressed chunks, and a gateway.
 
 The same core code runs in two modes:
