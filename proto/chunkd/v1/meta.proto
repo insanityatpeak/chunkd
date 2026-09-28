@@ -181,6 +181,9 @@ message NodeInfo {
   int64 chunk_count = 5;
   bool alive = 6;
   bool draining = 7;
+  // Detector state: alive, suspect or dead (ADR-0010).
+  string state = 8;
+  int64 heartbeat_age_ms = 9;
 }
 
 message ClusterRequest {}

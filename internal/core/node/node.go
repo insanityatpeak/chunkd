@@ -50,6 +50,9 @@ type Node struct {
 	d     Deps
 	cfg   Config
 	stats Stats
+	// incarnation changes on every start, so the metadata server can tell a
+	// restarted node (seq back at 1) from replayed old heartbeats.
+	incarnation uint64
 }
 
 // New returns a stopped node.
@@ -57,7 +60,7 @@ func New(d Deps, cfg Config) *Node {
 	if d.Clock == nil || d.Net == nil || d.Store == nil || d.Rand == nil || d.Log == nil {
 		panic("node: missing dependency")
 	}
-	return &Node{d: d, cfg: cfg}
+	return &Node{d: d, cfg: cfg, incarnation: d.Rand.Uint64()}
 }
 
 // Start registers handlers and schedules timers. The first heartbeat and
@@ -144,7 +147,7 @@ func (n *Node) heartbeat() {
 	}
 	n.stats.Heartbeats++
 	hb := &chunkdv1.Heartbeat{Node: string(n.cfg.ID), Rack: n.cfg.Rack, Addr: n.cfg.Addr,
-		UsedBytes: u.Bytes, ChunkCount: u.Chunks, Draining: n.cfg.Draining, Seq: n.stats.Heartbeats}
+		UsedBytes: u.Bytes, ChunkCount: u.Chunks, Draining: n.cfg.Draining, Seq: n.stats.Heartbeats, Incarnation: n.incarnation}
 	n.d.Net.Send(n.cfg.Meta, iface.Message{From: n.cfg.ID, Kind: wire.KindHeartbeat, Body: wire.Marshal(hb)})
 	n.d.Clock.AfterFunc(n.cfg.Heartbeat, n.heartbeat)
 }

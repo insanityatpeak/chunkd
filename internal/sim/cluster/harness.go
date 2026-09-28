@@ -93,14 +93,15 @@ func (c *Cluster) AssertInvariants() error {
 	}
 	st := c.meta.State()
 	now := c.clock.Now()
+	cl := c.meta.Cluster()
 	for _, e := range st.List("/") {
 		if _, _, err := c.Download(e.Path); err != nil {
 			errs = append(errs, fmt.Errorf("committed %s v%d unreadable: %w", e.Path, e.V, err))
 		}
 		for i, id := range e.Chunks {
 			live := 0
-			for _, n := range c.meta.Cluster().Locations(id) {
-				if c.meta.Cluster().Alive(n, now, c.cfg.Meta.DeadAfter) {
+			for _, n := range cl.Locations(id) {
+				if cl.Alive(n) {
 					live++
 				}
 			}

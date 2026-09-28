@@ -1,14 +1,17 @@
 package meta
 
 import (
+	"cmp"
 	"context"
 	"fmt"
 	"log/slog"
+	"slices"
 	"time"
 
 	"google.golang.org/protobuf/proto"
 
 	"github.com/insanityatpeak/chunkd/internal/core/chunk"
+	"github.com/insanityatpeak/chunkd/internal/core/detector"
 	"github.com/insanityatpeak/chunkd/internal/core/placement"
 	"github.com/insanityatpeak/chunkd/internal/core/wire"
 	"github.com/insanityatpeak/chunkd/internal/iface"
@@ -30,13 +33,14 @@ type Config struct {
 	Replicas      int
 	MinReplicas   int
 	ChunkSize     int
-	DeadAfter     time.Duration
+	Detector      detector.Config
 	SnapshotEvery int
 }
 
-// DefaultConfig is N=3, commit at 2 (ADR-0007), 4 MiB chunks (ADR-0005).
+// DefaultConfig is N=3, commit at 2 (ADR-0007), 4 MiB chunks (ADR-0005),
+// suspect after 3 s and dead after 10 s of silence (ADR-0010).
 func DefaultConfig(id iface.NodeID) Config {
-	return Config{ID: id, Replicas: 3, MinReplicas: 2, ChunkSize: chunk.DefaultSize, DeadAfter: 5 * time.Second, SnapshotEvery: 1000}
+	return Config{ID: id, Replicas: 3, MinReplicas: 2, ChunkSize: chunk.DefaultSize, Detector: detector.DefaultConfig(), SnapshotEvery: 1000}
 }
 
 // Server is the metadata server. Everything runs on its event loop.
@@ -63,7 +67,7 @@ func NewServer(ctx context.Context, d Deps, cfg Config) (*Server, error) {
 	if err != nil {
 		return nil, fmt.Errorf("restore snapshot at %d: %w", at, err)
 	}
-	s := &Server{d: d, cfg: cfg, state: state, cluster: NewCluster(), applied: at}
+	s := &Server{d: d, cfg: cfg, state: state, cluster: NewCluster(cfg.Detector), applied: at}
 	err = d.Store.Replay(ctx, at+1, func(i iface.Index, b []byte) error {
 		var op chunkdv1.Op
 		if err := proto.Unmarshal(b, &op); err != nil {
@@ -94,6 +98,22 @@ func (s *Server) Start() {
 	} {
 		s.d.Net.Serve(s.cfg.ID, kind, h, iface.ServeOpts{})
 	}
+	s.d.Clock.AfterFunc(s.cfg.Detector.TickEvery, s.tick)
+}
+
+func (s *Server) tick() {
+	for _, tr := range s.cluster.Tick(s.d.Clock.Now()) {
+		s.transition(tr)
+	}
+	s.d.Clock.AfterFunc(s.cfg.Detector.TickEvery, s.tick)
+}
+
+func (s *Server) transition(tr detector.Transition) {
+	if tr.From == 0 {
+		s.d.Log.Info("node joined", "node", tr.Node)
+		return
+	}
+	s.d.Log.Info("node state", "node", tr.Node, "from", tr.From.String(), "to", tr.To.String(), "restarted", tr.Restarted)
 }
 
 // State exposes the state machine for tests and invariants. Loop-owned.
@@ -114,11 +134,11 @@ func (s *Server) handle(m iface.Message) {
 			return
 		}
 		id := iface.NodeID(hb.GetNode())
-		if _, known := s.cluster.Node(id); !known {
-			s.d.Log.Info("node joined", "node", id, "rack", hb.GetRack())
+		tr, changed, need := s.cluster.Heartbeat(NodeState{ID: id, Rack: hb.GetRack(), Addr: hb.GetAddr(), Used: hb.GetUsedBytes(),
+			Chunks: hb.GetChunkCount(), Draining: hb.GetDraining()}, detector.Beat{Incarnation: hb.GetIncarnation(), Seq: hb.GetSeq()}, s.d.Clock.Now())
+		if changed {
+			s.transition(tr)
 		}
-		need := s.cluster.Heartbeat(NodeState{ID: id, Rack: hb.GetRack(), Addr: hb.GetAddr(), Used: hb.GetUsedBytes(),
-			Chunks: hb.GetChunkCount(), Draining: hb.GetDraining()}, s.d.Clock.Now())
 		s.d.Net.Send(m.From, iface.Message{From: s.cfg.ID, Kind: wire.KindHeartbeatAck,
 			Body: wire.Marshal(&chunkdv1.HeartbeatAck{Seq: hb.GetSeq(), NeedFullReport: need})})
 	case wire.KindBlockReport:
@@ -182,7 +202,7 @@ func (s *Server) begin(m iface.Message, respond iface.Responder) {
 	for i := range sizes {
 		sizes[i] = chunk.SizeOf(req.GetSize(), s.cfg.ChunkSize, i)
 	}
-	pl, err := placement.Place(s.cluster.PlacementView(s.d.Clock.Now(), s.cfg.DeadAfter), sizes, s.cfg.Replicas, s.cfg.MinReplicas, s.d.Rand)
+	pl, err := placement.Place(s.cluster.PlacementView(), sizes, s.cfg.Replicas, s.cfg.MinReplicas, s.d.Rand)
 	if err != nil {
 		respond(nil, iface.Errorf(iface.CodeUnavailable, "%v (need %d)", err, s.cfg.MinReplicas))
 		return
@@ -237,14 +257,20 @@ func (s *Server) commit(m iface.Message, respond iface.Responder) {
 	wire.Respond(respond, &chunkdv1.CommitUploadResponse{Version: res.Version}, err)
 }
 
+// liveLocations are replicas that count toward commit: alive nodes only. A
+// suspect node may already be dead, and an acknowledged upload promises
+// MinReplicas copies on nodes believed alive.
 func (s *Server) liveLocations(id iface.ChunkID) []iface.NodeID {
-	var out []iface.NodeID
-	for _, n := range s.cluster.Locations(id) {
-		if s.cluster.Alive(n, s.d.Clock.Now(), s.cfg.DeadAfter) {
-			out = append(out, n)
-		}
-	}
-	return out
+	return slices.DeleteFunc(s.cluster.Locations(id), func(n iface.NodeID) bool { return !s.cluster.Alive(n) })
+}
+
+// readLocations are replicas a reader may try: alive first, then suspect.
+func (s *Server) readLocations(id iface.ChunkID) []iface.NodeID {
+	locs := slices.DeleteFunc(s.cluster.Locations(id), func(n iface.NodeID) bool { return !s.cluster.Readable(n) })
+	slices.SortStableFunc(locs, func(a, b iface.NodeID) int {
+		return cmp.Compare(s.cluster.state(a), s.cluster.state(b))
+	})
+	return locs
 }
 
 func (s *Server) abort(m iface.Message, respond iface.Responder) {
@@ -289,7 +315,7 @@ func (s *Server) stat(m iface.Message, respond iface.Responder) {
 	resp := &chunkdv1.StatResponse{Path: req.GetPath(), Version: v.V, Size: v.Size, Sha256: v.SHA256[:], ChunkSize: int32(v.ChunkSize)}
 	for i, id := range v.Chunks {
 		loc := &chunkdv1.ChunkLocation{Id: id[:], Size: chunk.SizeOf(v.Size, v.ChunkSize, i)}
-		for _, n := range s.liveLocations(id) {
+		for _, n := range s.readLocations(id) {
 			loc.Replicas = append(loc.Replicas, s.replica(n))
 		}
 		resp.Chunks = append(resp.Chunks, loc)
@@ -314,7 +340,8 @@ func (s *Server) clusterInfo(_ iface.Message, respond iface.Responder) {
 	resp := &chunkdv1.ClusterResponse{}
 	for _, n := range s.cluster.Nodes() {
 		resp.Nodes = append(resp.Nodes, &chunkdv1.NodeInfo{Id: string(n.ID), Rack: n.Rack, Addr: n.Addr, UsedBytes: n.Used,
-			ChunkCount: n.Chunks, Alive: s.cluster.Alive(n.ID, s.d.Clock.Now(), s.cfg.DeadAfter), Draining: n.Draining})
+			ChunkCount: n.Chunks, Alive: s.cluster.Alive(n.ID), Draining: n.Draining, State: n.State.String(),
+			HeartbeatAgeMs: int64(s.d.Clock.Now().Sub(n.LastSeen) / time.Millisecond)})
 	}
 	for _, e := range s.state.List("/") {
 		resp.Files++

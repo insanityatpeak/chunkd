@@ -77,7 +77,7 @@ func TestNodeAndMetaOverGRPC(t *testing.T) {
 
 	waitFor(t, func() bool {
 		var ok bool
-		mp.loop.Do(func() { ok = srv.Cluster().Alive("n1", mp.clock.Now(), time.Second) })
+		mp.loop.Do(func() { ok = srv.Cluster().Alive("n1") })
 		return ok
 	}, "node registered with meta")
 

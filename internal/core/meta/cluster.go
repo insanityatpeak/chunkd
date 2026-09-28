@@ -4,8 +4,8 @@ import (
 	"cmp"
 	"maps"
 	"slices"
-	"time"
 
+	"github.com/insanityatpeak/chunkd/internal/core/detector"
 	"github.com/insanityatpeak/chunkd/internal/core/placement"
 	"github.com/insanityatpeak/chunkd/internal/iface"
 )
@@ -19,6 +19,7 @@ type NodeState struct {
 	Used     int64
 	Chunks   int64
 	Draining bool
+	State    detector.State
 	LastSeen iface.Instant
 	// reported is false until a full block report arrives; until then the
 	// node's locations are unknown, not empty.
@@ -30,31 +31,64 @@ type NodeState struct {
 // the source of truth for what they hold, and a restarted metadata server
 // asks for full reports instead of trusting a stale copy.
 type Cluster struct {
+	det     *detector.Detector
 	nodes   map[iface.NodeID]*NodeState
 	byNode  map[iface.NodeID]map[iface.ChunkID]struct{}
 	byChunk map[iface.ChunkID]map[iface.NodeID]struct{}
 }
 
-// NewCluster returns an empty view.
-func NewCluster() *Cluster {
+// NewCluster returns an empty view whose liveness comes from a detector with
+// the given thresholds.
+func NewCluster(cfg detector.Config) *Cluster {
 	return &Cluster{
+		det:     detector.New(cfg),
 		nodes:   map[iface.NodeID]*NodeState{},
 		byNode:  map[iface.NodeID]map[iface.ChunkID]struct{}{},
 		byChunk: map[iface.ChunkID]map[iface.NodeID]struct{}{},
 	}
 }
 
-// Heartbeat records a heartbeat and reports whether the node must send a
-// full block report.
-func (c *Cluster) Heartbeat(hb NodeState, now iface.Instant) (needFullReport bool) {
+// Heartbeat records a heartbeat. It returns the detector's transition, if
+// any, and whether the node must send a full block report.
+func (c *Cluster) Heartbeat(hb NodeState, b detector.Beat, now iface.Instant) (tr detector.Transition, changed, needFullReport bool) {
 	n := c.nodes[hb.ID]
 	if n == nil {
 		n = &NodeState{ID: hb.ID}
 		c.nodes[hb.ID] = n
 	}
 	n.Rack, n.Addr, n.Used, n.Chunks, n.Draining = hb.Rack, hb.Addr, hb.Used, hb.Chunks, hb.Draining
-	n.LastSeen = now
-	return !n.reported
+	tr, changed = c.det.Observe(hb.ID, b, now)
+	if changed {
+		c.apply(tr)
+	}
+	n.LastSeen, _ = c.det.LastSeen(hb.ID)
+	return tr, changed, !n.reported
+}
+
+// Tick applies heartbeat timeouts and returns the transitions.
+func (c *Cluster) Tick(now iface.Instant) []detector.Transition {
+	trs := c.det.Tick(now)
+	for _, tr := range trs {
+		c.apply(tr)
+	}
+	return trs
+}
+
+// apply keeps the node table in step with the detector. A dead or restarted
+// node's locations are forgotten: what it holds when it returns is whatever
+// its next full report says (its disk may have been replaced).
+func (c *Cluster) apply(tr detector.Transition) {
+	n := c.nodes[tr.Node]
+	if n == nil {
+		return
+	}
+	n.State = tr.To
+	if tr.To == detector.Dead || tr.Restarted {
+		for ch := range c.byNode[tr.Node] {
+			c.drop(tr.Node, ch)
+		}
+		n.reported = false
+	}
 }
 
 // FullReport replaces the node's known chunks.
@@ -99,14 +133,23 @@ func (c *Cluster) drop(id iface.NodeID, ch iface.ChunkID) {
 	}
 }
 
-// Alive reports whether a node was heard from within deadAfter of now.
-func (c *Cluster) Alive(id iface.NodeID, now iface.Instant, deadAfter time.Duration) bool {
-	n := c.nodes[id]
-	return n != nil && now.Sub(n.LastSeen) <= deadAfter
+// Alive reports whether the detector considers the node alive: it takes
+// new replicas and its copies count toward commit.
+func (c *Cluster) Alive(id iface.NodeID) bool { return c.det.State(id) == detector.Alive }
+
+// Readable reports whether reads may be sent to the node (alive or suspect).
+func (c *Cluster) Readable(id iface.NodeID) bool {
+	s := c.det.State(id)
+	return s == detector.Alive || s == detector.Suspect
 }
 
+func (c *Cluster) state(id iface.NodeID) detector.State { return c.det.State(id) }
+
+// Detector exposes the detector's thresholds and counters.
+func (c *Cluster) Detector() *detector.Detector { return c.det }
+
 // Locations returns the nodes reported to hold ch, sorted by ID. It includes
-// nodes that may since have died; callers filter with Alive.
+// suspect nodes; callers filter with Alive or Readable.
 func (c *Cluster) Locations(ch iface.ChunkID) []iface.NodeID {
 	return slices.Sorted(maps.Keys(c.byChunk[ch]))
 }
@@ -131,10 +174,11 @@ func (c *Cluster) Nodes() []NodeState {
 }
 
 // PlacementView converts the node table for placement.Place.
-func (c *Cluster) PlacementView(now iface.Instant, deadAfter time.Duration) []placement.Node {
+// Suspect nodes are excluded: a node that may be dying takes no new data.
+func (c *Cluster) PlacementView() []placement.Node {
 	var out []placement.Node
 	for _, n := range c.Nodes() {
-		out = append(out, placement.Node{ID: n.ID, Rack: n.Rack, Used: n.Used, Alive: c.Alive(n.ID, now, deadAfter), Draining: n.Draining})
+		out = append(out, placement.Node{ID: n.ID, Rack: n.Rack, Used: n.Used, Alive: c.Alive(n.ID), Draining: n.Draining})
 	}
 	return out
 }

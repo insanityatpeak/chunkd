@@ -53,7 +53,7 @@ func (c *Cluster) State() State {
 	for _, n := range c.nodes {
 		v := NodeView{ID: n.ID(), Rack: n.Rack, Crashed: c.net.Crashed(n.ID()), Heartbeats: n.Stats().Heartbeats, Acks: n.Stats().Acks}
 		if ns, ok := c.meta.Cluster().Node(n.ID()); ok {
-			v.Alive = c.meta.Cluster().Alive(n.ID(), now, c.cfg.Meta.DeadAfter)
+			v.Alive = c.meta.Cluster().Alive(n.ID())
 			v.UsedBytes, v.Chunks = ns.Used, ns.Chunks
 		}
 		s.Nodes = append(s.Nodes, v)

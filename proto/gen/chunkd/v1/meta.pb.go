@@ -1646,16 +1646,19 @@ func (x *ListResponse) GetFiles() []*FileInfo {
 }
 
 type NodeInfo struct {
-	state         protoimpl.MessageState `protogen:"open.v1"`
-	Id            string                 `protobuf:"bytes,1,opt,name=id,proto3" json:"id,omitempty"`
-	Rack          string                 `protobuf:"bytes,2,opt,name=rack,proto3" json:"rack,omitempty"`
-	Addr          string                 `protobuf:"bytes,3,opt,name=addr,proto3" json:"addr,omitempty"`
-	UsedBytes     int64                  `protobuf:"varint,4,opt,name=used_bytes,json=usedBytes,proto3" json:"used_bytes,omitempty"`
-	ChunkCount    int64                  `protobuf:"varint,5,opt,name=chunk_count,json=chunkCount,proto3" json:"chunk_count,omitempty"`
-	Alive         bool                   `protobuf:"varint,6,opt,name=alive,proto3" json:"alive,omitempty"`
-	Draining      bool                   `protobuf:"varint,7,opt,name=draining,proto3" json:"draining,omitempty"`
-	unknownFields protoimpl.UnknownFields
-	sizeCache     protoimpl.SizeCache
+	state      protoimpl.MessageState `protogen:"open.v1"`
+	Id         string                 `protobuf:"bytes,1,opt,name=id,proto3" json:"id,omitempty"`
+	Rack       string                 `protobuf:"bytes,2,opt,name=rack,proto3" json:"rack,omitempty"`
+	Addr       string                 `protobuf:"bytes,3,opt,name=addr,proto3" json:"addr,omitempty"`
+	UsedBytes  int64                  `protobuf:"varint,4,opt,name=used_bytes,json=usedBytes,proto3" json:"used_bytes,omitempty"`
+	ChunkCount int64                  `protobuf:"varint,5,opt,name=chunk_count,json=chunkCount,proto3" json:"chunk_count,omitempty"`
+	Alive      bool                   `protobuf:"varint,6,opt,name=alive,proto3" json:"alive,omitempty"`
+	Draining   bool                   `protobuf:"varint,7,opt,name=draining,proto3" json:"draining,omitempty"`
+	// Detector state: alive, suspect or dead (ADR-0010).
+	State          string `protobuf:"bytes,8,opt,name=state,proto3" json:"state,omitempty"`
+	HeartbeatAgeMs int64  `protobuf:"varint,9,opt,name=heartbeat_age_ms,json=heartbeatAgeMs,proto3" json:"heartbeat_age_ms,omitempty"`
+	unknownFields  protoimpl.UnknownFields
+	sizeCache      protoimpl.SizeCache
 }
 
 func (x *NodeInfo) Reset() {
@@ -1735,6 +1738,20 @@ func (x *NodeInfo) GetDraining() bool {
 		return x.Draining
 	}
 	return false
+}
+
+func (x *NodeInfo) GetState() string {
+	if x != nil {
+		return x.State
+	}
+	return ""
+}
+
+func (x *NodeInfo) GetHeartbeatAgeMs() int64 {
+	if x != nil {
+		return x.HeartbeatAgeMs
+	}
+	return 0
 }
 
 type ClusterRequest struct {
@@ -1940,7 +1957,7 @@ const file_chunkd_v1_meta_proto_rawDesc = "" +
 	"\vchunk_count\x18\x05 \x01(\x05R\n" +
 	"chunkCount\"9\n" +
 	"\fListResponse\x12)\n" +
-	"\x05files\x18\x01 \x03(\v2\x13.chunkd.v1.FileInfoR\x05files\"\xb4\x01\n" +
+	"\x05files\x18\x01 \x03(\v2\x13.chunkd.v1.FileInfoR\x05files\"\xf4\x01\n" +
 	"\bNodeInfo\x12\x0e\n" +
 	"\x02id\x18\x01 \x01(\tR\x02id\x12\x12\n" +
 	"\x04rack\x18\x02 \x01(\tR\x04rack\x12\x12\n" +
@@ -1950,7 +1967,9 @@ const file_chunkd_v1_meta_proto_rawDesc = "" +
 	"\vchunk_count\x18\x05 \x01(\x03R\n" +
 	"chunkCount\x12\x14\n" +
 	"\x05alive\x18\x06 \x01(\bR\x05alive\x12\x1a\n" +
-	"\bdraining\x18\a \x01(\bR\bdraining\"\x10\n" +
+	"\bdraining\x18\a \x01(\bR\bdraining\x12\x14\n" +
+	"\x05state\x18\b \x01(\tR\x05state\x12(\n" +
+	"\x10heartbeat_age_ms\x18\t \x01(\x03R\x0eheartbeatAgeMs\"\x10\n" +
 	"\x0eClusterRequest\"w\n" +
 	"\x0fClusterResponse\x12)\n" +
 	"\x05nodes\x18\x01 \x03(\v2\x13.chunkd.v1.NodeInfoR\x05nodes\x12\x14\n" +

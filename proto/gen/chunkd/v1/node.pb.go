@@ -27,11 +27,13 @@ type Heartbeat struct {
 	Node  string                 `protobuf:"bytes,1,opt,name=node,proto3" json:"node,omitempty"`
 	Rack  string                 `protobuf:"bytes,2,opt,name=rack,proto3" json:"rack,omitempty"`
 	// gRPC address clients use for chunk transfers; empty in sim.
-	Addr          string `protobuf:"bytes,3,opt,name=addr,proto3" json:"addr,omitempty"`
-	UsedBytes     int64  `protobuf:"varint,4,opt,name=used_bytes,json=usedBytes,proto3" json:"used_bytes,omitempty"`
-	ChunkCount    int64  `protobuf:"varint,5,opt,name=chunk_count,json=chunkCount,proto3" json:"chunk_count,omitempty"`
-	Draining      bool   `protobuf:"varint,6,opt,name=draining,proto3" json:"draining,omitempty"`
-	Seq           uint64 `protobuf:"varint,7,opt,name=seq,proto3" json:"seq,omitempty"`
+	Addr       string `protobuf:"bytes,3,opt,name=addr,proto3" json:"addr,omitempty"`
+	UsedBytes  int64  `protobuf:"varint,4,opt,name=used_bytes,json=usedBytes,proto3" json:"used_bytes,omitempty"`
+	ChunkCount int64  `protobuf:"varint,5,opt,name=chunk_count,json=chunkCount,proto3" json:"chunk_count,omitempty"`
+	Draining   bool   `protobuf:"varint,6,opt,name=draining,proto3" json:"draining,omitempty"`
+	Seq        uint64 `protobuf:"varint,7,opt,name=seq,proto3" json:"seq,omitempty"`
+	// Random per process start; seq restarts at 1 with each incarnation.
+	Incarnation   uint64 `protobuf:"varint,8,opt,name=incarnation,proto3" json:"incarnation,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -111,6 +113,13 @@ func (x *Heartbeat) GetDraining() bool {
 func (x *Heartbeat) GetSeq() uint64 {
 	if x != nil {
 		return x.Seq
+	}
+	return 0
+}
+
+func (x *Heartbeat) GetIncarnation() uint64 {
+	if x != nil {
+		return x.Incarnation
 	}
 	return 0
 }
@@ -411,7 +420,7 @@ var File_chunkd_v1_node_proto protoreflect.FileDescriptor
 
 const file_chunkd_v1_node_proto_rawDesc = "" +
 	"\n" +
-	"\x14chunkd/v1/node.proto\x12\tchunkd.v1\"\xb5\x01\n" +
+	"\x14chunkd/v1/node.proto\x12\tchunkd.v1\"\xd7\x01\n" +
 	"\tHeartbeat\x12\x12\n" +
 	"\x04node\x18\x01 \x01(\tR\x04node\x12\x12\n" +
 	"\x04rack\x18\x02 \x01(\tR\x04rack\x12\x12\n" +
@@ -421,7 +430,8 @@ const file_chunkd_v1_node_proto_rawDesc = "" +
 	"\vchunk_count\x18\x05 \x01(\x03R\n" +
 	"chunkCount\x12\x1a\n" +
 	"\bdraining\x18\x06 \x01(\bR\bdraining\x12\x10\n" +
-	"\x03seq\x18\a \x01(\x04R\x03seq\"J\n" +
+	"\x03seq\x18\a \x01(\x04R\x03seq\x12 \n" +
+	"\vincarnation\x18\b \x01(\x04R\vincarnation\"J\n" +
 	"\fHeartbeatAck\x12\x10\n" +
 	"\x03seq\x18\x01 \x01(\x04R\x03seq\x12(\n" +
 	"\x10need_full_report\x18\x02 \x01(\bR\x0eneedFullReport\"R\n" +

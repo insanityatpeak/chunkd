@@ -27,7 +27,8 @@ func main() {
 	flag.IntVar(&cfg.Replicas, "replicas", cfg.Replicas, "replicas per chunk")
 	flag.IntVar(&cfg.MinReplicas, "min-replicas", cfg.MinReplicas, "reported replicas required to commit")
 	flag.IntVar(&cfg.ChunkSize, "chunk-size", cfg.ChunkSize, "chunk size in bytes")
-	flag.DurationVar(&cfg.DeadAfter, "dead-after", cfg.DeadAfter, "heartbeat silence before a node counts as dead")
+	flag.DurationVar(&cfg.Detector.SuspectAfter, "suspect-after", cfg.Detector.SuspectAfter, "heartbeat silence before a node is suspect")
+	flag.DurationVar(&cfg.Detector.DeadAfter, "dead-after", cfg.Detector.DeadAfter, "heartbeat silence before a node is dead")
 	flag.Parse()
 	cfg.ID = iface.NodeID(*id)
 
@@ -46,14 +47,14 @@ func main() {
 		}
 		srv.Start()
 
-		alive := p.Metrics.Gauge("chunkd_meta_nodes_alive", "Storage nodes heard from within dead-after.")
+		alive := p.Metrics.Gauge("chunkd_meta_nodes_alive", "Storage nodes the failure detector considers alive.")
 		files := p.Metrics.Gauge("chunkd_meta_files", "Live files.")
 		applied := p.Metrics.Gauge("chunkd_meta_applied_index", "Index of the last applied log entry.")
 		var refresh func()
 		refresh = func() {
 			n := 0
 			for _, ns := range srv.Cluster().Nodes() {
-				if srv.Cluster().Alive(ns.ID, p.Clock.Now(), cfg.DeadAfter) {
+				if srv.Cluster().Alive(ns.ID) {
 					n++
 				}
 			}
@@ -76,7 +77,7 @@ func main() {
 			var out []view
 			p.Loop.Do(func() {
 				for _, ns := range srv.Cluster().Nodes() {
-					out = append(out, view{ns, srv.Cluster().Alive(ns.ID, p.Clock.Now(), cfg.DeadAfter)})
+					out = append(out, view{ns, srv.Cluster().Alive(ns.ID)})
 				}
 			})
 			w.Header().Set("Content-Type", "application/json")
