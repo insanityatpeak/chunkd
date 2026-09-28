@@ -5,6 +5,7 @@ package node
 
 import (
 	"context"
+	"errors"
 	"log/slog"
 	"time"
 
@@ -47,6 +48,7 @@ type Stats struct {
 	FullReports  uint64 `json:"fullReports"`
 	RepairCopies uint64 `json:"repairCopies"`
 	RepairFailed uint64 `json:"repairFailed"`
+	Trimmed      uint64 `json:"trimmed"`
 }
 
 // Node is one storage node.
@@ -143,7 +145,29 @@ func (n *Node) handle(m iface.Message) {
 		n.heartbeatAck(m)
 	case wire.KindReplicate:
 		n.replicate(m)
+	case wire.KindDeleteReplica:
+		n.deleteReplica(m)
 	}
+}
+
+// deleteReplica drops an over-replicated copy and confirms it. A lost
+// confirmation is harmless: the next full report omits the chunk.
+func (n *Node) deleteReplica(m iface.Message) {
+	var cmd chunkdv1.DeleteReplica
+	if err := wire.Decode(m.Body, &cmd); err != nil {
+		return
+	}
+	id, err := wire.ChunkID(cmd.GetChunkId())
+	if err != nil {
+		return
+	}
+	if err := n.d.Store.Delete(context.Background(), id); err != nil && !errors.Is(err, iface.ErrNotFound) {
+		n.d.Log.Error("trim delete", "chunk", id.String()[:12], "err", err)
+		return
+	}
+	n.stats.Trimmed++
+	n.d.Net.Send(n.cfg.Meta, iface.Message{From: n.cfg.ID, Kind: wire.KindBlockReport,
+		Body: wire.Marshal(&chunkdv1.BlockReport{Node: string(n.cfg.ID), DeletedIds: [][]byte{id[:]}})})
 }
 
 // replicate pulls one chunk from a peer and stores it. Put verifies the

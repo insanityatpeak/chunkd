@@ -146,6 +146,32 @@ func (c *Cluster) UnderReplicated() int {
 	return n
 }
 
+// OverReplicated counts chunks of live files with more than Replicas
+// reported locations on alive nodes.
+func (c *Cluster) OverReplicated() int {
+	n := 0
+	cl := c.meta.Cluster()
+	seen := map[iface.ChunkID]bool{}
+	for _, e := range c.meta.State().List("/") {
+		for _, id := range e.Chunks {
+			if seen[id] {
+				continue
+			}
+			seen[id] = true
+			live := 0
+			for _, nd := range cl.Locations(id) {
+				if cl.Alive(nd) {
+					live++
+				}
+			}
+			if live > c.cfg.Meta.Replicas {
+				n++
+			}
+		}
+	}
+	return n
+}
+
 // BytesOn sums the sizes of live files' chunks reported on node id.
 func (c *Cluster) BytesOn(id iface.NodeID) int64 {
 	var total int64

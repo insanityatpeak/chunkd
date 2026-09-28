@@ -205,7 +205,7 @@ func TestSnapshotDuringOperationRecovers(t *testing.T) {
 	srv.Start()
 	e.srv = srv
 	e.clock.Advance(3 * time.Second) // a new server knows no nodes until they heartbeat
-	for i := range 4 { // 8 ops: snapshots at 3 and 6, two entries after
+	for i := range 4 {               // 8 ops: snapshots at 3 and 6, two entries after
 		if _, err := e.upload(t, fmt.Sprintf("/s%d", i), []byte("data")); err != nil {
 			t.Fatal(err)
 		}

@@ -59,6 +59,11 @@ type Holder struct {
 	Node      iface.NodeID
 	State     detector.State
 	DeadSince iface.Instant
+	// Confirmed is false between a node's return (restart or death) and its
+	// next full block report: the location may be stale.
+	Confirmed bool
+	Rack      string
+	Used      int64
 }
 
 // View is the scheduler's read-only window onto the metadata server.
@@ -84,6 +89,19 @@ type Copy struct {
 	Started iface.Instant
 }
 
+// Trim is one over-replication removal: Node deletes its copy of Chunk.
+type Trim struct {
+	ID    uint64
+	Chunk iface.ChunkID
+	Node  iface.NodeID
+}
+
+// Sender delivers the scheduler's decisions to storage nodes.
+type Sender struct {
+	Copy func(Copy)
+	Trim func(Trim)
+}
+
 // Stats are cumulative counters plus current gauges.
 type Stats struct {
 	Queued     int    `json:"queued"`
@@ -96,6 +114,7 @@ type Stats struct {
 	Failed     uint64 `json:"failed"`
 	Cancelled  uint64 `json:"cancelled"`
 	Bytes      uint64 `json:"bytes"`
+	Trimmed    uint64 `json:"trimmed"`
 	// Peaks are high-water marks of concurrent copies: cluster-wide, and
 	// the most any one node sourced or received at once.
 	PeakInFlight  int `json:"peakInFlight"`
@@ -108,12 +127,13 @@ type Scheduler struct {
 	cfg    Config
 	clock  iface.Clock
 	view   View
-	send   func(Copy)
+	send   Sender
 	bucket *Bucket
 
 	q        queue
 	queued   map[iface.ChunkID]*item
 	inflight map[iface.ChunkID]*Copy
+	trimming map[iface.ChunkID]Trim
 	src, dst map[iface.NodeID]int
 	nextID   uint64
 	seq      uint64
@@ -123,13 +143,14 @@ type Scheduler struct {
 	wakeAt iface.Instant
 }
 
-// New returns a scheduler; send delivers each dispatched copy to its target.
-func New(cfg Config, clock iface.Clock, view View, send func(Copy)) *Scheduler {
+// New returns a scheduler that acts through send.
+func New(cfg Config, clock iface.Clock, view View, send Sender) *Scheduler {
 	return &Scheduler{
 		cfg: cfg, clock: clock, view: view, send: send,
 		bucket:   NewBucket(cfg.BytesPerSec, cfg.Burst),
 		queued:   map[iface.ChunkID]*item{},
 		inflight: map[iface.ChunkID]*Copy{},
+		trimming: map[iface.ChunkID]Trim{},
 		src:      map[iface.NodeID]int{},
 		dst:      map[iface.NodeID]int{},
 	}
@@ -148,9 +169,12 @@ func (s *Scheduler) Start() {
 // assessment is one chunk's replication state at an instant.
 type assessment struct {
 	holders []Holder
-	live    int  // alive or suspect: still counted toward RF
-	missing int  // Replicas - live, or 0
-	lost    bool // missing, and nothing to copy from
+	live    int // alive or suspect: still counted toward RF
+	missing int // Replicas - live, or 0
+	// sure are alive holders whose location is confirmed by a full report
+	// since they last returned. Only these may justify a trim.
+	sure []Holder
+	lost bool // missing, and nothing to copy from
 	// readyAt is when repair may start: now, or the end of the delay for
 	// the latest-dead holder whose absence is still excused.
 	readyAt iface.Instant
@@ -163,6 +187,9 @@ func (s *Scheduler) assess(id iface.ChunkID, now iface.Instant) assessment {
 		switch {
 		case h.State == detector.Alive || h.State == detector.Suspect:
 			a.live++
+			if h.State == detector.Alive && h.Confirmed {
+				a.sure = append(a.sure, h)
+			}
 		case h.State == detector.Dead && now < h.DeadSince.Add(s.cfg.Delay):
 			excused = append(excused, h.DeadSince.Add(s.cfg.Delay))
 		}
@@ -202,6 +229,9 @@ func (s *Scheduler) Scan() {
 				heap.Remove(&s.q, it.idx)
 				delete(s.queued, id)
 				s.stats.Cancelled++
+			}
+			if len(a.sure) > s.cfg.Replicas {
+				s.trim(id, a.sure)
 			}
 		case a.lost:
 			lost++
@@ -324,7 +354,55 @@ func (s *Scheduler) dispatch() {
 				s.finish(c)
 			}
 		})
-		s.send(*c)
+		s.send.Copy(*c)
+	}
+}
+
+// trim removes copies beyond Replicas. Only confirmed alive copies count,
+// so at least Replicas of them remain; nothing is trimmed while a copy or
+// another trim of the chunk is in flight.
+func (s *Scheduler) trim(id iface.ChunkID, sure []Holder) {
+	if s.inflight[id] != nil {
+		return
+	}
+	if _, busy := s.trimming[id]; busy {
+		return
+	}
+	victim := Victim(sure)
+	s.nextID++
+	t := Trim{ID: s.nextID, Chunk: id, Node: victim}
+	s.trimming[id] = t
+	s.clock.AfterFunc(s.cfg.CopyTimeout, func() {
+		if cur, ok := s.trimming[id]; ok && cur.ID == t.ID {
+			delete(s.trimming, id)
+		}
+	})
+	s.send.Trim(t)
+}
+
+// Victim picks the replica to drop: one on the rack holding the most
+// copies (keeps the spread), then the most used node, then the highest ID.
+func Victim(holders []Holder) iface.NodeID {
+	perRack := map[string]int{}
+	for _, h := range holders {
+		perRack[h.Rack]++
+	}
+	best := holders[0]
+	for _, h := range holders[1:] {
+		if cmp.Or(cmp.Compare(perRack[h.Rack], perRack[best.Rack]), cmp.Compare(h.Used, best.Used), cmp.Compare(h.Node, best.Node)) > 0 {
+			best = h
+		}
+	}
+	return best.Node
+}
+
+// Removed tells the scheduler node deleted chunks, completing their trims.
+func (s *Scheduler) Removed(node iface.NodeID, chunks []iface.ChunkID) {
+	for _, id := range chunks {
+		if t, ok := s.trimming[id]; ok && t.Node == node {
+			delete(s.trimming, id)
+			s.stats.Trimmed++
+		}
 	}
 }
 
@@ -361,7 +439,12 @@ func (s *Scheduler) finish(c *Copy) {
 	now := s.clock.Now()
 	if _, ok := s.view.Want(c.Chunk); ok {
 		switch a := s.assess(c.Chunk, now); {
-		case a.missing == 0 || a.lost:
+		case a.missing == 0:
+			// The copy may have landed after a holder came back.
+			if len(a.sure) > s.cfg.Replicas {
+				s.trim(c.Chunk, a.sure)
+			}
+		case a.lost:
 		case a.readyAt > now:
 			// Back above one copy, the rest waits out the delay again.
 			s.wakeAtLeast(a.readyAt)

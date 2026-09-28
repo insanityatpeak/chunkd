@@ -34,7 +34,8 @@ func (v repairView) Holders(id iface.ChunkID) []repair.Holder {
 	var out []repair.Holder
 	for _, n := range v.s.cluster.Locations(id) {
 		ns, _ := v.s.cluster.Node(n)
-		out = append(out, repair.Holder{Node: n, State: ns.State, DeadSince: ns.DeadSince})
+		out = append(out, repair.Holder{Node: n, State: ns.State, DeadSince: ns.DeadSince,
+			Confirmed: v.s.cluster.Reported(n), Rack: ns.Rack, Used: ns.Used})
 	}
 	return out
 }
@@ -60,6 +61,18 @@ func (s *Server) sendCopy(c repair.Copy) {
 	s.d.Net.Send(c.Target, iface.Message{From: s.cfg.ID, Kind: wire.KindReplicate,
 		Body: wire.Marshal(&chunkdv1.ReplicateChunk{CopyId: c.ID, ChunkId: c.Chunk[:], Source: string(c.Source), SourceAddr: src.Addr})})
 }
+
+// sendTrim tells a node to drop its copy of an over-replicated chunk.
+func (s *Server) sendTrim(t repair.Trim) {
+	s.d.Log.Info("trim replica", "trim", t.ID, "chunk", t.Chunk.String()[:12], "node", t.Node)
+	s.d.Net.Send(t.Node, iface.Message{From: s.cfg.ID, Kind: wire.KindDeleteReplica,
+		Body: wire.Marshal(&chunkdv1.DeleteReplica{TrimId: t.ID, ChunkId: t.Chunk[:]})})
+}
+
+// verifyReport is where Phase 3 checks a returning node's copies against
+// the scrubber's record (stale or corrupt replicas). Today a reported copy
+// is trusted until a reader rejects its hash.
+func (s *Server) verifyReport(iface.NodeID, []iface.ChunkID) {}
 
 // Repair exposes the repair scheduler. Loop-owned.
 func (s *Server) Repair() *repair.Scheduler { return s.repair }

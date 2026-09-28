@@ -73,7 +73,7 @@ func NewServer(ctx context.Context, d Deps, cfg Config) (*Server, error) {
 	s := &Server{d: d, cfg: cfg, state: state, cluster: NewCluster(cfg.Detector), applied: at}
 	rc := cfg.Repair
 	rc.Replicas = cfg.Replicas
-	s.repair = repair.New(rc, d.Clock, repairView{s}, s.sendCopy)
+	s.repair = repair.New(rc, d.Clock, repairView{s}, repair.Sender{Copy: s.sendCopy, Trim: s.sendTrim})
 	err = d.Store.Replay(ctx, at+1, func(i iface.Index, b []byte) error {
 		var op chunkdv1.Op
 		if err := proto.Unmarshal(b, &op); err != nil {
@@ -166,7 +166,16 @@ func (s *Server) handle(m iface.Message) {
 			}
 		}
 		node := iface.NodeID(r.GetNode())
+		var deleted []iface.ChunkID
+		for _, raw := range r.GetDeletedIds() {
+			if id, err := wire.ChunkID(raw); err == nil {
+				deleted = append(deleted, id)
+			}
+		}
+		s.cluster.Removed(node, deleted)
+		s.repair.Removed(node, deleted)
 		if r.GetFull() {
+			s.verifyReport(node, ids)
 			s.cluster.FullReport(node, ids)
 			// A full report can restore replicas a scan counted as missing.
 			s.repair.Scan()

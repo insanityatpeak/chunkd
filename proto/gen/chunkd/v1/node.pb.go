@@ -181,10 +181,12 @@ func (x *HeartbeatAck) GetNeedFullReport() bool {
 // BlockReport lists chunks a node holds. A full report replaces everything
 // the metadata server knew about the node; an incremental one adds to it.
 type BlockReport struct {
-	state         protoimpl.MessageState `protogen:"open.v1"`
-	Node          string                 `protobuf:"bytes,1,opt,name=node,proto3" json:"node,omitempty"`
-	Full          bool                   `protobuf:"varint,2,opt,name=full,proto3" json:"full,omitempty"`
-	ChunkIds      [][]byte               `protobuf:"bytes,3,rep,name=chunk_ids,json=chunkIds,proto3" json:"chunk_ids,omitempty"`
+	state    protoimpl.MessageState `protogen:"open.v1"`
+	Node     string                 `protobuf:"bytes,1,opt,name=node,proto3" json:"node,omitempty"`
+	Full     bool                   `protobuf:"varint,2,opt,name=full,proto3" json:"full,omitempty"`
+	ChunkIds [][]byte               `protobuf:"bytes,3,rep,name=chunk_ids,json=chunkIds,proto3" json:"chunk_ids,omitempty"`
+	// Chunks deleted since the last report (incremental reports only).
+	DeletedIds    [][]byte `protobuf:"bytes,4,rep,name=deleted_ids,json=deletedIds,proto3" json:"deleted_ids,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -236,6 +238,13 @@ func (x *BlockReport) GetFull() bool {
 func (x *BlockReport) GetChunkIds() [][]byte {
 	if x != nil {
 		return x.ChunkIds
+	}
+	return nil
+}
+
+func (x *BlockReport) GetDeletedIds() [][]byte {
+	if x != nil {
+		return x.DeletedIds
 	}
 	return nil
 }
@@ -556,6 +565,60 @@ func (x *ReplicateFailed) GetError() string {
 	return ""
 }
 
+// DeleteReplica tells a node to drop its copy of an over-replicated chunk.
+// The node confirms with deleted_ids in a block report.
+type DeleteReplica struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	TrimId        uint64                 `protobuf:"varint,1,opt,name=trim_id,json=trimId,proto3" json:"trim_id,omitempty"`
+	ChunkId       []byte                 `protobuf:"bytes,2,opt,name=chunk_id,json=chunkId,proto3" json:"chunk_id,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *DeleteReplica) Reset() {
+	*x = DeleteReplica{}
+	mi := &file_chunkd_v1_node_proto_msgTypes[9]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *DeleteReplica) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*DeleteReplica) ProtoMessage() {}
+
+func (x *DeleteReplica) ProtoReflect() protoreflect.Message {
+	mi := &file_chunkd_v1_node_proto_msgTypes[9]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use DeleteReplica.ProtoReflect.Descriptor instead.
+func (*DeleteReplica) Descriptor() ([]byte, []int) {
+	return file_chunkd_v1_node_proto_rawDescGZIP(), []int{9}
+}
+
+func (x *DeleteReplica) GetTrimId() uint64 {
+	if x != nil {
+		return x.TrimId
+	}
+	return 0
+}
+
+func (x *DeleteReplica) GetChunkId() []byte {
+	if x != nil {
+		return x.ChunkId
+	}
+	return nil
+}
+
 var File_chunkd_v1_node_proto protoreflect.FileDescriptor
 
 const file_chunkd_v1_node_proto_rawDesc = "" +
@@ -574,11 +637,13 @@ const file_chunkd_v1_node_proto_rawDesc = "" +
 	"\vincarnation\x18\b \x01(\x04R\vincarnation\"J\n" +
 	"\fHeartbeatAck\x12\x10\n" +
 	"\x03seq\x18\x01 \x01(\x04R\x03seq\x12(\n" +
-	"\x10need_full_report\x18\x02 \x01(\bR\x0eneedFullReport\"R\n" +
+	"\x10need_full_report\x18\x02 \x01(\bR\x0eneedFullReport\"s\n" +
 	"\vBlockReport\x12\x12\n" +
 	"\x04node\x18\x01 \x01(\tR\x04node\x12\x12\n" +
 	"\x04full\x18\x02 \x01(\bR\x04full\x12\x1b\n" +
-	"\tchunk_ids\x18\x03 \x03(\fR\bchunkIds\"5\n" +
+	"\tchunk_ids\x18\x03 \x03(\fR\bchunkIds\x12\x1f\n" +
+	"\vdeleted_ids\x18\x04 \x03(\fR\n" +
+	"deletedIds\"5\n" +
 	"\x0fPutChunkRequest\x12\x0e\n" +
 	"\x02id\x18\x01 \x01(\fR\x02id\x12\x12\n" +
 	"\x04data\x18\x02 \x01(\fR\x04data\"\x12\n" +
@@ -597,7 +662,10 @@ const file_chunkd_v1_node_proto_rawDesc = "" +
 	"\acopy_id\x18\x01 \x01(\x04R\x06copyId\x12\x19\n" +
 	"\bchunk_id\x18\x02 \x01(\fR\achunkId\x12\x12\n" +
 	"\x04node\x18\x03 \x01(\tR\x04node\x12\x14\n" +
-	"\x05error\x18\x04 \x01(\tR\x05errorB?Z=github.com/insanityatpeak/chunkd/proto/gen/chunkd/v1;chunkdv1b\x06proto3"
+	"\x05error\x18\x04 \x01(\tR\x05error\"C\n" +
+	"\rDeleteReplica\x12\x17\n" +
+	"\atrim_id\x18\x01 \x01(\x04R\x06trimId\x12\x19\n" +
+	"\bchunk_id\x18\x02 \x01(\fR\achunkIdB?Z=github.com/insanityatpeak/chunkd/proto/gen/chunkd/v1;chunkdv1b\x06proto3"
 
 var (
 	file_chunkd_v1_node_proto_rawDescOnce sync.Once
@@ -611,7 +679,7 @@ func file_chunkd_v1_node_proto_rawDescGZIP() []byte {
 	return file_chunkd_v1_node_proto_rawDescData
 }
 
-var file_chunkd_v1_node_proto_msgTypes = make([]protoimpl.MessageInfo, 9)
+var file_chunkd_v1_node_proto_msgTypes = make([]protoimpl.MessageInfo, 10)
 var file_chunkd_v1_node_proto_goTypes = []any{
 	(*Heartbeat)(nil),        // 0: chunkd.v1.Heartbeat
 	(*HeartbeatAck)(nil),     // 1: chunkd.v1.HeartbeatAck
@@ -622,6 +690,7 @@ var file_chunkd_v1_node_proto_goTypes = []any{
 	(*GetChunkResponse)(nil), // 6: chunkd.v1.GetChunkResponse
 	(*ReplicateChunk)(nil),   // 7: chunkd.v1.ReplicateChunk
 	(*ReplicateFailed)(nil),  // 8: chunkd.v1.ReplicateFailed
+	(*DeleteReplica)(nil),    // 9: chunkd.v1.DeleteReplica
 }
 var file_chunkd_v1_node_proto_depIdxs = []int32{
 	0, // [0:0] is the sub-list for method output_type
@@ -642,7 +711,7 @@ func file_chunkd_v1_node_proto_init() {
 			GoPackagePath: reflect.TypeOf(x{}).PkgPath(),
 			RawDescriptor: unsafe.Slice(unsafe.StringData(file_chunkd_v1_node_proto_rawDesc), len(file_chunkd_v1_node_proto_rawDesc)),
 			NumEnums:      0,
-			NumMessages:   9,
+			NumMessages:   10,
 			NumExtensions: 0,
 			NumServices:   0,
 		},

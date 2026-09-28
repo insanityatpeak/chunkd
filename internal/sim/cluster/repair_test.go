@@ -92,3 +92,53 @@ func TestRepairThrottle(t *testing.T) {
 	}
 	t.Logf("%d copies, %d MiB, peaks %d/%d/%d", st.Completed, st.Bytes>>20, st.PeakInFlight, st.PeakPerSource, st.PeakPerTarget)
 }
+
+func TestReturningNodeReconciled(t *testing.T) {
+	c := loaded(t, 3)
+	c.KillNode("node-3")
+	c.Tick(10 * time.Second)
+	if _, ok := c.Settle(time.Minute); !ok {
+		t.Fatal("repair did not finish while node-3 was down")
+	}
+	// node-3 comes back with every chunk it had: all now at 4 copies.
+	c.RestartNode("node-3")
+	sawOver := false
+	for range 240 { // 60 s in 250 ms steps
+		c.Tick(250 * time.Millisecond)
+		if n := c.UnderReplicated(); n != 0 {
+			t.Fatalf("t=%v: %d chunks under RF while trimming", c.Now(), n)
+		}
+		sawOver = sawOver || c.OverReplicated() > 0
+	}
+	if !sawOver {
+		t.Fatal("returning node never made a chunk over-replicated; test is not exercising trim")
+	}
+	if n := c.OverReplicated(); n != 0 {
+		t.Fatalf("%d chunks still over-replicated", n)
+	}
+	if err := c.AssertInvariants(); err != nil {
+		t.Fatal(err)
+	}
+	t.Logf("trimmed %d replicas", c.Meta().Repair().Stats().Trimmed)
+}
+
+func TestWipedNodeReturnsEmpty(t *testing.T) {
+	c := loaded(t, 4)
+	before := c.Meta().Repair().Stats().Completed
+	bytes := c.BytesOn("node-2")
+	c.KillNode("node-2")
+	c.Tick(5 * time.Second)
+	c.WipeNode("node-2")
+	c.RestartNode("node-2")
+	// Back inside the delay, but its full report is empty: nothing excuses
+	// the missing replicas any more.
+	if _, ok := c.Settle(c.RepairBound(bytes)); !ok {
+		t.Fatalf("%d chunks under-replicated after the wiped node returned", c.UnderReplicated())
+	}
+	if c.Meta().Repair().Stats().Completed == before {
+		t.Fatal("no repair copies for a wiped node")
+	}
+	if err := c.AssertInvariants(); err != nil {
+		t.Fatal(err)
+	}
+}

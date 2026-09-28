@@ -17,6 +17,7 @@ const (
 	// Repair: metadata server to target node, and failures back.
 	KindReplicate       = "node.replicate"
 	KindReplicateFailed = "node.replicate_failed"
+	KindDeleteReplica   = "node.delete_replica"
 )
 
 // RPCs. Kinds starting with "chunk." carry chunk data and are streamed in

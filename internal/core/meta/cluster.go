@@ -122,6 +122,20 @@ func (c *Cluster) Received(id iface.NodeID, chunks []iface.ChunkID) {
 	}
 }
 
+// Removed records chunks a node deleted.
+func (c *Cluster) Removed(id iface.NodeID, chunks []iface.ChunkID) {
+	for _, ch := range chunks {
+		c.drop(id, ch)
+	}
+}
+
+// Reported reports whether the node's locations are confirmed by a full
+// report since it joined, restarted or died.
+func (c *Cluster) Reported(id iface.NodeID) bool {
+	n := c.nodes[id]
+	return n != nil && n.reported
+}
+
 func (c *Cluster) add(id iface.NodeID, ch iface.ChunkID) {
 	c.byNode[id][ch] = struct{}{}
 	if c.byChunk[ch] == nil {

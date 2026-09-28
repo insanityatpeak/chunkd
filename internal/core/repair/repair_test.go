@@ -15,10 +15,11 @@ import (
 
 // world is a fake View: chunk sizes, who holds what, and node states.
 type world struct {
-	sizes     map[iface.ChunkID]int64
-	holders   map[iface.ChunkID][]iface.NodeID
-	state     map[iface.NodeID]detector.State
-	deadSince map[iface.NodeID]iface.Instant
+	sizes       map[iface.ChunkID]int64
+	holders     map[iface.ChunkID][]iface.NodeID
+	state       map[iface.NodeID]detector.State
+	deadSince   map[iface.NodeID]iface.Instant
+	unconfirmed map[iface.NodeID]bool
 }
 
 func newWorld(nodes int) *world {
@@ -59,7 +60,7 @@ func (w *world) Chunks(fn func(iface.ChunkID, int64)) {
 func (w *world) Holders(id iface.ChunkID) []Holder {
 	var out []Holder
 	for _, n := range w.holders[id] {
-		out = append(out, Holder{Node: n, State: w.state[n], DeadSince: w.deadSince[n]})
+		out = append(out, Holder{Node: n, State: w.state[n], DeadSince: w.deadSince[n], Confirmed: !w.unconfirmed[n], Rack: "r1"})
 	}
 	return out
 }
@@ -101,7 +102,7 @@ type harness struct {
 
 func newHarness(t *testing.T, cfg Config, w *world, copyTime time.Duration) *harness {
 	h := &harness{t: t, clock: sim.NewClock(), w: w, copyTime: copyTime, maxSrc: map[iface.NodeID]int{}, maxDst: map[iface.NodeID]int{}}
-	h.s = New(cfg, h.clock, w, h.send)
+	h.s = New(cfg, h.clock, w, Sender{Copy: h.send, Trim: func(Trim) {}})
 	return h
 }
 
@@ -366,5 +367,71 @@ func TestBucket(t *testing.T) {
 	}
 	if !b.Take(2*mib, b.ReadyAt(2*mib, 0)) {
 		t.Fatal("Take failed at ReadyAt")
+	}
+}
+
+func TestVictim(t *testing.T) {
+	h := func(n, rack string, used int64) Holder {
+		return Holder{Node: iface.NodeID(n), Rack: rack, Used: used}
+	}
+	tests := []struct {
+		name    string
+		holders []Holder
+		want    iface.NodeID
+	}{
+		{"rack with two copies loses one", []Holder{h("a", "r1", 9), h("b", "r2", 5), h("c", "r2", 1), h("d", "r3", 9)}, "b"},
+		{"all racks distinct: most used", []Holder{h("a", "r1", 1), h("b", "r2", 7), h("c", "r3", 3), h("d", "r4", 2)}, "b"},
+		{"tie on rack and use: highest ID", []Holder{h("a", "r1", 1), h("b", "r2", 1), h("c", "r3", 1), h("d", "r4", 1)}, "d"},
+		{"one rack: most used", []Holder{h("a", "r1", 1), h("b", "r1", 2), h("c", "r1", 3), h("d", "r1", 0)}, "c"},
+		{"order does not matter", []Holder{h("d", "r3", 9), h("c", "r2", 1), h("b", "r2", 5), h("a", "r1", 9)}, "b"},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := Victim(tc.holders); got != tc.want {
+				t.Fatalf("victim %s, want %s", got, tc.want)
+			}
+		})
+	}
+}
+
+func TestTrimSafety(t *testing.T) {
+	type check struct {
+		name  string
+		setup func(w *world)
+		trims int
+		busy  bool // a copy of the chunk is in flight
+	}
+	for _, tc := range []check{
+		{"4 confirmed alive: trim one", func(w *world) {}, 1, false},
+		{"suspect holder does not count", func(w *world) { w.state[node(4)] = detector.Suspect }, 0, false},
+		{"unconfirmed holder does not count", func(w *world) { w.unconfirmed = map[iface.NodeID]bool{node(4): true} }, 0, false},
+		{"not while a copy is in flight", func(w *world) {}, 0, true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			w := newWorld(6)
+			w.add(chunk(1), 1, 1, 2, 3, 4)
+			tc.setup(w)
+			var trims []Trim
+			s := New(unthrottled(), sim.NewClock(), w, Sender{Copy: func(Copy) {}, Trim: func(tr Trim) { trims = append(trims, tr) }})
+			if tc.busy {
+				s.inflight[chunk(1)] = &Copy{Chunk: chunk(1)}
+			}
+			s.Scan()
+			s.Scan() // a second scan must not trim again while the first is pending
+			if len(trims) != tc.trims {
+				t.Fatalf("trims %+v, want %d", trims, tc.trims)
+			}
+			if tc.trims == 0 {
+				return
+			}
+			s.Removed(node(9), []iface.ChunkID{chunk(1)}) // wrong node: ignored
+			if s.Stats().Trimmed != 0 {
+				t.Fatal("trim completed by the wrong node")
+			}
+			s.Removed(trims[0].Node, []iface.ChunkID{chunk(1)})
+			if s.Stats().Trimmed != 1 {
+				t.Fatal("trim not completed")
+			}
+		})
 	}
 }
