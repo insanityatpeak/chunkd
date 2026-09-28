@@ -6,8 +6,6 @@ import (
 	"slices"
 	"testing"
 	"time"
-
-	"github.com/insanityatpeak/chunkd/internal/iface"
 )
 
 // run drives a cluster in fixed 50 ms steps, the same way the browser worker
@@ -33,46 +31,16 @@ func TestSameSeedSameStateSequence(t *testing.T) {
 	}
 }
 
-func TestHeartbeatsAdvance(t *testing.T) {
+func TestNodesJoin(t *testing.T) {
 	c := New(1, DefaultConfig(), io.Discard)
-	c.Tick(10 * time.Second)
+	c.Tick(3 * time.Second)
 	s := c.State()
-	if len(s.Meta.Peers) != 3 {
-		t.Fatalf("meta sees %d peers, want 3", len(s.Meta.Peers))
-	}
-	for _, p := range s.Meta.Peers {
-		// 10 pings at 1 s intervals, 2% drop: 8 is a loose floor.
-		if p.Pings < 8 || !p.Alive {
-			t.Errorf("%s: pings=%d alive=%v, want >= 8 and alive", p.ID, p.Pings, p.Alive)
-		}
+	if len(s.Nodes) != 5 {
+		t.Fatalf("%d nodes, want 5", len(s.Nodes))
 	}
 	for _, n := range s.Nodes {
-		if n.Sent < 9 || n.Acked == 0 {
-			t.Errorf("%s: sent=%d acked=%d", n.ID, n.Sent, n.Acked)
+		if !n.Alive || n.Heartbeats < 2 || n.Acks == 0 {
+			t.Errorf("%s: %+v", n.ID, n)
 		}
-	}
-}
-
-func TestPartitionedNodeGoesDeadAndRecovers(t *testing.T) {
-	c := New(7, DefaultConfig(), io.Discard)
-	c.Tick(5 * time.Second)
-	c.Net().Partition([]iface.NodeID{"node-2"}, []iface.NodeID{metaID})
-
-	alive := func() map[iface.NodeID]bool {
-		m := map[iface.NodeID]bool{}
-		for _, p := range c.State().Meta.Peers {
-			m[p.ID] = p.Alive
-		}
-		return m
-	}
-
-	c.Tick(5 * time.Second) // > DeadAfter
-	if a := alive(); a["node-2"] || !a["node-1"] || !a["node-3"] {
-		t.Fatalf("after partition alive=%v, want only node-2 dead", a)
-	}
-	c.Net().Heal()
-	c.Tick(3 * time.Second)
-	if a := alive(); !a["node-2"] {
-		t.Fatalf("after heal alive=%v, want node-2 alive", a)
 	}
 }

@@ -250,3 +250,6 @@ func (c *Caller) Do(ctx context.Context, calls []iface.Call) []iface.Result {
 	}
 	return results
 }
+
+// Crashed reports whether a node is crashed.
+func (n *Net) Crashed(id iface.NodeID) bool { return n.down[id] }

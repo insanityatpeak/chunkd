@@ -1,8 +1,9 @@
-// Command chunkd-meta runs a metadata server. In this phase it tracks storage
-// node heartbeats; file metadata and Raft replication come in later phases.
+// Command chunkd-meta runs the metadata server: namespace, versions, chunk
+// placement, and the node view rebuilt from heartbeats and block reports.
 package main
 
 import (
+	"context"
 	"encoding/json"
 	"flag"
 	"fmt"
@@ -10,8 +11,9 @@ import (
 	"os"
 	"time"
 
-	"github.com/insanityatpeak/chunkd/internal/core/heartbeat"
+	"github.com/insanityatpeak/chunkd/internal/core/meta"
 	"github.com/insanityatpeak/chunkd/internal/iface"
+	"github.com/insanityatpeak/chunkd/internal/real/metastore"
 	"github.com/insanityatpeak/chunkd/internal/real/server"
 )
 
@@ -20,27 +22,44 @@ func main() {
 	grpcAddr := flag.String("grpc", server.Env("CHUNKD_GRPC", ":7000"), "gRPC listen address")
 	advertise := flag.String("advertise", server.Env("CHUNKD_ADVERTISE", "localhost:7000"), "gRPC address peers dial")
 	adminAddr := flag.String("admin", server.Env("CHUNKD_ADMIN", ":9000"), "HTTP address for /metrics, /healthz, /nodes")
-	deadAfter := flag.Duration("dead-after", 3*time.Second, "heartbeat silence before a node counts as dead")
+	dataDir := flag.String("data", server.Env("CHUNKD_DATA", "data/meta"), "directory for the WAL and snapshots")
+	cfg := meta.DefaultConfig("")
+	flag.IntVar(&cfg.Replicas, "replicas", cfg.Replicas, "replicas per chunk")
+	flag.IntVar(&cfg.MinReplicas, "min-replicas", cfg.MinReplicas, "reported replicas required to commit")
+	flag.IntVar(&cfg.ChunkSize, "chunk-size", cfg.ChunkSize, "chunk size in bytes")
+	flag.DurationVar(&cfg.DeadAfter, "dead-after", cfg.DeadAfter, "heartbeat silence before a node counts as dead")
 	flag.Parse()
+	cfg.ID = iface.NodeID(*id)
 
-	cfg := server.Config{ID: iface.NodeID(*id), GRPCAddr: *grpcAddr, Advertise: *advertise, AdminAddr: *adminAddr}
-	err := server.Run("meta", cfg, func(p *server.Process) error {
-		tr := heartbeat.NewTracker(heartbeat.Deps{Clock: p.Clock, Net: p.Net, Rand: p.Rand, Log: p.Log}, p.ID)
-		tr.Start()
+	store, err := metastore.Open(*dataDir)
+	if err != nil {
+		fmt.Fprintln(os.Stderr, "chunkd-meta:", err)
+		os.Exit(1)
+	}
+	defer store.Close()
 
-		known := p.Metrics.Gauge("chunkd_meta_nodes_known", "Storage nodes that have ever sent a heartbeat.")
+	sc := server.Config{ID: cfg.ID, GRPCAddr: *grpcAddr, Advertise: *advertise, AdminAddr: *adminAddr}
+	err = server.Run("meta", sc, func(p *server.Process) error {
+		srv, err := meta.NewServer(context.Background(), meta.Deps{Clock: p.Clock, Net: p.Net, Store: store, Rand: p.Rand, Log: p.Log}, cfg)
+		if err != nil {
+			return err
+		}
+		srv.Start()
+
 		alive := p.Metrics.Gauge("chunkd_meta_nodes_alive", "Storage nodes heard from within dead-after.")
+		files := p.Metrics.Gauge("chunkd_meta_files", "Live files.")
+		applied := p.Metrics.Gauge("chunkd_meta_applied_index", "Index of the last applied log entry.")
 		var refresh func()
 		refresh = func() {
 			n := 0
-			peers := tr.Peers()
-			for _, pr := range peers {
-				if tr.Alive(pr.ID, *deadAfter) {
+			for _, ns := range srv.Cluster().Nodes() {
+				if srv.Cluster().Alive(ns.ID, p.Clock.Now(), cfg.DeadAfter) {
 					n++
 				}
 			}
-			known.Set(float64(len(peers)))
 			alive.Set(float64(n))
+			files.Set(float64(len(srv.State().List("/"))))
+			applied.Set(float64(srv.Applied()))
 			p.Clock.AfterFunc(time.Second, refresh)
 		}
 		refresh()
@@ -51,13 +70,13 @@ func main() {
 				return
 			}
 			type view struct {
-				heartbeat.PeerState
+				meta.NodeState
 				Alive bool `json:"alive"`
 			}
 			var out []view
 			p.Loop.Do(func() {
-				for _, pr := range tr.Peers() {
-					out = append(out, view{pr, tr.Alive(pr.ID, *deadAfter)})
+				for _, ns := range srv.Cluster().Nodes() {
+					out = append(out, view{ns, srv.Cluster().Alive(ns.ID, p.Clock.Now(), cfg.DeadAfter)})
 				}
 			})
 			w.Header().Set("Content-Type", "application/json")

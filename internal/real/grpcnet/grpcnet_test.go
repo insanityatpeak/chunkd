@@ -2,6 +2,7 @@ package grpcnet
 
 import (
 	"context"
+	"crypto/sha256"
 	"io"
 	"log/slog"
 	"net"
@@ -10,10 +11,14 @@ import (
 
 	"google.golang.org/grpc"
 
-	"github.com/insanityatpeak/chunkd/internal/core/heartbeat"
+	"github.com/insanityatpeak/chunkd/internal/core/meta"
+	"github.com/insanityatpeak/chunkd/internal/core/node"
+	"github.com/insanityatpeak/chunkd/internal/core/wire"
 	"github.com/insanityatpeak/chunkd/internal/iface"
 	"github.com/insanityatpeak/chunkd/internal/iface/ifacetest"
 	"github.com/insanityatpeak/chunkd/internal/real/runtime"
+	"github.com/insanityatpeak/chunkd/internal/sim"
+	chunkdv1 "github.com/insanityatpeak/chunkd/proto/gen/chunkd/v1"
 )
 
 type proc struct {
@@ -21,7 +26,8 @@ type proc struct {
 	loop  *runtime.Loop
 	clock *runtime.Clock
 	net   *Transport
-	deps  heartbeat.Deps
+	rng   iface.Rand
+	log   *slog.Logger
 }
 
 // start runs one process with its own loop, transport and gRPC server on a
@@ -34,9 +40,8 @@ func start(t *testing.T, ctx context.Context, peers map[iface.NodeID]string) *pr
 	}
 	log := slog.New(slog.NewTextHandler(io.Discard, nil))
 	loop := runtime.NewLoop()
-	p := &proc{addr: lis.Addr().String(), loop: loop, clock: runtime.NewClock(loop)}
+	p := &proc{addr: lis.Addr().String(), loop: loop, clock: runtime.NewClock(loop), rng: runtime.NewRand(), log: log}
 	p.net = New(p.addr, peers, loop, log)
-	p.deps = heartbeat.Deps{Clock: p.clock, Net: p.net, Rand: runtime.NewRand(), Log: log}
 	s := grpc.NewServer(grpc.MaxRecvMsgSize(MaxUnary), grpc.MaxSendMsgSize(MaxUnary))
 	p.net.Register(s)
 	go func() { _ = s.Serve(lis) }()
@@ -45,36 +50,65 @@ func start(t *testing.T, ctx context.Context, peers map[iface.NodeID]string) *pr
 	return p
 }
 
-// The same core heartbeat code the sim runs, over real gRPC and wall time.
-// The meta process has no static peer table: it learns the node's address
-// from the envelope, which is what lets it send pongs back.
-func TestHeartbeatOverGRPC(t *testing.T) {
+// The same core node and metadata code the sim runs, over real gRPC and
+// wall time. The metadata process has no static peer table: it learns the
+// node's address from the envelope, which is how heartbeat acks get back.
+func TestNodeAndMetaOverGRPC(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 
-	meta := start(t, ctx, nil)
-	node := start(t, ctx, map[iface.NodeID]string{"meta-1": meta.addr})
+	mp := start(t, ctx, nil)
+	np := start(t, ctx, map[iface.NodeID]string{"meta": mp.addr})
 
-	tr := heartbeat.NewTracker(meta.deps, "meta-1")
-	s := heartbeat.NewSender(node.deps, "node-1", "meta-1", 50*time.Millisecond)
-	meta.loop.Do(tr.Start)
-	node.loop.Do(s.Start)
-
-	deadline := time.Now().Add(5 * time.Second)
-	for time.Now().Before(deadline) {
-		var pings, acked uint64
-		meta.loop.Do(func() {
-			if ps := tr.Peers(); len(ps) == 1 {
-				pings = ps[0].Pings
-			}
-		})
-		node.loop.Do(func() { acked = s.Stats().Acked })
-		if pings >= 5 && acked >= 5 {
+	var srv *meta.Server
+	mp.loop.Do(func() {
+		var err error
+		srv, err = meta.NewServer(ctx, meta.Deps{Clock: mp.clock, Net: mp.net, Store: sim.NewMetaStore(), Rand: mp.rng, Log: mp.log}, meta.DefaultConfig("meta"))
+		if err != nil {
+			t.Error(err)
 			return
 		}
-		time.Sleep(20 * time.Millisecond)
+		srv.Start()
+	})
+	cfg := node.DefaultConfig("n1", "meta", "r1")
+	cfg.Heartbeat, cfg.Addr = 50*time.Millisecond, np.addr
+	n := node.New(node.Deps{Clock: np.clock, Net: np.net, Store: sim.NewBlockStore(), Rand: np.rng, Log: np.log}, cfg)
+	np.loop.Do(n.Start)
+
+	waitFor(t, func() bool {
+		var ok bool
+		mp.loop.Do(func() { ok = srv.Cluster().Alive("n1", mp.clock.Now(), time.Second) })
+		return ok
+	}, "node registered with meta")
+
+	// A 5 MiB chunk goes through the streaming path; the node's incremental
+	// block report must reach meta.
+	data := make([]byte, 5<<20)
+	for i := range data {
+		data[i] = byte(i)
 	}
-	t.Fatal("fewer than 5 heartbeats round-tripped within 5s")
+	id := iface.ChunkID(sha256.Sum256(data))
+	caller := NewCaller(nil, 5*time.Second)
+	defer caller.Close()
+	r := caller.Do(ctx, []iface.Call{{To: "n1", Addr: np.addr, Kind: wire.KindPutChunk, Body: wire.Marshal(&chunkdv1.PutChunkRequest{Id: id[:], Data: data})}})
+	if r[0].Err != nil {
+		t.Fatal(r[0].Err)
+	}
+	waitFor(t, func() bool {
+		var locs []iface.NodeID
+		mp.loop.Do(func() { locs = srv.Cluster().Locations(id) })
+		return len(locs) == 1
+	}, "location reported")
+}
+
+func waitFor(t *testing.T, cond func() bool, what string) {
+	t.Helper()
+	for deadline := time.Now().Add(5 * time.Second); time.Now().Before(deadline); time.Sleep(20 * time.Millisecond) {
+		if cond() {
+			return
+		}
+	}
+	t.Fatalf("timed out waiting for %s", what)
 }
 
 func TestSendToUnknownNodeIsDropped(t *testing.T) {
