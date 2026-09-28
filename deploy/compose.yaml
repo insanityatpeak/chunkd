@@ -1,0 +1,73 @@
+# Full cluster: 3 metadata servers + 5 storage nodes + gateway (9 containers).
+# The small profile runs 1 metadata server + 3 nodes + gateway:
+#   docker compose --profile small up
+# COMPOSE_PROFILES=full in the repo-root .env makes the full set the default.
+name: chunkd
+
+x-health: &health
+  test: ["CMD", "chunkd", "probe", "http://localhost:9000/healthz"]
+  interval: 2s
+  timeout: 2s
+  retries: 15
+  start_period: 2s
+
+x-meta: &meta
+  build: { context: .., dockerfile: deploy/Dockerfile, target: meta }
+  image: chunkd-meta:dev
+  healthcheck: *health
+
+x-node: &node
+  build: { context: .., dockerfile: deploy/Dockerfile, target: node }
+  image: chunkd-node:dev
+  healthcheck: *health
+  depends_on:
+    meta-1: { condition: service_healthy }
+
+services:
+  meta-1:
+    <<: *meta
+    profiles: [full, small]
+    environment: { CHUNKD_ID: meta-1, CHUNKD_ADVERTISE: "meta-1:7000" }
+  # SIMPLIFIED: meta-2 and meta-3 run standalone until Raft replicates the
+  # metadata log; nodes heartbeat to meta-1 only.
+  meta-2:
+    <<: *meta
+    profiles: [full]
+    environment: { CHUNKD_ID: meta-2, CHUNKD_ADVERTISE: "meta-2:7000" }
+  meta-3:
+    <<: *meta
+    profiles: [full]
+    environment: { CHUNKD_ID: meta-3, CHUNKD_ADVERTISE: "meta-3:7000" }
+
+  node-1:
+    <<: *node
+    profiles: [full, small]
+    environment: { CHUNKD_ID: node-1, CHUNKD_ADVERTISE: "node-1:7000", CHUNKD_META: "meta-1:7000" }
+  node-2:
+    <<: *node
+    profiles: [full, small]
+    environment: { CHUNKD_ID: node-2, CHUNKD_ADVERTISE: "node-2:7000", CHUNKD_META: "meta-1:7000" }
+  node-3:
+    <<: *node
+    profiles: [full, small]
+    environment: { CHUNKD_ID: node-3, CHUNKD_ADVERTISE: "node-3:7000", CHUNKD_META: "meta-1:7000" }
+  node-4:
+    <<: *node
+    profiles: [full]
+    environment: { CHUNKD_ID: node-4, CHUNKD_ADVERTISE: "node-4:7000", CHUNKD_META: "meta-1:7000" }
+  node-5:
+    <<: *node
+    profiles: [full]
+    environment: { CHUNKD_ID: node-5, CHUNKD_ADVERTISE: "node-5:7000", CHUNKD_META: "meta-1:7000" }
+
+  gateway:
+    build: { context: .., dockerfile: deploy/Dockerfile, target: gateway }
+    image: chunkd-gateway:dev
+    profiles: [full, small]
+    environment: { CHUNKD_META: "meta-1:7000" }
+    ports: ["8080:8080"]
+    healthcheck:
+      <<: *health
+      test: ["CMD", "chunkd", "probe", "http://localhost:8080/healthz"]
+    depends_on:
+      meta-1: { condition: service_healthy }

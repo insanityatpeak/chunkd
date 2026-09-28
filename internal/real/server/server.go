@@ -56,7 +56,7 @@ type Process struct {
 // Run builds the process, calls setup before any server starts (so setup may
 // touch core components directly), then serves until SIGINT or SIGTERM.
 func Run(component string, cfg Config, setup func(*Process) error) error {
-	log := obs.NewLogger(os.Stdout, component, slog.LevelInfo).With("node", cfg.ID)
+	log := obs.NewLogger(os.Stdout, component, slog.LevelInfo).With("self", cfg.ID)
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
 
