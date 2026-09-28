@@ -1,0 +1,195 @@
+:root {
+  --bg: #fafaf9;
+  --fg: #1c1917;
+  --muted: #57534e;
+  --line: #d6d3d1;
+  --panel: #ffffff;
+  --accent: #0f766e;
+  --meta: #1d4ed8;
+  --bad: #b91c1c;
+  --banner-bg: #ecfdf5;
+  --banner-fg: #065f46;
+  color-scheme: light dark;
+}
+
+@media (prefers-color-scheme: dark) {
+  :root {
+    --bg: #0c0a09;
+    --fg: #e7e5e4;
+    --muted: #a8a29e;
+    --line: #44403c;
+    --panel: #1c1917;
+    --accent: #2dd4bf;
+    --meta: #60a5fa;
+    --bad: #f87171;
+    --banner-bg: #042f2e;
+    --banner-fg: #99f6e4;
+  }
+}
+
+* {
+  box-sizing: border-box;
+}
+
+body {
+  margin: 0;
+  background: var(--bg);
+  color: var(--fg);
+  font: 15px/1.5 system-ui, -apple-system, 'Segoe UI', sans-serif;
+}
+
+main {
+  max-width: 760px;
+  margin: 0 auto;
+  padding: 24px 16px 48px;
+}
+
+header h1 {
+  margin: 0;
+  font-size: 28px;
+  letter-spacing: -0.02em;
+}
+
+.tagline {
+  margin: 2px 0 16px;
+  color: var(--muted);
+}
+
+.banner {
+  margin: 0 0 16px;
+  padding: 10px 14px;
+  border-radius: 8px;
+  background: var(--banner-bg);
+  color: var(--banner-fg);
+}
+
+code {
+  font-family: ui-monospace, 'Cascadia Code', Consolas, monospace;
+  font-size: 0.92em;
+}
+
+.controls {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px 16px;
+  margin-bottom: 12px;
+  color: var(--muted);
+}
+
+.controls a {
+  color: var(--accent);
+  font-variant-numeric: tabular-nums;
+}
+
+.clock {
+  font-variant-numeric: tabular-nums;
+  min-width: 7em;
+}
+
+.speeds {
+  display: inline-flex;
+  gap: 4px;
+}
+
+button {
+  font: inherit;
+  padding: 4px 10px;
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  background: var(--panel);
+  color: var(--fg);
+  cursor: pointer;
+}
+
+button[aria-pressed='true'] {
+  border-color: var(--accent);
+  color: var(--accent);
+}
+
+.cluster {
+  margin: 0;
+}
+
+.cluster svg {
+  width: 100%;
+  height: auto;
+  display: block;
+}
+
+.cluster figcaption {
+  margin-top: 8px;
+  color: var(--muted);
+  font-size: 13px;
+  font-variant-numeric: tabular-nums;
+}
+
+.box {
+  fill: var(--panel);
+  stroke: var(--line);
+  stroke-width: 1.5;
+}
+
+.box.meta {
+  stroke: var(--meta);
+}
+
+.box.node {
+  stroke: var(--accent);
+}
+
+.box.node.dead {
+  stroke: var(--bad);
+  stroke-dasharray: 5 4;
+}
+
+.link {
+  stroke-width: 1.5;
+}
+
+.link.alive {
+  stroke: var(--accent);
+}
+
+.box.node.waiting,
+.link.waiting {
+  stroke: var(--line);
+  stroke-dasharray: 2 4;
+}
+
+.link.dead {
+  stroke: var(--bad);
+  stroke-dasharray: 5 4;
+}
+
+svg text {
+  fill: var(--fg);
+  font-size: 14px;
+  font-variant-numeric: tabular-nums;
+}
+
+svg text.title {
+  font-weight: 600;
+}
+
+svg text.sub {
+  fill: var(--muted);
+  font-size: 12px;
+}
+
+.error {
+  color: var(--bad);
+}
+
+.loading {
+  color: var(--muted);
+}
+
+footer {
+  margin-top: 32px;
+  font-size: 13px;
+}
+
+footer a {
+  color: var(--muted);
+}
