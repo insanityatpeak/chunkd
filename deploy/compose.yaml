@@ -1,4 +1,5 @@
-# Full cluster: 3 metadata servers + 5 storage nodes + gateway (9 containers).
+# Full cluster: 3 metadata servers + 5 storage nodes over 3 racks + gateway
+# (9 containers). Data lives in named volumes; `docker compose down -v` wipes it.
 # The small profile runs 1 metadata server + 3 nodes + gateway:
 #   docker compose --profile small up
 # COMPOSE_PROFILES=full in the repo-root .env makes the full set the default.
@@ -28,37 +29,45 @@ services:
     <<: *meta
     profiles: [full, small]
     environment: { CHUNKD_ID: meta-1, CHUNKD_ADVERTISE: "meta-1:7000" }
+    volumes: [meta-1:/data]
   # SIMPLIFIED: meta-2 and meta-3 run standalone until Raft replicates the
   # metadata log; nodes heartbeat to meta-1 only.
   meta-2:
     <<: *meta
     profiles: [full]
     environment: { CHUNKD_ID: meta-2, CHUNKD_ADVERTISE: "meta-2:7000" }
+    volumes: [meta-2:/data]
   meta-3:
     <<: *meta
     profiles: [full]
     environment: { CHUNKD_ID: meta-3, CHUNKD_ADVERTISE: "meta-3:7000" }
+    volumes: [meta-3:/data]
 
   node-1:
     <<: *node
     profiles: [full, small]
-    environment: { CHUNKD_ID: node-1, CHUNKD_ADVERTISE: "node-1:7000", CHUNKD_META: "meta-1:7000" }
+    environment: { CHUNKD_ID: node-1, CHUNKD_ADVERTISE: "node-1:7000", CHUNKD_META: "meta-1:7000", CHUNKD_RACK: r1 }
+    volumes: [node-1:/data]
   node-2:
     <<: *node
     profiles: [full, small]
-    environment: { CHUNKD_ID: node-2, CHUNKD_ADVERTISE: "node-2:7000", CHUNKD_META: "meta-1:7000" }
+    environment: { CHUNKD_ID: node-2, CHUNKD_ADVERTISE: "node-2:7000", CHUNKD_META: "meta-1:7000", CHUNKD_RACK: r2 }
+    volumes: [node-2:/data]
   node-3:
     <<: *node
     profiles: [full, small]
-    environment: { CHUNKD_ID: node-3, CHUNKD_ADVERTISE: "node-3:7000", CHUNKD_META: "meta-1:7000" }
+    environment: { CHUNKD_ID: node-3, CHUNKD_ADVERTISE: "node-3:7000", CHUNKD_META: "meta-1:7000", CHUNKD_RACK: r3 }
+    volumes: [node-3:/data]
   node-4:
     <<: *node
     profiles: [full]
-    environment: { CHUNKD_ID: node-4, CHUNKD_ADVERTISE: "node-4:7000", CHUNKD_META: "meta-1:7000" }
+    environment: { CHUNKD_ID: node-4, CHUNKD_ADVERTISE: "node-4:7000", CHUNKD_META: "meta-1:7000", CHUNKD_RACK: r1 }
+    volumes: [node-4:/data]
   node-5:
     <<: *node
     profiles: [full]
-    environment: { CHUNKD_ID: node-5, CHUNKD_ADVERTISE: "node-5:7000", CHUNKD_META: "meta-1:7000" }
+    environment: { CHUNKD_ID: node-5, CHUNKD_ADVERTISE: "node-5:7000", CHUNKD_META: "meta-1:7000", CHUNKD_RACK: r2 }
+    volumes: [node-5:/data]
 
   gateway:
     build: { context: .., dockerfile: deploy/Dockerfile, target: gateway }
@@ -71,3 +80,13 @@ services:
       test: ["CMD", "chunkd", "probe", "http://localhost:8080/healthz"]
     depends_on:
       meta-1: { condition: service_healthy }
+
+volumes:
+  meta-1:
+  meta-2:
+  meta-3:
+  node-1:
+  node-2:
+  node-3:
+  node-4:
+  node-5:

@@ -30,8 +30,9 @@ var commands = map[string]command{
 	"wasm":         {"build cluster.wasm, copy wasm_exec.js, enforce size budget", func([]string) error { return wasm() }},
 	"web":          {"install and build the dashboard into web/dist", web},
 	"up":           {"start the compose cluster (--small for 1 meta + 3 nodes)", up},
-	"down":         {"stop the compose cluster", func([]string) error { return run(nil, "", "docker", "compose", "down", "--remove-orphans") }},
+	"down":         {"stop the compose cluster (-v also deletes its volumes)", down},
 	"demo":         {"scripted failure demo (not implemented yet)", func([]string) error { fmt.Println("demo: not implemented yet"); return nil }},
+	"e2e":          {"put and get 20 MiB via the compose gateway (--up to start, --down to clean up)", e2e},
 	"trace-check":  {"fail if tracked files or outgoing commits carry attribution text", func([]string) error { return traceCheck() }},
 	"ci":           {"run every check CI runs, in CI order", ci},
 }
@@ -143,6 +144,16 @@ func up(args []string) error {
 		}
 	}
 	return run(nil, "", "docker", append(cmd, "up", "-d", "--build")...)
+}
+
+func down(args []string) error {
+	cmd := []string{"compose", "down", "--remove-orphans"}
+	for _, a := range args {
+		if a == "-v" {
+			cmd = append(cmd, "-v")
+		}
+	}
+	return run(nil, "", "docker", cmd...)
 }
 
 func ci([]string) error {

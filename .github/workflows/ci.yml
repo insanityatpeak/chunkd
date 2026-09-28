@@ -56,22 +56,28 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v5
+      - uses: actions/setup-go@v6
+        with:
+          go-version: '1.27.x'
+          cache-dependency-path: go.sum
       - name: full cluster up
-        run: docker compose up -d --build --wait --wait-timeout 120
+        run: docker compose up -d --build --wait --wait-timeout 180
       - name: 9 containers running, gateway healthy
         run: |
           docker compose ps
           test "$(docker compose ps -q | wc -l)" -eq 9
           curl -fsS http://localhost:8080/healthz
+      - name: e2e put and get 20 MiB through the gateway
+        run: go run ./tools/task e2e
       - name: small profile selects 1 meta + 3 nodes + gateway
         run: |
-          docker compose down
-          docker compose --profile small up -d --wait --wait-timeout 120
+          docker compose down -v
+          docker compose --profile small up -d --wait --wait-timeout 180
           test "$(docker compose --profile small ps -q | wc -l)" -eq 5
-          curl -fsS http://localhost:8080/healthz
+          go run ./tools/task e2e
       - name: logs on failure
         if: failure()
         run: docker compose logs --no-color
       - name: down
         if: always()
-        run: docker compose down --remove-orphans
+        run: docker compose down -v --remove-orphans

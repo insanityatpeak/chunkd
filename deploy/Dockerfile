@@ -10,10 +10,15 @@ COPY . .
 RUN --mount=type=cache,target=/go/pkg/mod --mount=type=cache,target=/root/.cache/go-build \
     CGO_ENABLED=0 go build -trimpath -ldflags="-s -w" -o /out/ \
       ./cmd/chunkd ./cmd/chunkd-meta ./cmd/chunkd-node ./cmd/chunkd-gateway
+# Distroless has no shell to mkdir; ship an empty /data owned by nonroot so
+# named volumes mounted there inherit the ownership.
+RUN mkdir -p /out/data
 
 # distroless: no shell or package manager; runs as uid 65532.
 FROM gcr.io/distroless/static-debian12:nonroot AS base
 COPY --from=build /out/chunkd /usr/local/bin/chunkd
+COPY --from=build --chown=65532:65532 /out/data /data
+ENV CHUNKD_DATA=/data
 
 FROM base AS meta
 COPY --from=build /out/chunkd-meta /usr/local/bin/chunkd-meta

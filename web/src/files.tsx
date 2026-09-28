@@ -62,6 +62,7 @@ export function Files({ api, files, nodes }: Props) {
 
   const onDownload = (path: string) =>
     run(`Downloading ${path}`, async () => {
+      setSelected(path);
       const { manifest, data } = await api.download(path);
       const sha = await sha256Hex(data);
       if (verified) URL.revokeObjectURL(verified.url);
