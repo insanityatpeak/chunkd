@@ -1,0 +1,37 @@
+<!doctype html>
+<!-- Source of docs/assets/social.png (1280x640, GitHub social preview).
+     Render with any Chromium: --headless=new --window-size=1280,640 --screenshot=social.png social.html -->
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>chunkd</title>
+<style>
+  html, body { margin: 0; width: 1280px; height: 640px; }
+  body {
+    background: #0c0a09; color: #e7e5e4;
+    font: 28px/1.4 system-ui, -apple-system, 'Segoe UI', sans-serif;
+    display: flex; flex-direction: column; justify-content: center; padding: 0 96px; box-sizing: border-box;
+  }
+  h1 { font-size: 104px; margin: 0; letter-spacing: -0.03em; }
+  .sub { font-size: 36px; color: #a8a29e; margin: 4px 0 40px; }
+  .row { display: flex; gap: 18px; margin-bottom: 44px; }
+  .node { width: 150px; height: 92px; border: 3px solid #2dd4bf; border-radius: 12px; padding: 12px 16px; box-sizing: border-box; font-size: 24px; font-weight: 600; }
+  .node small { display: block; font-size: 18px; font-weight: 400; color: #a8a29e; }
+  .node.dead { border-color: #f87171; border-style: dashed; color: #f87171; }
+  .node.suspect { border-color: #fbbf24; }
+  .tags { font-size: 26px; color: #99f6e4; }
+</style>
+</head>
+<body>
+  <h1>chunkd</h1>
+  <div class="sub">A fault-tolerant distributed file store in Go</div>
+  <div class="row">
+    <div class="node">node-1<small>alive</small></div>
+    <div class="node">node-2<small>alive</small></div>
+    <div class="node dead">node-3<small>dead</small></div>
+    <div class="node suspect">node-4<small>suspect</small></div>
+    <div class="node">node-5<small>alive</small></div>
+  </div>
+  <div class="tags">replication · failure detection · re-replication · scrubbing · chaos-tested · runs in your browser</div>
+</body>
+</html>
