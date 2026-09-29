@@ -151,3 +151,29 @@ func TestSuspectHintMakesNodeRecheck(t *testing.T) {
 	}
 	restoredWithin(t, c, corruptionBound)
 }
+
+// TestScrubberFindsCorruption: a copy rots right after the scrubber checked
+// it, and nobody reads it. The next pass finds it, and RF is back within one
+// pass interval plus the repair bound.
+func TestScrubberFindsCorruption(t *testing.T) {
+	c, _, id, reps := oneChunk(t, 7)
+	pass := c.node(reps[2]).Config().Scrub.Pass
+	// Wait for the first pass on that node to finish.
+	for c.node(reps[2]).Scrub().Passes == 0 {
+		c.Tick(time.Second)
+	}
+	corruptFirst(t, c, id, reps[2:], 1)
+	start := c.Now()
+	for len(c.node(reps[2]).Store.Quarantined()) == 0 {
+		if c.Now().Sub(start) > pass {
+			t.Fatalf("not found within one pass interval (%v): %+v", pass, c.node(reps[2]).Scrub())
+		}
+		c.Tick(time.Second)
+	}
+	found := c.Now().Sub(start)
+	took := restoredWithin(t, c, corruptionBound)
+	if sc := c.node(reps[2]).Scrub(); sc.Corrupt != 1 {
+		t.Fatalf("scrub stats %+v", sc)
+	}
+	t.Logf("found after %v (pass interval %v), RF 3 %v later", found, pass, took)
+}

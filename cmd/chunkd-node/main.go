@@ -49,9 +49,22 @@ func main() {
 		heartbeats := p.Metrics.Gauge("chunkd_node_heartbeats_sent", "Heartbeats sent to the metadata server.")
 		chunks := p.Metrics.Gauge("chunkd_node_chunks", "Chunks stored.")
 		used := p.Metrics.Gauge("chunkd_node_used_bytes", "Bytes stored.")
+		scrubBytes := p.Metrics.Counter("chunkd_scrub_bytes_total", "Bytes re-read and verified by the scrubber; rate() gives the scrub rate.")
+		scrubCorrupt := p.Metrics.Counter("chunkd_scrub_corrupt_total", "Chunks the scrubber found corrupt and quarantined.")
+		corrupt := p.Metrics.Counter("chunkd_node_corrupt_total", "Chunks quarantined after failing verification, by reads and the scrubber.")
+		lastPass := p.Metrics.Gauge("chunkd_scrub_last_pass_seconds", "Duration of the last complete scrub pass.")
+		progress := p.Metrics.Gauge("chunkd_scrub_pass_progress", "Fraction of the current scrub pass done.")
 		var refresh func()
 		refresh = func() {
 			heartbeats.Set(float64(n.Stats().Heartbeats))
+			sc := n.Scrub()
+			scrubBytes.Mirror(sc.Bytes)
+			scrubCorrupt.Mirror(sc.Corrupt)
+			corrupt.Mirror(n.Stats().Corrupt)
+			lastPass.Set(sc.LastPass.Seconds())
+			if sc.Total > 0 {
+				progress.Set(float64(sc.Done) / float64(sc.Total))
+			}
 			if u, err := store.Usage(context.Background()); err == nil {
 				chunks.Set(float64(u.Chunks))
 				used.Set(float64(u.Bytes))

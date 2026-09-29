@@ -12,6 +12,7 @@ import (
 	"sync/atomic"
 	"time"
 
+	"github.com/insanityatpeak/chunkd/internal/core/scrub"
 	"github.com/insanityatpeak/chunkd/internal/core/wire"
 	"github.com/insanityatpeak/chunkd/internal/iface"
 	chunkdv1 "github.com/insanityatpeak/chunkd/proto/gen/chunkd/v1"
@@ -37,11 +38,13 @@ type Config struct {
 	Heartbeat  time.Duration
 	FullReport time.Duration
 	Draining   bool
+	Scrub      scrub.Config
 }
 
-// DefaultConfig fills timers: 1 s heartbeats, full block report every 30 s.
+// DefaultConfig fills timers: 1 s heartbeats, full block report every 30 s,
+// the default scrub rate and pass interval.
 func DefaultConfig(id, meta iface.NodeID, rack string) Config {
-	return Config{ID: id, Meta: meta, Rack: rack, Heartbeat: time.Second, FullReport: 30 * time.Second}
+	return Config{ID: id, Meta: meta, Rack: rack, Heartbeat: time.Second, FullReport: 30 * time.Second, Scrub: scrub.DefaultConfig()}
 }
 
 // Stats counts a node's control traffic. Loop-owned.
@@ -76,6 +79,7 @@ type Node struct {
 	reportSeq atomic.Uint64
 	// corrupt is counted by concurrent read handlers, so not in stats.
 	corrupt atomic.Uint64
+	scrub   *scrub.Scrubber
 }
 
 // change runs a store mutation and returns the seq for its report.
@@ -105,15 +109,23 @@ func (n *Node) report(seq uint64, added, deleted, corrupt []iface.ChunkID) {
 
 // Stop halts timers and ignores further messages, like a killed process.
 // The sim uses it to replace a node with a fresh incarnation on restart.
-func (n *Node) Stop() { n.stopped = true }
+func (n *Node) Stop() {
+	n.stopped = true
+	n.scrub.Stop()
+}
 
 // New returns a stopped node.
 func New(d Deps, cfg Config) *Node {
 	if d.Clock == nil || d.Net == nil || d.Async == nil || d.Store == nil || d.Rand == nil || d.Log == nil {
 		panic("node: missing dependency")
 	}
-	return &Node{d: d, cfg: cfg, incarnation: d.Rand.Uint64()}
+	n := &Node{d: d, cfg: cfg, incarnation: d.Rand.Uint64()}
+	n.scrub = scrub.New(cfg.Scrub, d.Clock, d.Store, n.quarantine)
+	return n
 }
+
+// Scrub returns the scrubber's counters and pass progress. Loop-owned.
+func (n *Node) Scrub() scrub.Stats { return n.scrub.Stats() }
 
 // Start registers handlers and schedules timers. The first heartbeat and
 // report are jittered so nodes started together do not arrive in lockstep.
@@ -123,6 +135,9 @@ func (n *Node) Start() {
 	n.d.Net.Listen(n.cfg.ID, n.handle)
 	n.d.Clock.AfterFunc(time.Duration(n.d.Rand.IntN(int(n.cfg.Heartbeat))), n.heartbeat)
 	n.d.Clock.AfterFunc(n.cfg.FullReport+time.Duration(n.d.Rand.IntN(int(n.cfg.Heartbeat))), n.periodicReport)
+	// First pass after one full report interval, jittered by up to a
+	// second, so a restarted cluster reports before it scrubs.
+	n.scrub.Start(n.cfg.FullReport + time.Duration(n.d.Rand.IntN(int(time.Second))))
 }
 
 // Stats returns control-traffic counters.
@@ -369,3 +384,6 @@ func (n *Node) fullReport() {
 	n.d.Net.Send(n.cfg.Meta, iface.Message{From: n.cfg.ID, Kind: wire.KindBlockReport,
 		Body: wire.Marshal(&chunkdv1.BlockReport{Node: string(n.cfg.ID), Full: true, ChunkIds: ids, Incarnation: n.incarnation, Seq: seq})})
 }
+
+// Config returns the node's configuration.
+func (n *Node) Config() Config { return n.cfg }
