@@ -1,7 +1,12 @@
-# Allowlist: the image build needs only Go sources.
+# Allowlist: Go sources and the dashboard sources.
 *
 !go.mod
 !go.sum
 !cmd/
 !internal/
 !proto/gen/
+!web/
+web/node_modules/
+web/dist/
+web/public/cluster.wasm
+web/public/wasm_exec.js

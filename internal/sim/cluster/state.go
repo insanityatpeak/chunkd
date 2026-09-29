@@ -1,6 +1,7 @@
 package cluster
 
 import (
+	"slices"
 	"time"
 
 	"github.com/insanityatpeak/chunkd/internal/client"
@@ -22,6 +23,9 @@ type State struct {
 	Copies   []client.RepairCopy `json:"copies"`
 	Events   []client.Event      `json:"events"`
 	EventSeq uint64              `json:"eventSeq"`
+	// Reads are the scripted reads' results (kind "read"), newest last,
+	// at most 100; their seq is separate from the metadata server's.
+	Reads []client.Event `json:"reads"`
 }
 
 // MetaView is the metadata server's summary.
@@ -35,9 +39,13 @@ type MetaView struct {
 // node's own counters.
 type NodeView struct {
 	client.NodeInfo
-	Crashed    bool   `json:"crashed"`
-	Heartbeats uint64 `json:"heartbeats"`
-	Acks       uint64 `json:"acks"`
+	Crashed bool `json:"crashed"`
+	// Injected faults, so the dashboard can show and toggle them.
+	Frozen      bool   `json:"frozen"`
+	SlowMs      int64  `json:"slowMs"`
+	Partitioned bool   `json:"partitioned"`
+	Heartbeats  uint64 `json:"heartbeats"`
+	Acks        uint64 `json:"acks"`
 }
 
 // FileView is one committed file and its replication state.
@@ -59,7 +67,10 @@ func (c *Cluster) StateSince(seq uint64) State {
 	view := client.ClusterFromProto(c.meta.ClusterView(seq))
 	s := State{Seed: c.seed, NowMs: int64(now) / int64(time.Millisecond), Net: c.net.Stats(), Files: []FileView{},
 		Meta:   MetaView{ID: MetaID, Applied: uint64(c.meta.Applied()), Pending: c.meta.State().PendingUploads()},
-		Health: view.Health, Copies: view.Copies, Events: view.Events, EventSeq: view.EventSeq}
+		Health: view.Health, Copies: view.Copies, Events: view.Events, EventSeq: view.EventSeq, Reads: slices.Clone(c.readLog)}
+	if s.Reads == nil {
+		s.Reads = []client.Event{}
+	}
 	known := map[string]client.NodeInfo{}
 	for _, n := range view.Nodes {
 		known[n.ID] = n
@@ -70,7 +81,9 @@ func (c *Cluster) StateSince(seq uint64) State {
 			info = client.NodeInfo{ID: string(n.ID()), State: "unknown"}
 		}
 		info.Rack = n.Rack
-		s.Nodes = append(s.Nodes, NodeView{NodeInfo: info, Crashed: c.net.Crashed(n.ID()), Heartbeats: n.Stats().Heartbeats, Acks: n.Stats().Acks})
+		s.Nodes = append(s.Nodes, NodeView{NodeInfo: info, Crashed: c.net.Crashed(n.ID()), Frozen: c.net.Frozen(n.ID()),
+			SlowMs: int64(c.net.Slow(n.ID()) / time.Millisecond), Partitioned: c.net.Blocked(n.ID(), MetaID),
+			Heartbeats: n.Stats().Heartbeats, Acks: n.Stats().Acks})
 	}
 	health := map[string]client.FileHealth{}
 	for _, f := range view.FileHealth {

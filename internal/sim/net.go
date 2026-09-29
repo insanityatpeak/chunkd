@@ -207,6 +207,12 @@ func (n *Net) Partition(a, b []iface.NodeID) {
 	}
 }
 
+// Unblock removes one direction of a block.
+func (n *Net) Unblock(from, to iface.NodeID) { delete(n.blocked, link{from, to}) }
+
+// Blocked reports whether messages from `from` to `to` are dropped.
+func (n *Net) Blocked(from, to iface.NodeID) bool { return n.blocked[link{from, to}] }
+
 // Heal removes all blocks (not crashes).
 func (n *Net) Heal() { clear(n.blocked) }
 
@@ -455,6 +461,9 @@ func (n *Net) SetSlow(id iface.NodeID, d time.Duration) {
 	}
 	n.slow[id] = d
 }
+
+// Slow returns the delay SetSlow added for id, or 0.
+func (n *Net) Slow(id iface.NodeID) time.Duration { return n.slow[id] }
 
 // Crashed reports whether a node is crashed.
 func (n *Net) Crashed(id iface.NodeID) bool { return n.down[id] }

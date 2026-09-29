@@ -42,6 +42,9 @@ export interface NodeView {
   scrubTotal?: number;
   scrubPasses?: number;
   crashed?: boolean; // sim only: the process is down
+  frozen?: boolean; // sim only: paused, messages held
+  slowMs?: number; // sim only: added to every message to or from it
+  partitioned?: boolean; // sim only: cut off from the metadata server
   usedBytes: number;
   chunks: number;
   heartbeats?: number;
@@ -78,7 +81,7 @@ export interface RepairCopy {
 export interface TimelineEvent {
   seq: number;
   atMs: number;
-  kind: 'node' | 'copy' | 'trim' | 'corrupt';
+  kind: 'node' | 'copy' | 'trim' | 'corrupt' | 'read';
   node: string;
   text: string;
 }
@@ -101,6 +104,8 @@ export interface ClusterView {
   copies: RepairCopy[];
   // The newest events, oldest first, at most TIMELINE_MAX.
   timeline: TimelineEvent[];
+  // Scripted reads (sim only), newest last; their seq is separate.
+  reads?: TimelineEvent[];
   net?: NetStats; // sim only
   meta?: { id: string; applied: number; pendingUploads: number };
 }
@@ -133,10 +138,20 @@ export interface Download {
   data: Uint8Array;
 }
 
+export interface ScenarioInfo {
+  name: string;
+  title: string;
+  what: string;
+}
+
 export interface ClusterAPI {
   readonly kind: 'sim' | 'http';
   readonly label: string;
-  start(seed: number): Promise<void>;
+  // Fault injection from the page: the simulation only.
+  readonly canInject: boolean;
+  // A scenario runs right after the cluster starts, so a seed replays it.
+  start(seed: number, scenario?: string): Promise<void>;
+  scenarios(): Promise<ScenarioInfo[]>;
   subscribe(fn: (v: ClusterView) => void): () => void;
   upload(path: string, data: Uint8Array): Promise<Manifest>;
   download(path: string): Promise<Download>;
@@ -145,13 +160,14 @@ export interface ClusterAPI {
   // Sim controls; no-ops against a real cluster.
   pause(): void;
   resume(): void;
+  step(): void; // advance one simulated second while paused
   setSpeed(simMsPerSec: number): void;
   crash(node: string): void;
   restart(node: string): void;
-  // Scripted failure: load demo files if empty, kill node, restart it after downMs.
-  scenario(node: string, downMs: number): Promise<void>;
-  // Scripted bit rot: flip bytes in n chunks on node's disk; nobody is told.
-  rot(node: string, n: number): Promise<number>;
+  freeze(node: string, on: boolean): void;
+  slow(node: string, ms: number): void;
+  partition(node: string, on: boolean): void;
+  corrupt(node: string, chunk: string): Promise<void>;
   dispose(): void;
 }
 

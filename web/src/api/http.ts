@@ -9,6 +9,7 @@ import {
   type Manifest,
   type NodeView,
   type RepairCopy,
+  type ScenarioInfo,
   type TimelineEvent,
 } from './cluster';
 import { sha256Hex } from '../verify';
@@ -32,6 +33,7 @@ interface GatewayCluster {
 export class HttpClusterAPI implements ClusterAPI {
   readonly kind = 'http' as const;
   readonly label: string;
+  readonly canInject = false;
   private subs = new Set<(v: ClusterView) => void>();
   private timer?: ReturnType<typeof setInterval>;
   private timeline = new Timeline();
@@ -41,7 +43,7 @@ export class HttpClusterAPI implements ClusterAPI {
     this.label = `Gateway at ${this.base}`;
   }
 
-  async start(_seed: number): Promise<void> {
+  async start(_seed: number, _scenario?: string): Promise<void> {
     await this.poll();
     this.timer = setInterval(() => void this.poll().catch(() => {}), POLL_MS);
   }
@@ -109,19 +111,23 @@ export class HttpClusterAPI implements ClusterAPI {
     await this.json(`/files${encodePath(path)}`, { method: 'DELETE' });
   }
 
+  scenarios(): Promise<ScenarioInfo[]> {
+    return Promise.resolve([]);
+  }
+
   pause() {}
   resume() {}
+  step() {}
+  freeze(_node: string, _on: boolean) {}
+  slow(_node: string, _ms: number) {}
+  partition(_node: string, _on: boolean) {}
+  corrupt(_node: string, _chunk: string): Promise<void> {
+    return Promise.reject(new ChunkdError('faults are injected with docker compose against a real cluster', 'unimplemented'));
+  }
   setSpeed(_simMsPerSec: number) {}
   crash(_node: string) {}
   restart(_node: string) {}
-  scenario(_node: string, _downMs: number): Promise<void> {
-    return Promise.reject(new ChunkdError('scripted faults run in the simulation only; use docker compose kill', 'unimplemented'));
-  }
-  rot(_node: string, _n: number): Promise<number> {
-    return Promise.reject(
-      new ChunkdError('scripted faults run in the simulation only; use docker compose exec node-N chunkd debug corrupt', 'unimplemented'),
-    );
-  }
+
 
   dispose() {
     clearInterval(this.timer);

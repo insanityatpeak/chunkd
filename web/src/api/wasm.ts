@@ -1,4 +1,4 @@
-import { ChunkdError, type ClusterAPI, type ClusterView, type Download, type Manifest } from './cluster';
+import { ChunkdError, type ClusterAPI, type ClusterView, type Download, type Manifest, type ScenarioInfo } from './cluster';
 import type { FromWorker, Method, ToWorker } from './protocol';
 
 // WasmClusterAPI runs the simulated cluster in a Web Worker so ticking and
@@ -6,6 +6,7 @@ import type { FromWorker, Method, ToWorker } from './protocol';
 export class WasmClusterAPI implements ClusterAPI {
   readonly kind = 'sim' as const;
   readonly label = 'Simulated cluster in this browser';
+  readonly canInject = true;
   private worker = new Worker(new URL('../worker.ts', import.meta.url), { type: 'module' });
   private subs = new Set<(v: ClusterView) => void>();
   private ready?: { resolve: () => void; reject: (e: Error) => void };
@@ -36,11 +37,17 @@ export class WasmClusterAPI implements ClusterAPI {
     };
   }
 
-  start(seed: number): Promise<void> {
+  start(seed: number, scenario?: string): Promise<void> {
+    // Absolute: the worker resolves relative URLs against its own script.
+    const baseUrl = new URL(import.meta.env.BASE_URL, location.href).href;
     return new Promise((resolve, reject) => {
       this.ready = { resolve, reject };
-      this.send({ type: 'start', seed, baseUrl: import.meta.env.BASE_URL });
+      this.send({ type: 'start', seed, baseUrl, scenario });
     });
+  }
+
+  scenarios(): Promise<ScenarioInfo[]> {
+    return this.call('scenarios', []) as Promise<ScenarioInfo[]>;
   }
 
   subscribe(fn: (v: ClusterView) => void): () => void {
@@ -84,13 +91,24 @@ export class WasmClusterAPI implements ClusterAPI {
     void this.call('restart', [node]);
   }
 
-  async scenario(node: string, downMs: number): Promise<void> {
-    await this.call('scenario', [node, downMs]);
+  step() {
+    this.send({ type: 'step' });
   }
 
-  async rot(node: string, n: number): Promise<number> {
-    const r = (await this.call('rot', [node, n])) as { rotted: number };
-    return r.rotted;
+  freeze(node: string, on: boolean) {
+    void this.call('freeze', [node, on]);
+  }
+
+  slow(node: string, ms: number) {
+    void this.call('slow', [node, ms]);
+  }
+
+  partition(node: string, on: boolean) {
+    void this.call('partition', [node, on]);
+  }
+
+  async corrupt(node: string, chunk: string): Promise<void> {
+    await this.call('corrupt', [node, chunk]);
   }
 
   dispose() {

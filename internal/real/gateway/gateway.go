@@ -208,3 +208,19 @@ func cors(next http.Handler) http.Handler {
 		next.ServeHTTP(w, r)
 	})
 }
+
+// WithUI serves the dashboard's static build from dir next to the API, so
+// `docker compose up` gives one URL for both. /mode.json tells the page it
+// is served by a real cluster (on GitHub Pages it is a 404, and the page
+// runs the simulation instead).
+func WithUI(api http.Handler, dir string) http.Handler {
+	mux := http.NewServeMux()
+	for _, p := range []string{"/files", "/files/", "/cluster"} {
+		mux.Handle(p, api)
+	}
+	mux.HandleFunc("GET /mode.json", func(w http.ResponseWriter, _ *http.Request) {
+		writeJSON(w, http.StatusOK, map[string]string{"mode": "live"})
+	})
+	mux.Handle("/", http.FileServer(http.Dir(dir)))
+	return mux
+}

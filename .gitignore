@@ -10,6 +10,8 @@ node_modules/
 web/dist/
 web/public/cluster.wasm
 web/public/wasm_exec.js
+web/test-results/
+web/playwright-report/
 
 # Local-only
 CLAUDE.md

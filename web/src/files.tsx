@@ -8,6 +8,9 @@ interface Props {
   api: ClusterAPI;
   files: FileInfo[];
   nodes: NodeView[];
+  // Changes when copies are found corrupt or repaired: re-read placement.
+  refresh?: string;
+  onError?(msg: string): void;
 }
 
 interface Verified {
@@ -18,18 +21,28 @@ interface Verified {
   name: string;
 }
 
-export function Files({ api, files, nodes }: Props) {
+export function Files({ api, files, nodes, refresh }: Props) {
   const [selected, setSelected] = useState<string | null>(null);
   const [manifest, setManifest] = useState<Manifest | null>(null);
   const [verified, setVerified] = useState<Verified | null>(null);
   const [busy, setBusy] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
 
+  // Replicas this page corrupted ("node/chunk"), red until the cluster
+  // quarantines them and they leave the placement.
+  const [rotted, setRotted] = useState<Set<string>>(new Set());
+
   const selectedVersion = files.find((f) => f.path === selected)?.version;
   useEffect(() => {
     if (!selected) return;
     api.stat(selected).then(setManifest, (e: Error) => setError(e.message));
-  }, [api, selected, selectedVersion]);
+  }, [api, selected, selectedVersion, refresh]);
+
+  const corrupt = (node: string, chunk: string) =>
+    run(`Corrupting ${node}'s copy of chunk ${chunk.slice(0, 8)}`, async () => {
+      await api.corrupt(node, chunk);
+      setRotted(new Set(rotted).add(`${node}/${chunk}`));
+    });
 
   async function run(label: string, f: () => Promise<void>) {
     setBusy(label);
@@ -138,7 +151,9 @@ export function Files({ api, files, nodes }: Props) {
           </tbody>
         </table>
       )}
-      {manifest && manifest.path === selected && <ChunkGrid manifest={manifest} nodes={nodes} />}
+      {manifest && manifest.path === selected && (
+        <ChunkGrid manifest={manifest} nodes={nodes} rotted={rotted} onCorrupt={api.canInject ? corrupt : undefined} />
+      )}
       {verified && verified.manifest.path === selected && (
         <p class={verified.ok ? 'verified' : 'error'}>
           {verified.ok ? 'SHA-256 verified in this browser ✓ ' : 'SHA-256 MISMATCH ✗ '}
@@ -170,10 +185,18 @@ function Replicas({ file }: { file: FileInfo }) {
   );
 }
 
+interface GridProps {
+  manifest: Manifest;
+  nodes: NodeView[];
+  rotted: Set<string>;
+  onCorrupt?(node: string, chunk: string): void;
+}
+
 // ChunkGrid shows which node holds each replica of each chunk. After a
 // download it marks the replica that served each chunk and any replica whose
-// data failed verification.
-function ChunkGrid({ manifest, nodes }: { manifest: Manifest; nodes: NodeView[] }) {
+// data failed verification. In the simulation a filled cell can be clicked
+// to flip bytes in that copy.
+function ChunkGrid({ manifest, nodes, rotted, onCorrupt }: GridProps) {
   const chunks = manifest.chunkList ?? [];
   if (chunks.length === 0) return <p class="muted">{manifest.path} is empty: no chunks.</p>;
   const cell = 22;
@@ -185,9 +208,10 @@ function ChunkGrid({ manifest, nodes }: { manifest: Manifest; nodes: NodeView[] 
     <figure class="grid">
       <figcaption>
         {manifest.path} v{manifest.version}: {chunks.length} chunks × replicas. Filled = holds the chunk; ring = served the
-        last download; cross = failed verification.
+        last download; cross = failed verification; red = corrupted here, not yet found.
+        {onCorrupt && ' Click a filled cell to corrupt that copy.'}
       </figcaption>
-      <svg viewBox={`0 0 ${w} ${h}`} style={{ maxWidth: `${w * 1.4}px` }} role="img" aria-label="Chunk placement grid">
+      <svg viewBox={`0 0 ${w} ${h}`} style={{ maxWidth: `${w * 1.4}px` }} role={onCorrupt ? "group" : "img"} aria-label="Chunk placement grid">
         {nodes.map((n, j) => (
           <text key={n.id} class="grid-head" x={labelW + j * cell + cell / 2} y={headH - 8} text-anchor="middle">
             {n.id.replace('node-', 'n')}
@@ -200,13 +224,23 @@ function ChunkGrid({ manifest, nodes }: { manifest: Manifest; nodes: NodeView[] 
             </text>
             {nodes.map((n, j) => {
               const has = (c.replicas ?? []).includes(n.id);
+              const rot = has && rotted.has(`${n.id}/${c.id}`);
+              const click = has && onCorrupt && !rot ? () => onCorrupt(n.id, c.id) : undefined;
               const served = c.servedBy === n.id;
               const bad = (c.rejected ?? []).includes(n.id);
               const x = labelW + j * cell;
               const y = headH + i * cell;
               return (
-                <g key={n.id}>
-                  <rect class={`grid-cell ${has ? 'has' : ''}`} x={x + 2} y={y + 2} width={cell - 4} height={cell - 4} rx="3" />
+                <g
+                  key={n.id}
+                  class={click ? 'clickable' : undefined}
+                  role={click ? 'button' : undefined}
+                  tabIndex={click ? 0 : undefined}
+                  aria-label={click ? `Corrupt ${n.id}'s copy of chunk ${c.index}` : undefined}
+                  onClick={click}
+                  onKeyDown={click ? (e) => (e.key === 'Enter' || e.key === ' ') && click() : undefined}
+                >
+                  <rect class={`grid-cell ${has ? 'has' : ''} ${rot ? 'rot' : ''}`} x={x + 2} y={y + 2} width={cell - 4} height={cell - 4} rx="3" />
                   {served && <circle class="served" cx={x + cell / 2} cy={y + cell / 2} r={cell / 2 - 1} />}
                   {bad && <path class="bad" d={`M${x + 5} ${y + 5}L${x + cell - 5} ${y + cell - 5}M${x + cell - 5} ${y + 5}L${x + 5} ${y + cell - 5}`} />}
                 </g>

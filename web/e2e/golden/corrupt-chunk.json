@@ -1,0 +1,106 @@
+{
+  "seed": 7,
+  "scenario": "corrupt-chunk",
+  "untilMs": 120000,
+  "events": [
+    {
+      "seq": 1,
+      "atMs": 268,
+      "kind": "node",
+      "node": "node-1",
+      "text": "joined as alive"
+    },
+    {
+      "seq": 2,
+      "atMs": 654,
+      "kind": "node",
+      "node": "node-3",
+      "text": "joined as alive"
+    },
+    {
+      "seq": 3,
+      "atMs": 818,
+      "kind": "node",
+      "node": "node-5",
+      "text": "joined as alive"
+    },
+    {
+      "seq": 4,
+      "atMs": 836,
+      "kind": "node",
+      "node": "node-2",
+      "text": "joined as alive"
+    },
+    {
+      "seq": 5,
+      "atMs": 905,
+      "kind": "node",
+      "node": "node-4",
+      "text": "joined as alive"
+    },
+    {
+      "seq": 6,
+      "atMs": 30416,
+      "kind": "corrupt",
+      "node": "node-2",
+      "text": "chunk 03097f628b88 failed verification: copy quarantined"
+    },
+    {
+      "seq": 7,
+      "atMs": 30416,
+      "kind": "copy",
+      "node": "node-5",
+      "text": "copy 1 started: chunk 03097f628b88 from node-3, 4194304 bytes"
+    },
+    {
+      "seq": 8,
+      "atMs": 30512,
+      "kind": "copy",
+      "node": "node-5",
+      "text": "copy 1 completed after 96ms"
+    },
+    {
+      "seq": 9,
+      "atMs": 30938,
+      "kind": "corrupt",
+      "node": "node-2",
+      "text": "chunk 2715a35cacab failed verification: copy quarantined"
+    },
+    {
+      "seq": 10,
+      "atMs": 30938,
+      "kind": "copy",
+      "node": "node-4",
+      "text": "copy 2 started: chunk 2715a35cacab from node-1, 1048576 bytes"
+    },
+    {
+      "seq": 11,
+      "atMs": 31021,
+      "kind": "copy",
+      "node": "node-4",
+      "text": "copy 2 completed after 83ms"
+    },
+    {
+      "seq": 12,
+      "atMs": 32526,
+      "kind": "corrupt",
+      "node": "node-2",
+      "text": "chunk e4a24094e284 failed verification: copy quarantined"
+    },
+    {
+      "seq": 13,
+      "atMs": 32526,
+      "kind": "copy",
+      "node": "node-2",
+      "text": "copy 3 started: chunk e4a24094e284 from node-1, 4194304 bytes"
+    },
+    {
+      "seq": 14,
+      "atMs": 32634,
+      "kind": "copy",
+      "node": "node-2",
+      "text": "copy 3 completed after 108ms"
+    }
+  ],
+  "reads": []
+}

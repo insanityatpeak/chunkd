@@ -10,6 +10,8 @@ import (
 	"math/rand/v2"
 	"net/http"
 	"net/http/httptest"
+	"os"
+	"path/filepath"
 	"strings"
 	"sync"
 	"testing"
@@ -204,5 +206,28 @@ func TestClientDetectsLyingGateway(t *testing.T) {
 	_, err := httpclient.New(liar.URL).Get(context.Background(), "/f", io.Discard)
 	if err == nil || !strings.Contains(err.Error(), "does not match") {
 		t.Fatalf("tampered download accepted: %v", err)
+	}
+}
+
+func TestGatewayServesUI(t *testing.T) {
+	dir := t.TempDir()
+	os.WriteFile(filepath.Join(dir, "index.html"), []byte("<title>chunkd</title>"), 0o644)
+	cfg := cluster.DefaultConfig()
+	c := cluster.New(7, cfg, io.Discard)
+	c.Tick(3 * time.Second)
+	caller := c.NewCaller("gateway")
+	api := &locked{api: client.New(caller, client.Options{Meta: cluster.MetaID, Sleep: caller.Sleep})}
+	srv := httptest.NewServer(gateway.WithUI(gateway.Handler(api, slog.New(slog.NewTextHandler(io.Discard, nil))), dir))
+	defer srv.Close()
+	for path, want := range map[string]string{"/": "<title>chunkd</title>", "/mode.json": `"live"`, "/cluster": `"nodes"`} {
+		resp, err := http.Get(srv.URL + path)
+		if err != nil {
+			t.Fatal(err)
+		}
+		b, _ := io.ReadAll(resp.Body)
+		resp.Body.Close()
+		if resp.StatusCode != http.StatusOK || !strings.Contains(string(b), want) {
+			t.Errorf("GET %s = %d %q, want %q", path, resp.StatusCode, b, want)
+		}
 	}
 }

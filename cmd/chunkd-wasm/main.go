@@ -11,8 +11,12 @@
 //	stat(path)              JSON manifest with replica locations
 //	remove(path)            JSON {version}
 //	crash(node), restart(node)  kill a node's process (disk kept); start a new one
-//	scenario(node, downMs)  load demo files if empty, kill node, restart it after downMs
-//	rot(node, n)            load demo files if empty, flip bytes in n chunks on node's disk
+//	scenarios()             JSON list of scripted scenarios
+//	runScenario(name)       start one; run right after start(seed), a seed replays it exactly
+//	freeze(node, on)        pause or resume a node (messages held)
+//	slow(node, ms)          add ms to every message to or from node; 0 clears
+//	partition(node, on)     cut node off from the metadata server, or heal
+//	corrupt(node, chunkHex) flip a byte in node's copy of a chunk
 //
 // Errors come back as {"error": "..."} JSON. The worker only calls tick with
 // a fixed step, so a seed always yields the same state sequence.
@@ -111,13 +115,28 @@ func main() {
 			c.RestartNode(iface.NodeID(args[0].String()))
 			return nil
 		}),
-		"rot": needCluster(func(args []js.Value) any {
-			ids, err := c.ScriptRot(iface.NodeID(args[0].String()), args[1].Int())
-			return jsonValue(map[string]int{"rotted": len(ids)}, err)
+		"scenarios": js.FuncOf(func(js.Value, []js.Value) any { return jsonValue(cluster.Scenarios, nil) }),
+		"runScenario": needCluster(func(args []js.Value) any {
+			return jsonValue(struct{}{}, c.RunScenario(args[0].String()))
 		}),
-		"scenario": needCluster(func(args []js.Value) any {
-			err := c.ScriptKillNode(iface.NodeID(args[0].String()), time.Duration(args[1].Int())*time.Millisecond)
-			return jsonValue(struct{}{}, err)
+		"freeze": needCluster(func(args []js.Value) any {
+			if args[1].Bool() {
+				c.Freeze(iface.NodeID(args[0].String()))
+			} else {
+				c.Thaw(iface.NodeID(args[0].String()))
+			}
+			return nil
+		}),
+		"slow": needCluster(func(args []js.Value) any {
+			c.SetSlow(iface.NodeID(args[0].String()), time.Duration(args[1].Int())*time.Millisecond)
+			return nil
+		}),
+		"partition": needCluster(func(args []js.Value) any {
+			c.Partition(iface.NodeID(args[0].String()), args[1].Bool())
+			return nil
+		}),
+		"corrupt": needCluster(func(args []js.Value) any {
+			return jsonValue(struct{}{}, c.CorruptReplica(iface.NodeID(args[0].String()), args[1].String()))
 		}),
 	}
 	js.Global().Set("chunkd", js.ValueOf(api))

@@ -66,6 +66,9 @@ type Cluster struct {
 	written  map[string][][32]byte
 	badReads []error
 	rotPick  uint64
+	reads    []scriptedRead // due scripted reads, in time order
+	readLog  []client.Event // results of scripted reads, newest last
+	readSeq  uint64
 }
 
 // Node is one simulated storage node.
@@ -215,7 +218,22 @@ func (c *Cluster) RestartMeta() error { return c.startMeta() }
 func (c *Cluster) AfterFunc(d time.Duration, f func()) { c.clock.AfterFunc(d, f) }
 
 // Tick advances simulated time by d, running every event due in that window.
-func (c *Cluster) Tick(d time.Duration) { c.clock.Advance(d) }
+// Scripted reads due in the window run between clock advances, never from
+// a timer: a client call advances the clock itself.
+func (c *Cluster) Tick(d time.Duration) {
+	end := c.clock.Now().Add(d)
+	for len(c.reads) > 0 && c.reads[0].at <= end {
+		r := c.reads[0]
+		c.reads = c.reads[1:]
+		if now := c.clock.Now(); r.at > now {
+			c.clock.Advance(r.at.Sub(now))
+		}
+		c.scriptRead(r.path)
+	}
+	if now := c.clock.Now(); end > now {
+		c.clock.Advance(end.Sub(now))
+	}
+}
 
 // Now returns simulated time.
 func (c *Cluster) Now() iface.Instant { return c.clock.Now() }

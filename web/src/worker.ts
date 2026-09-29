@@ -9,6 +9,8 @@ interface GoRuntime {
   run(instance: WebAssembly.Instance): Promise<void>;
 }
 
+// The Go side (cmd/chunkd-wasm). Calls that can fail return JSON, with
+// {"error": ..., "code": ...} on failure.
 interface ChunkdGlobal {
   start(seed: number): void;
   tick(ms: number): void;
@@ -19,8 +21,12 @@ interface ChunkdGlobal {
   remove(path: string): string;
   crash(node: string): void;
   restart(node: string): void;
-  scenario(node: string, downMs: number): string;
-  rot(node: string, n: number): string;
+  freeze(node: string, on: boolean): void;
+  slow(node: string, ms: number): void;
+  partition(node: string, on: boolean): void;
+  corrupt(node: string, chunk: string): string;
+  scenarios(): string;
+  runScenario(name: string): string;
 }
 
 // SimState is cluster.State in Go; events arrive incrementally by seq.
@@ -56,14 +62,19 @@ async function load(baseUrl: string) {
   if (!g.chunkd) throw new Error('cluster.wasm did not register the chunkd API');
 }
 
-function frame() {
+function tick(steps: number) {
   const api = g.chunkd;
-  if (!api || !running) return;
+  if (!api) return;
+  for (let i = 0; i < steps; i++) api.tick(STEP_MS);
+  if (steps > 0) publish();
+}
+
+function frame() {
+  if (!running) return;
   owed += (simMsPerSec * FRAME_MS) / 1000 / STEP_MS;
   const steps = Math.floor(owed);
   owed -= steps;
-  for (let i = 0; i < steps; i++) api.tick(STEP_MS);
-  if (steps > 0) publish();
+  tick(steps);
 }
 
 function publish() {
@@ -84,10 +95,11 @@ function parse(raw: string): unknown {
 // transfer time while they run, and the dashboard sees the jump.
 function call(method: Method, args: unknown[]): { value: unknown; transfer: Transferable[] } {
   const api = g.chunkd!;
-  const [a, b] = args as [string, Uint8Array];
+  const [a, b] = args as [string, unknown];
+  const none = { value: null, transfer: [] };
   switch (method) {
     case 'upload':
-      return { value: parse(api.upload(a, b)), transfer: [] };
+      return { value: parse(api.upload(a, b as Uint8Array)), transfer: [] };
     case 'download': {
       const r = api.download(a);
       const manifest = parse(r.manifest);
@@ -99,14 +111,23 @@ function call(method: Method, args: unknown[]): { value: unknown; transfer: Tran
       return { value: parse(api.remove(a)), transfer: [] };
     case 'crash':
       api.crash(a);
-      return { value: null, transfer: [] };
+      return none;
     case 'restart':
       api.restart(a);
-      return { value: null, transfer: [] };
-    case 'scenario':
-      return { value: parse(api.scenario(a, args[1] as number)), transfer: [] };
-    case 'rot':
-      return { value: parse(api.rot(a, args[1] as number)), transfer: [] };
+      return none;
+    case 'freeze':
+      api.freeze(a, b as boolean);
+      return none;
+    case 'slow':
+      api.slow(a, b as number);
+      return none;
+    case 'partition':
+      api.partition(a, b as boolean);
+      return none;
+    case 'corrupt':
+      return { value: parse(api.corrupt(a, b as string)), transfer: [] };
+    case 'scenarios':
+      return { value: parse(api.scenarios()), transfer: [] };
   }
 }
 
@@ -119,6 +140,8 @@ self.onmessage = async (e: MessageEvent<ToWorker>) => {
         g.chunkd!.start(m.seed);
         owed = 0;
         timeline.reset();
+        // Before the first tick, as in the Go tests: a seed replays it.
+        if (m.scenario) parse(g.chunkd!.runScenario(m.scenario));
         running = true;
         timer ??= setInterval(frame, FRAME_MS);
         post({ type: 'ready' });
@@ -129,6 +152,9 @@ self.onmessage = async (e: MessageEvent<ToWorker>) => {
         break;
       case 'resume':
         running = true;
+        break;
+      case 'step':
+        tick(1000 / STEP_MS);
         break;
       case 'speed':
         simMsPerSec = m.simMsPerSec;
@@ -145,6 +171,7 @@ self.onmessage = async (e: MessageEvent<ToWorker>) => {
         break;
     }
   } catch (err) {
-    post({ type: 'error', message: err instanceof Error ? err.message : String(err) });
+    const e = err as { message?: string };
+    post({ type: 'error', message: e.message ?? String(err) });
   }
 };

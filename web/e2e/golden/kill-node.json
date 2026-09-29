@@ -1,0 +1,519 @@
+{
+  "seed": 7,
+  "scenario": "kill-node",
+  "untilMs": 120000,
+  "events": [
+    {
+      "seq": 1,
+      "atMs": 268,
+      "kind": "node",
+      "node": "node-1",
+      "text": "joined as alive"
+    },
+    {
+      "seq": 2,
+      "atMs": 654,
+      "kind": "node",
+      "node": "node-3",
+      "text": "joined as alive"
+    },
+    {
+      "seq": 3,
+      "atMs": 818,
+      "kind": "node",
+      "node": "node-5",
+      "text": "joined as alive"
+    },
+    {
+      "seq": 4,
+      "atMs": 836,
+      "kind": "node",
+      "node": "node-2",
+      "text": "joined as alive"
+    },
+    {
+      "seq": 5,
+      "atMs": 905,
+      "kind": "node",
+      "node": "node-4",
+      "text": "joined as alive"
+    },
+    {
+      "seq": 6,
+      "atMs": 16000,
+      "kind": "node",
+      "node": "node-3",
+      "text": "alive → suspect"
+    },
+    {
+      "seq": 7,
+      "atMs": 23000,
+      "kind": "node",
+      "node": "node-3",
+      "text": "suspect → dead"
+    },
+    {
+      "seq": 8,
+      "atMs": 43000,
+      "kind": "copy",
+      "node": "node-5",
+      "text": "copy 1 started: chunk 03097f628b88 from node-2, 4194304 bytes"
+    },
+    {
+      "seq": 9,
+      "atMs": 43025,
+      "kind": "copy",
+      "node": "node-2",
+      "text": "copy 2 started: chunk 161b58380933 from node-4, 1048576 bytes"
+    },
+    {
+      "seq": 10,
+      "atMs": 43050,
+      "kind": "copy",
+      "node": "node-4",
+      "text": "copy 3 started: chunk 2715a35cacab from node-1, 1048576 bytes"
+    },
+    {
+      "seq": 11,
+      "atMs": 43098,
+      "kind": "copy",
+      "node": "node-5",
+      "text": "copy 1 completed after 99ms"
+    },
+    {
+      "seq": 12,
+      "atMs": 43124,
+      "kind": "copy",
+      "node": "node-4",
+      "text": "copy 3 completed after 74ms"
+    },
+    {
+      "seq": 13,
+      "atMs": 43138,
+      "kind": "copy",
+      "node": "node-2",
+      "text": "copy 2 completed after 113ms"
+    },
+    {
+      "seq": 14,
+      "atMs": 43150,
+      "kind": "copy",
+      "node": "node-4",
+      "text": "copy 4 started: chunk 46467b005358 from node-1, 4194304 bytes"
+    },
+    {
+      "seq": 15,
+      "atMs": 43175,
+      "kind": "copy",
+      "node": "node-5",
+      "text": "copy 5 started: chunk 5ac0bbdc1c6f from node-2, 1048576 bytes"
+    },
+    {
+      "seq": 16,
+      "atMs": 43200,
+      "kind": "copy",
+      "node": "node-4",
+      "text": "copy 6 started: chunk 617cdec2a7ab from node-1, 1048576 bytes"
+    },
+    {
+      "seq": 17,
+      "atMs": 43265,
+      "kind": "copy",
+      "node": "node-5",
+      "text": "copy 5 completed after 90ms"
+    },
+    {
+      "seq": 18,
+      "atMs": 43274,
+      "kind": "copy",
+      "node": "node-4",
+      "text": "copy 4 completed after 124ms"
+    },
+    {
+      "seq": 19,
+      "atMs": 43295,
+      "kind": "copy",
+      "node": "node-4",
+      "text": "copy 6 completed after 96ms"
+    },
+    {
+      "seq": 20,
+      "atMs": 43300,
+      "kind": "copy",
+      "node": "node-5",
+      "text": "copy 7 started: chunk 7c0b044463ce from node-2, 4194304 bytes"
+    },
+    {
+      "seq": 21,
+      "atMs": 43325,
+      "kind": "copy",
+      "node": "node-5",
+      "text": "copy 8 started: chunk 7c0c00b9a472 from node-4, 1048576 bytes"
+    },
+    {
+      "seq": 22,
+      "atMs": 43425,
+      "kind": "copy",
+      "node": "node-2",
+      "text": "copy 9 started: chunk 86d04a75fc5b from node-5, 4194304 bytes"
+    },
+    {
+      "seq": 23,
+      "atMs": 43425,
+      "kind": "copy",
+      "node": "node-5",
+      "text": "copy 7 completed after 126ms"
+    },
+    {
+      "seq": 24,
+      "atMs": 43437,
+      "kind": "copy",
+      "node": "node-5",
+      "text": "copy 8 completed after 113ms"
+    },
+    {
+      "seq": 25,
+      "atMs": 43450,
+      "kind": "copy",
+      "node": "node-4",
+      "text": "copy 10 started: chunk 92189b931ea2 from node-1, 1048576 bytes"
+    },
+    {
+      "seq": 26,
+      "atMs": 43475,
+      "kind": "copy",
+      "node": "node-4",
+      "text": "copy 11 started: chunk 98ce7dc76a5f from node-1, 1048576 bytes"
+    },
+    {
+      "seq": 27,
+      "atMs": 43501,
+      "kind": "copy",
+      "node": "node-2",
+      "text": "copy 9 completed after 76ms"
+    },
+    {
+      "seq": 28,
+      "atMs": 43511,
+      "kind": "copy",
+      "node": "node-4",
+      "text": "copy 10 completed after 62ms"
+    },
+    {
+      "seq": 29,
+      "atMs": 43553,
+      "kind": "copy",
+      "node": "node-4",
+      "text": "copy 11 completed after 78ms"
+    },
+    {
+      "seq": 30,
+      "atMs": 43575,
+      "kind": "copy",
+      "node": "node-4",
+      "text": "copy 12 started: chunk b420ece69207 from node-1, 4194304 bytes"
+    },
+    {
+      "seq": 31,
+      "atMs": 43659,
+      "kind": "copy",
+      "node": "node-4",
+      "text": "copy 12 completed after 84ms"
+    },
+    {
+      "seq": 32,
+      "atMs": 43675,
+      "kind": "copy",
+      "node": "node-4",
+      "text": "copy 13 started: chunk c8ba8104bd26 from node-1, 4194304 bytes"
+    },
+    {
+      "seq": 33,
+      "atMs": 43700,
+      "kind": "copy",
+      "node": "node-4",
+      "text": "copy 14 started: chunk d5f8a129c8a5 from node-2, 1048576 bytes"
+    },
+    {
+      "seq": 34,
+      "atMs": 43782,
+      "kind": "copy",
+      "node": "node-4",
+      "text": "copy 13 completed after 107ms"
+    },
+    {
+      "seq": 35,
+      "atMs": 43800,
+      "kind": "copy",
+      "node": "node-4",
+      "text": "copy 15 started: chunk e4a24094e284 from node-1, 4194304 bytes"
+    },
+    {
+      "seq": 36,
+      "atMs": 43806,
+      "kind": "copy",
+      "node": "node-4",
+      "text": "copy 14 completed after 106ms"
+    },
+    {
+      "seq": 37,
+      "atMs": 43900,
+      "kind": "copy",
+      "node": "node-4",
+      "text": "copy 16 started: chunk ed96f73ddf57 from node-5, 4194304 bytes"
+    },
+    {
+      "seq": 38,
+      "atMs": 43946,
+      "kind": "copy",
+      "node": "node-4",
+      "text": "copy 15 completed after 146ms"
+    },
+    {
+      "seq": 39,
+      "atMs": 43997,
+      "kind": "copy",
+      "node": "node-4",
+      "text": "copy 16 completed after 98ms"
+    },
+    {
+      "seq": 40,
+      "atMs": 103707,
+      "kind": "node",
+      "node": "node-3",
+      "text": "dead → suspect (restarted)"
+    },
+    {
+      "seq": 41,
+      "atMs": 105703,
+      "kind": "node",
+      "node": "node-3",
+      "text": "suspect → alive"
+    },
+    {
+      "seq": 42,
+      "atMs": 105703,
+      "kind": "trim",
+      "node": "node-5",
+      "text": "trim 17 sent: chunk 03097f628b88"
+    },
+    {
+      "seq": 43,
+      "atMs": 105703,
+      "kind": "trim",
+      "node": "node-5",
+      "text": "trim 18 sent: chunk 161b58380933"
+    },
+    {
+      "seq": 44,
+      "atMs": 105703,
+      "kind": "trim",
+      "node": "node-4",
+      "text": "trim 19 sent: chunk 2715a35cacab"
+    },
+    {
+      "seq": 45,
+      "atMs": 105703,
+      "kind": "trim",
+      "node": "node-4",
+      "text": "trim 20 sent: chunk 46467b005358"
+    },
+    {
+      "seq": 46,
+      "atMs": 105703,
+      "kind": "trim",
+      "node": "node-5",
+      "text": "trim 21 sent: chunk 5ac0bbdc1c6f"
+    },
+    {
+      "seq": 47,
+      "atMs": 105703,
+      "kind": "trim",
+      "node": "node-4",
+      "text": "trim 22 sent: chunk 617cdec2a7ab"
+    },
+    {
+      "seq": 48,
+      "atMs": 105703,
+      "kind": "trim",
+      "node": "node-5",
+      "text": "trim 23 sent: chunk 7c0b044463ce"
+    },
+    {
+      "seq": 49,
+      "atMs": 105703,
+      "kind": "trim",
+      "node": "node-5",
+      "text": "trim 24 sent: chunk 7c0c00b9a472"
+    },
+    {
+      "seq": 50,
+      "atMs": 105703,
+      "kind": "trim",
+      "node": "node-5",
+      "text": "trim 25 sent: chunk 86d04a75fc5b"
+    },
+    {
+      "seq": 51,
+      "atMs": 105703,
+      "kind": "trim",
+      "node": "node-4",
+      "text": "trim 26 sent: chunk 92189b931ea2"
+    },
+    {
+      "seq": 52,
+      "atMs": 105703,
+      "kind": "trim",
+      "node": "node-4",
+      "text": "trim 27 sent: chunk 98ce7dc76a5f"
+    },
+    {
+      "seq": 53,
+      "atMs": 105703,
+      "kind": "trim",
+      "node": "node-4",
+      "text": "trim 28 sent: chunk b420ece69207"
+    },
+    {
+      "seq": 54,
+      "atMs": 105703,
+      "kind": "trim",
+      "node": "node-4",
+      "text": "trim 29 sent: chunk c8ba8104bd26"
+    },
+    {
+      "seq": 55,
+      "atMs": 105703,
+      "kind": "trim",
+      "node": "node-4",
+      "text": "trim 30 sent: chunk d5f8a129c8a5"
+    },
+    {
+      "seq": 56,
+      "atMs": 105703,
+      "kind": "trim",
+      "node": "node-4",
+      "text": "trim 31 sent: chunk e4a24094e284"
+    },
+    {
+      "seq": 57,
+      "atMs": 105703,
+      "kind": "trim",
+      "node": "node-4",
+      "text": "trim 32 sent: chunk ed96f73ddf57"
+    },
+    {
+      "seq": 58,
+      "atMs": 105710,
+      "kind": "trim",
+      "node": "node-5",
+      "text": "trim 25 done: chunk 86d04a75fc5b removed"
+    },
+    {
+      "seq": 59,
+      "atMs": 105725,
+      "kind": "trim",
+      "node": "node-5",
+      "text": "trim 23 done: chunk 7c0b044463ce removed"
+    },
+    {
+      "seq": 60,
+      "atMs": 105727,
+      "kind": "trim",
+      "node": "node-4",
+      "text": "trim 20 done: chunk 46467b005358 removed"
+    },
+    {
+      "seq": 61,
+      "atMs": 105736,
+      "kind": "trim",
+      "node": "node-4",
+      "text": "trim 29 done: chunk c8ba8104bd26 removed"
+    },
+    {
+      "seq": 62,
+      "atMs": 105741,
+      "kind": "trim",
+      "node": "node-4",
+      "text": "trim 19 done: chunk 2715a35cacab removed"
+    },
+    {
+      "seq": 63,
+      "atMs": 105748,
+      "kind": "trim",
+      "node": "node-5",
+      "text": "trim 17 done: chunk 03097f628b88 removed"
+    },
+    {
+      "seq": 64,
+      "atMs": 105749,
+      "kind": "trim",
+      "node": "node-5",
+      "text": "trim 21 done: chunk 5ac0bbdc1c6f removed"
+    },
+    {
+      "seq": 65,
+      "atMs": 105750,
+      "kind": "trim",
+      "node": "node-4",
+      "text": "trim 28 done: chunk b420ece69207 removed"
+    },
+    {
+      "seq": 66,
+      "atMs": 105753,
+      "kind": "trim",
+      "node": "node-4",
+      "text": "trim 31 done: chunk e4a24094e284 removed"
+    },
+    {
+      "seq": 67,
+      "atMs": 105753,
+      "kind": "trim",
+      "node": "node-4",
+      "text": "trim 30 done: chunk d5f8a129c8a5 removed"
+    },
+    {
+      "seq": 68,
+      "atMs": 105755,
+      "kind": "trim",
+      "node": "node-5",
+      "text": "trim 18 done: chunk 161b58380933 removed"
+    },
+    {
+      "seq": 69,
+      "atMs": 105758,
+      "kind": "trim",
+      "node": "node-5",
+      "text": "trim 24 done: chunk 7c0c00b9a472 removed"
+    },
+    {
+      "seq": 70,
+      "atMs": 105763,
+      "kind": "trim",
+      "node": "node-4",
+      "text": "trim 32 done: chunk ed96f73ddf57 removed"
+    },
+    {
+      "seq": 71,
+      "atMs": 105765,
+      "kind": "trim",
+      "node": "node-4",
+      "text": "trim 22 done: chunk 617cdec2a7ab removed"
+    },
+    {
+      "seq": 72,
+      "atMs": 105768,
+      "kind": "trim",
+      "node": "node-4",
+      "text": "trim 27 done: chunk 98ce7dc76a5f removed"
+    },
+    {
+      "seq": 73,
+      "atMs": 105774,
+      "kind": "trim",
+      "node": "node-4",
+      "text": "trim 26 done: chunk 92189b931ea2 removed"
+    }
+  ],
+  "reads": []
+}

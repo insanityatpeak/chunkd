@@ -4,11 +4,23 @@ import type { ClusterView } from './cluster';
 // state sequence depends on the seed alone, never on frame timing.
 export const STEP_MS = 50;
 
-export type Method = 'upload' | 'download' | 'stat' | 'remove' | 'crash' | 'restart' | 'scenario' | 'rot';
+export type Method =
+  | 'upload'
+  | 'download'
+  | 'stat'
+  | 'remove'
+  | 'crash'
+  | 'restart'
+  | 'freeze'
+  | 'slow'
+  | 'partition'
+  | 'corrupt'
+  | 'scenarios';
 
 export type ToWorker =
-  | { type: 'start'; seed: number; baseUrl: string }
+  | { type: 'start'; seed: number; baseUrl: string; scenario?: string }
   | { type: 'pause' }
+  | { type: 'step' }
   | { type: 'resume' }
   | { type: 'speed'; simMsPerSec: number }
   | { type: 'call'; id: number; method: Method; args: unknown[] };

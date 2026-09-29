@@ -22,6 +22,7 @@ func main() {
 	httpAddr := flag.String("http", server.Env("CHUNKD_HTTP", ":8080"), "HTTP listen address")
 	metaID := flag.String("meta-id", server.Env("CHUNKD_META_ID", "meta-1"), "metadata server ID")
 	metaAddr := flag.String("meta", server.Env("CHUNKD_META", "localhost:7000"), "metadata server gRPC address")
+	uiDir := flag.String("ui", server.Env("CHUNKD_UI", ""), "serve the dashboard's static build from this directory at /")
 	flag.Parse()
 
 	caller := grpcnet.NewCaller(map[iface.NodeID]string{iface.NodeID(*metaID): *metaAddr}, 30*time.Second)
@@ -39,6 +40,9 @@ func main() {
 			return nil
 		}
 		p.HTTP = gateway.Handler(api, p.Log)
+		if *uiDir != "" {
+			p.HTTP = gateway.WithUI(p.HTTP, *uiDir)
+		}
 		return nil
 	})
 	if err != nil {

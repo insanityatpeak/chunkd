@@ -601,3 +601,219 @@ svg tspan.corrupt {
 .ev.corrupt .ev-text {
   color: var(--bad);
 }
+
+header.top {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.badge {
+  padding: 4px 10px;
+  border-radius: 999px;
+  font-size: 12px;
+  font-weight: 700;
+  letter-spacing: 0.04em;
+  border: 1px solid currentColor;
+}
+
+.badge.sim {
+  color: var(--accent);
+}
+
+.badge.live {
+  color: var(--meta);
+}
+
+.scenario-pick {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+
+select {
+  font: inherit;
+  padding: 3px 6px;
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  background: var(--panel);
+  color: var(--fg);
+}
+
+.scenario-note {
+  margin: 0 0 12px;
+  padding: 8px 12px;
+  border-left: 3px solid var(--bad);
+  background: var(--panel);
+}
+
+button:disabled {
+  opacity: 0.45;
+  cursor: not-allowed;
+}
+
+button.primary {
+  background: var(--accent);
+  border-color: var(--accent);
+  color: var(--bg);
+}
+
+.healthbar {
+  margin: 4px 0 12px;
+}
+
+.hb-bar {
+  display: flex;
+  height: 12px;
+  border-radius: 6px;
+  overflow: hidden;
+  background: var(--line);
+}
+
+.hb-seg {
+  min-width: 3px;
+  transition: flex-grow 0.3s;
+}
+
+.hb-seg.ok {
+  background: var(--accent);
+}
+
+.hb-seg.under {
+  background: var(--warn);
+}
+
+.hb-seg.lost {
+  background: var(--bad);
+}
+
+.hb-seg.over {
+  background: var(--meta);
+}
+
+.hb-summary {
+  margin: 4px 0 0;
+  font-size: 13px;
+  color: var(--muted);
+}
+
+.hb-summary.warn {
+  color: var(--warn);
+}
+
+.hb-summary.bad {
+  color: var(--bad);
+  font-weight: 600;
+}
+
+.link.cut {
+  stroke: var(--warn);
+  stroke-dasharray: 1 5;
+}
+
+.node-controls {
+  margin-top: 16px;
+}
+
+.fault-table {
+  display: grid;
+  gap: 4px;
+  margin-top: 6px;
+}
+
+.fault-row {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px;
+}
+
+.fault-row button {
+  font-size: 13px;
+  padding: 3px 8px;
+}
+
+.fault-row button[aria-pressed='true'] {
+  border-color: var(--bad);
+  color: var(--bad);
+}
+
+.fault-node {
+  min-width: 6.5em;
+  font-weight: 600;
+}
+
+.filters {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+  margin: 6px 0;
+}
+
+.chip {
+  font-size: 12px;
+  padding: 2px 8px;
+  border-radius: 999px;
+}
+
+.chip[aria-pressed='false'] {
+  opacity: 0.5;
+  text-decoration: line-through;
+}
+
+.ev.read .ev-text {
+  color: var(--meta);
+}
+
+.clickable {
+  cursor: pointer;
+}
+
+.clickable:hover .grid-cell,
+.clickable:focus-visible .grid-cell {
+  stroke: var(--bad);
+  stroke-width: 2;
+}
+
+.grid-cell.rot {
+  fill: var(--bad);
+  stroke: var(--bad);
+}
+
+.tour {
+  position: fixed;
+  right: 16px;
+  bottom: 16px;
+  z-index: 10;
+  width: min(360px, calc(100vw - 32px));
+  padding: 14px 16px;
+  border: 1px solid var(--accent);
+  border-radius: 10px;
+  background: var(--panel);
+  box-shadow: 0 8px 30px rgb(0 0 0 / 0.25);
+}
+
+.tour h2 {
+  margin: 0 0 6px;
+}
+
+.tour p {
+  margin: 0 0 10px;
+}
+
+.tour-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 6px;
+}
+
+/* Phone width: read-only. The cluster and timeline stay; faults need room. */
+@media (max-width: 560px) {
+  .node-controls,
+  .scenario-pick,
+  .controls .speeds {
+    display: none;
+  }
+}

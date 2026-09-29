@@ -51,8 +51,15 @@ jobs:
           node-version: '24'
           cache: npm
           cache-dependency-path: web/package-lock.json
+      - name: build cluster.wasm
+        run: go run ./tools/task wasm
       - name: build web
         run: go run ./tools/task web
+      - name: shared scenario links replay the golden timelines (Playwright)
+        working-directory: web
+        run: |
+          npx playwright install --with-deps chromium
+          npx playwright test
 
   compose:
     runs-on: ubuntu-latest

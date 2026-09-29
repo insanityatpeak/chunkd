@@ -1,23 +1,16 @@
 import { useEffect, useMemo, useState } from 'preact/hooks';
-import type { ClusterAPI, ClusterView as View } from './api/cluster';
+import type { ClusterAPI, ClusterView as View, ScenarioInfo } from './api/cluster';
 import { HttpClusterAPI } from './api/http';
 import { WasmClusterAPI } from './api/wasm';
 import { ClusterView } from './cluster-view';
+import { NodeControls } from './controls';
 import { Files } from './files';
+import { HealthBar } from './healthbar';
 import { Replication } from './repair';
 import { EventTimeline } from './timeline';
+import { Tour, tourSeen } from './tour';
 
-const SPEEDS = [1, 5, 10, 25, 50].map((x) => ({ label: `${x}×`, simMsPerSec: x * 1000 }));
-
-// The scripted failure: node-3 stays down 90 s, past dead (10 s) plus the
-// repair delay (20 s), so the run shows re-replication and then the trims
-// after it returns.
-const SCRIPT_NODE = 'node-3';
-const SCRIPT_DOWN_MS = 90_000;
-// Bit rot nobody is told about: the scrubber (a pass every 10 simulated
-// minutes, about 12 s at 50×) or a reader finds it.
-const ROT_NODE = 'node-2';
-const ROT_CHUNKS = 3;
+const SPEEDS = [1, 5, 10, 25, 50];
 
 const params = new URLSearchParams(location.search);
 
@@ -28,113 +21,206 @@ function seedFromURL(): number {
   return Math.floor(Math.random() * 1_000_000);
 }
 
-// ?gateway=http://localhost:8080 points the same UI at a real cluster.
-function makeAPI(): ClusterAPI {
+function speedFromURL(): number {
+  const n = Number(params.get('speed'));
+  return SPEEDS.includes(n) ? n : 1;
+}
+
+// Which cluster: ?gateway=URL, or LIVE when the page is served by a gateway
+// (it answers /mode.json), else the simulation in this browser.
+async function makeAPI(): Promise<ClusterAPI> {
   const gw = params.get('gateway');
-  return gw ? new HttpClusterAPI(gw) : new WasmClusterAPI();
+  if (gw) return new HttpClusterAPI(gw);
+  if (params.get('sim') === null) {
+    try {
+      const r = await fetch(new URL('mode.json', location.href));
+      if (r.ok && ((await r.json()) as { mode?: string }).mode === 'live') {
+        return new HttpClusterAPI(new URL('.', location.href).href);
+      }
+    } catch {
+      // Not served by a gateway.
+    }
+  }
+  return new WasmClusterAPI();
+}
+
+// Exposed for the Playwright replay test: the timeline as the page has it.
+declare global {
+  interface Window {
+    __chunkd?: { nowMs: number; timeline: View['timeline']; reads: View['timeline'] };
+  }
 }
 
 export function App() {
   const seed = useMemo(seedFromURL, []);
-  const [api] = useState<ClusterAPI>(makeAPI);
+  const scenario = params.get('scenario') ?? undefined;
+  const [api, setAPI] = useState<ClusterAPI | null>(null);
   const [view, setView] = useState<View | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [paused, setPaused] = useState(false);
-  const [speed, setSpeed] = useState(1000);
-  const sim = api.kind === 'sim';
+  const [speed, setSpeed] = useState(speedFromURL);
+  const [scenarios, setScenarios] = useState<ScenarioInfo[]>([]);
+  const [picked, setPicked] = useState(scenario ?? 'kill-node');
+  const [copied, setCopied] = useState(false);
+  const [tour, setTour] = useState(false);
 
   useEffect(() => {
-    // Go encodes empty slices as null; normalise once here.
-    const unsub = api.subscribe((v) =>
-      setView({ ...v, nodes: v.nodes ?? [], files: v.files ?? [], copies: v.copies ?? [], timeline: v.timeline ?? [] }),
-    );
-    api.start(seed).catch((e: Error) => setError(e.message));
+    let disposed = false;
+    let cleanup = () => {};
+    void makeAPI().then((a) => {
+      if (disposed) return a.dispose();
+      setAPI(a);
+      if (a.kind === 'sim' && !scenario && !tourSeen()) setTour(true);
+      const unsub = a.subscribe((v) => {
+        const next = { ...v, nodes: v.nodes ?? [], files: v.files ?? [], copies: v.copies ?? [], timeline: v.timeline ?? [] };
+        window.__chunkd = { nowMs: next.nowMs, timeline: next.timeline, reads: next.reads ?? [] };
+        setView(next);
+      });
+      a.setSpeed(speedFromURL() * 1000);
+      a.start(seed, scenario)
+        .then(() => a.scenarios().then(setScenarios))
+        .catch((e: Error) => setError(e.message));
+      cleanup = () => {
+        unsub();
+        a.dispose();
+      };
+    });
     return () => {
-      unsub();
-      api.dispose();
+      disposed = true;
+      cleanup();
     };
-  }, [api, seed]);
+  }, [seed, scenario]);
+
+  if (!api) return <main class="loading">Connecting…</main>;
+  const sim = api.kind === 'sim';
 
   const togglePause = () => {
     if (paused) api.resume();
     else api.pause();
     setPaused(!paused);
   };
-  const changeSpeed = (v: number) => {
-    api.setSpeed(v);
-    setSpeed(v);
+  const changeSpeed = (x: number) => {
+    api.setSpeed(x * 1000);
+    setSpeed(x);
   };
-  const runScript = () => {
-    setError(null);
-    api.scenario(SCRIPT_NODE, SCRIPT_DOWN_MS).catch((e: Error) => setError(e.message));
+  // A fresh page load replays a scenario exactly: the script starts with
+  // the cluster, before the first tick.
+  const runScenario = () => {
+    location.search = `?seed=${seed}&scenario=${picked}&speed=${speed}`;
   };
-  const runRot = () => {
-    setError(null);
-    api.rot(ROT_NODE, ROT_CHUNKS).catch((e: Error) => setError(e.message));
+  const copyLink = () => {
+    const u = new URL(location.href);
+    u.search = `?seed=${seed}${scenario ? `&scenario=${scenario}` : ''}&speed=${speed}`;
+    void navigator.clipboard.writeText(u.href).then(() => {
+      setCopied(true);
+      setTimeout(() => setCopied(false), 1500);
+    });
   };
+  const active = scenarios.find((s) => s.name === scenario);
 
   return (
     <main>
-      <header>
-        <h1>chunkd</h1>
-        <p class="tagline">A fault-tolerant distributed file store</p>
+      <header class="top">
+        <div>
+          <h1>chunkd</h1>
+          <p class="tagline">A fault-tolerant distributed file store</p>
+        </div>
+        <span class={`badge ${sim ? 'sim' : 'live'}`} title={api.label}>
+          {sim ? 'SIMULATION (in your browser)' : `LIVE (${new URL(api.label.replace('Gateway at ', '')).host})`}
+        </span>
       </header>
 
-      {sim ? (
-        <p class="banner" role="note">
-          Simulated cluster running in your browser. Same core code as the real multi-process version (
-          <code>docker compose up</code>).
-        </p>
-      ) : (
-        <p class="banner real" role="note">
-          Connected to a real cluster: {api.label}. <a href={location.pathname}>Switch to the in-browser simulation</a>
-        </p>
-      )}
+      <p class={`banner ${sim ? '' : 'real'}`} role="note">
+        {sim ? (
+          <>
+            A simulated cluster running in your browser: 1 metadata server and 5 storage nodes on a lossy network, the same core Go
+            code as the real multi-process cluster (<code>docker compose up</code>), compiled to WebAssembly. Nothing leaves this tab.{' '}
+            <button type="button" class="link-button" onClick={() => setTour(true)}>
+              Take the 5-step tour
+            </button>
+          </>
+        ) : (
+          <>
+            Connected to a real cluster: {api.label}. Faults are injected with <code>docker compose</code> (kill, pause, exec); the
+            buttons show the command. <a href="?sim">Switch to the in-browser simulation</a>
+          </>
+        )}
+      </p>
 
       {sim && (
         <section class="controls" aria-label="Simulation controls">
           <span>
-            Seed <a href={`${location.pathname}?seed=${seed}`} title="Reload with this seed to replay the same run">{seed}</a>
+            Seed{' '}
+            <a href={`?seed=${seed}`} title="Reload with this seed">
+              {seed}
+            </a>
           </span>
-          <span class="clock">t = {view?.nowMs !== undefined ? (view.nowMs / 1000).toFixed(2) : '0.00'} s</span>
-          <button type="button" onClick={togglePause}>
+          <span class="clock">t = {view ? (view.nowMs / 1000).toFixed(2) : '0.00'} s</span>
+          <button type="button" onClick={togglePause} aria-pressed={paused}>
             {paused ? 'Resume' : 'Pause'}
           </button>
+          <button type="button" onClick={() => api.step()} disabled={!paused} title="Advance one simulated second">
+            Step 1 s
+          </button>
           <span class="speeds" role="group" aria-label="Speed">
-            {SPEEDS.map((s) => (
-              <button type="button" key={s.label} aria-pressed={speed === s.simMsPerSec} onClick={() => changeSpeed(s.simMsPerSec)}>
-                {s.label}
+            {SPEEDS.map((x) => (
+              <button type="button" key={x} aria-pressed={speed === x} onClick={() => changeSpeed(x)}>
+                {x}×
               </button>
             ))}
           </span>
-          <button type="button" class="script" onClick={runScript} title={`Kill ${SCRIPT_NODE}, restart it after ${SCRIPT_DOWN_MS / 1000} s`}>
-            Run scenario: kill {SCRIPT_NODE}
-          </button>
-          <button type="button" class="script" onClick={runRot} title={`Flip bytes in ${ROT_CHUNKS} chunks on ${ROT_NODE}'s disk without telling anyone`}>
-            Rot {ROT_CHUNKS} chunks on {ROT_NODE}
+          <span class="scenario-pick">
+            <label for="scenario">Scenario</label>
+            <select id="scenario" value={picked} onChange={(e) => setPicked((e.currentTarget as HTMLSelectElement).value)}>
+              {scenarios.map((s) => (
+                <option value={s.name} key={s.name}>
+                  {s.title}
+                </option>
+              ))}
+            </select>
+            <button type="button" class="script" onClick={runScenario}>
+              Run
+            </button>
+          </span>
+          <button type="button" onClick={copyLink} title="A link that replays this run exactly">
+            {copied ? 'Copied' : 'Copy link to this run'}
           </button>
         </section>
+      )}
+      {active && (
+        <p class="scenario-note">
+          <strong>{active.title}.</strong> {active.what}
+        </p>
       )}
 
       {error && <p class="error">{view ? error : `Failed to start: ${error}`}</p>}
       {!view && !error && <p class="loading">{sim ? 'Loading cluster.wasm…' : 'Contacting the gateway…'}</p>}
       {view && (
         <>
-          <ClusterView view={view} sim={sim} onToggle={(n) => (n.crashed ? api.restart(n.id) : api.crash(n.id))} />
+          <HealthBar view={view} />
+          <ClusterView view={view} sim={sim} />
+          <NodeControls api={api} nodes={view.nodes} onError={setError} />
           <div class="panels">
             <Replication view={view} />
             <EventTimeline view={view} sim={sim} />
           </div>
-          <Files api={api} files={view.files} nodes={view.nodes} />
+          <Files
+            api={api}
+            files={view.files}
+            nodes={view.nodes}
+            refresh={`${view.health?.corruptReplicas ?? 0}/${view.health?.repairCompleted ?? 0}`}
+            onError={setError}
+          />
         </>
       )}
+      {tour && <Tour onClose={() => setTour(false)} />}
 
       <footer>
         <a href="https://github.com/insanityatpeak/chunkd">Source on GitHub</a>
         {sim && (
           <>
             {' · '}
-            Running <code>docker compose up</code> locally? Open this page with <code>?gateway=http://localhost:8080</code>.
+            Running <code>docker compose up</code> locally? Open <code>http://localhost:8080</code>.
           </>
         )}
       </footer>

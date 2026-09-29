@@ -11,13 +11,12 @@ const NODE_Y = 150;
 interface Props {
   view: View;
   sim: boolean;
-  onToggle(node: NodeView): void;
 }
 
 // ClusterView draws the metadata server above the storage nodes, coloured by
 // the failure detector's state: alive, suspect after 3 s without a
 // heartbeat, dead after 10 s. A crashed process (sim only) is dashed.
-export function ClusterView({ view, sim, onToggle }: Props) {
+export function ClusterView({ view }: Props) {
   const nodes = view.nodes;
   const slot = W / Math.max(nodes.length, 1);
   const nodeX = (i: number) => slot * i + (slot - NODE_W) / 2;
@@ -30,7 +29,7 @@ export function ClusterView({ view, sim, onToggle }: Props) {
         {nodes.map((n, i) => (
           <line
             key={`l-${n.id}`}
-            class={`link ${status(n)}`}
+            class={`link ${status(n)}${n.partitioned ? ' cut' : ''}`}
             x1={metaX + META_W / 2}
             y1={META_Y + 64}
             x2={nodeX(i) + NODE_W / 2}
@@ -73,20 +72,11 @@ export function ClusterView({ view, sim, onToggle }: Props) {
             <rect class="bar-bg" x="10" y="114" width={NODE_W - 20} height="6" rx="3" />
             <rect class="bar" x="10" y="114" width={((NODE_W - 20) * n.usedBytes) / maxUsed} height="6" rx="3" />
             <text class={`state ${status(n)}`} x={NODE_W / 2} y={NODE_H + 18} text-anchor="middle">
-              {n.crashed ? `process down · ${n.state}` : n.state}
+              {[n.crashed && 'process down', ...faults(n), n.state].filter(Boolean).join(' · ')}
             </text>
           </g>
         ))}
       </svg>
-      {sim && (
-        <div class="node-actions" role="group" aria-label="Fault injection">
-          {nodes.map((n) => (
-            <button type="button" key={n.id} onClick={() => onToggle(n)} aria-pressed={!!n.crashed}>
-              {n.crashed ? `Restart ${n.id}` : `Crash ${n.id}`}
-            </button>
-          ))}
-        </div>
-      )}
       {view.net && (
         <figcaption>
           Network: {view.net.sent} messages, {view.net.dropped} dropped, {view.net.duplicated} duplicated,{' '}
@@ -104,6 +94,15 @@ function status(n: NodeView): Status {
   // crashed process still shows as alive there, so mark it.
   if (n.crashed && n.state === 'alive') return 'crashed';
   return n.state;
+}
+
+// faults lists injected impairments that the detector may not show yet.
+function faults(n: NodeView): string[] {
+  const out: string[] = [];
+  if (n.frozen) out.push('frozen');
+  if (n.partitioned) out.push('cut off');
+  if (n.slowMs) out.push(`+${n.slowMs / 1000} s`);
+  return out;
 }
 
 function scrubPct(n: NodeView): string {
