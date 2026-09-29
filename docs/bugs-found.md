@@ -83,3 +83,13 @@ Related: with 1% message loss a copy command or its completion report can be los
 | Root cause | The client declared a chunk lost only if every replica answered `CodeCorrupt` or sent bad bytes. But the first corrupt report made repair start a copy whose source read hit the second rotten replica, which quarantined itself before the client got there, so the client saw `not_found` from it and concluded nothing. |
 | Fix | A chunk is reported corrupt when at least one replica failed verification and every other replica either failed it too or no longer has the chunk. Commit `da02133`. |
 | Regression test | `TestAllReplicasCorrupt` (`CodeCorrupt`, counted as lost, zero copies). |
+
+## 9. Repair copied chunks whose third replica was still reporting
+
+| | |
+|---|---|
+| Symptom | CI's real-mode `transient-blip-no-repair` failed with 1 repair copy, made 2 s into the scenario, before the blip, for a chunk uploaded a moment earlier. |
+| Repro | CI run on `74d158e`, compose job; `repair.TestUploadGrace`. |
+| Root cause | A commit needs 2 of 3 replicas reported (ADR-0007). The third replica's incremental report travels on its own and can land after the commit. A scan in that gap saw 2 of 3 with no dead holder, so no delay applied, and it copied the chunk at once; the late report then made it over-replicated and a trim followed. The repair delay only excused copies on dead nodes, not copies still being written. |
+| Fix | A freshly committed chunk gets an upload grace (one copy timeout, 10 s) before a missing copy counts; a chunk on its last copy is still repaired at once. HDFS likewise leaves blocks under construction to pending-replication timeouts. Commit `405d1b2`. |
+| Regression test | `repair.TestUploadGrace` (wait inside the grace, copy after it, last copy at once); real mode `transient-blip-no-repair` in CI. |

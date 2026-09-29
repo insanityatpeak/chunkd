@@ -29,6 +29,7 @@ When a node returns after repair has already run, its chunks are over-replicated
 
 - **Detection:** event-driven on detector transitions and block reports, plus a full scan every 30 s that catches anything the events missed.
 - **Delay:** a chunk whose missing copies are on dead nodes waits 20 s from the death. A node returning inside the window cancels its repairs (re-checked at dispatch). A chunk with one live copy left skips the delay.
+- **Upload grace:** a chunk committed in the last 10 s may sit at 2 of 3, because the third replica's report is usually still in flight. A last copy is exempt (`docs/bugs-found.md` #9).
 - **Queue:** heap ordered by live copies, then arrival.
 - **Dispatch:** source prefers alive over suspect, then the least busy; target from the placement rules excluding current holders and busy targets. Bytes come from an integer token bucket (40 MiB/s, 4 MiB burst). Blocked items are skipped, not dropped, so one busy node does not stall the queue.
 - **Completion:** the target's block report. A copy with no report after 10 s (lost command, lost report, dead target) times out, frees its slots, and the chunk is re-assessed.
