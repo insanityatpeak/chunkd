@@ -1,26 +1,37 @@
 # Status
 
-Current phase: **3: integrity, scrubbing and corruption repair** (complete)
+Current phase: **v0.1.0 shipped** (phases 0–3 plus the ship-v1 milestone)
 
-## Phase 3 checklist
+## Ship v0.1.0 checklist
 
-- [x] Nodes verify every chunk before serving it; failures are quarantined (`quarantine/`) and reported through the ordered block-report path
-- [x] Metadata server drops a corrupt copy's location and re-replicates at once (no repair delay); clients send hints and the node's re-check decides
-- [x] `core/scrub`: paced background scrubber (8 MiB/s, a pass every 10 min), with metrics
-- [x] Bit rot as a chaos fault: sim (`RotNode`, safety rule) and real mode (`chunkd debug corrupt` via `docker compose exec`)
-- [x] Invariants: no read ever returns bytes never written to its path; no rotten chunk survives two scrub passes
-- [x] Dashboard: corrupt copies per node, scrub progress, corrupt events in the timeline, scripted "rot 3 chunks on node-2"
-- [x] ADR 0013; bug 8 in `docs/bugs-found.md`; README Known limitations
+- [x] Dashboard:
+  - fault buttons per node: kill, freeze, slow, partition from the metadata server;
+  - click a replica to corrupt it;
+  - disabled placeholders for add node (Phase 6) and kill metadata leader (Phase 5);
+  - 1×–50× speed, pause and step, replication-health bar, filtered timeline;
+  - guided tour, SIMULATION / LIVE badge, read-only at phone width.
+- [x] Shareable scenarios `kill-node`, `corrupt-chunk`, `rack-loss`, `slow-node`, and "Copy link to this run"
+- [x] Gateway serves the dashboard at `/` (LIVE mode) and `/mode.json`
+- [x] `docker compose run --rm demo` and `go run ./tools/task demo`
+- [x] `docs/assets/demo.gif` (vhs, 50 s, 0.3 MiB) and `go run ./tools/task gif`
+- [x] README rewritten: GIF, pitch, D2 architecture SVG (`task diagram`), quickstart, proof table, limitations, layout, roadmap
+- [x] Social preview image, CHANGELOG
+- [x] `trace-check --all`: every commit in history and every tracked file clean
+- [ ] Repo description, topics, website, social image upload; tag and GitHub release (waiting on owner approval)
 
 ## Exit criteria
 
 | Criterion | Evidence |
 |---|---|
-| `TestCorruptChunkDetectedOnRead` (sim + real): read succeeds from another copy, the bad copy is quarantined, RF restored within the bound | Sim, seeds 1–3: RF 3 after 0.25–10.25 s against 15.1 s; real: `corrupt-replicas` (4 rotted copies found, quarantined and replaced) |
-| `TestScrubberFindsCorruption`: never-read corruption found and repaired within one pass interval | Found at 10 min with a 10 min interval; RF restored in the same tick; real mode with 30 s passes |
-| `TestTwoReplicasCorrupt`: RF restored from the single good copy | Sim |
-| `TestAllReplicasCorrupt`: the read fails loudly with a clear error | `corrupt: … every replica … failed verification; the data is lost`; counted as lost; zero copies |
-| Chaos with random corruption, 500 seeds green | CI `go` job; 500 seeds rot about 540 copies, 1000 seeds about 1090 |
+| Fresh clone, only Docker: `docker compose up` → dashboard at `localhost:8080` against the real cluster; `docker compose run --rm demo` passes | Cloned `714a67e` into a clean directory: all containers healthy, `/mode.json` is live, the demo verified the download and trimmed 5 copies in 35 s; the CI compose job runs the same demo |
+| Every scenario link replays identically | Playwright in the CI `web` job loads `kill-node` and `corrupt-chunk` (seed 7) and compares the page's timeline with `TestScenarioGolden`'s, event for event |
+| README renders on GitHub and the GIF plays | Checked on github.com after the push |
+| Lighthouse on the Pages URL: performance ≥ 80, accessibility ≥ 90 | Performance 97, accessibility 100, best practices 96 (LCP 1.3 s, TBT 170 ms, CLS 0.048), run locally against the live URL |
+| `trace-check` passes; release `v0.1.0` published | `trace-check --all`: 170 files, 57 commits clean; release waiting on approval |
+
+## Phase 3 (complete)
+
+Integrity: verify on read, scrubbing, quarantine, corruption repair; ADR 0013. `TestCorruptChunkDetectedOnRead`, `TestScrubberFindsCorruption`, `TestTwoReplicasCorrupt`, `TestAllReplicasCorrupt` and the real-mode `corrupt-replicas` scenario stay in CI.
 
 ## Phase 2 (complete)
 
@@ -32,7 +43,7 @@ Chunked, replicated upload and download; see ADRs 0005–0009. `TestRoundTrip`, 
 
 ## Next
 
-- [ ] Ship v1 (`05-ship-v1`)
+- [ ] Phase 4: deduplication-aware placement and garbage collection (`06-phase4-dedup-gc`)
 - [ ] Acknowledged incremental block reports (removes the up-to-30 s commit delay after a lost report)
 - [ ] Overlap chunk uploads (window of chunks in flight)
 - [ ] Per-step safety check in the chaos harness (real copies never below RF − 1, meta never counts a copy the store lacks); bugs #6 and #7 slipped past the end-state checker

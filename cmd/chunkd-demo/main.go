@@ -116,7 +116,7 @@ func (d *demo) run(size int64) error {
 		return err
 	}
 	d.seq = c.EventSeq
-	d.say("\nkilling %s (holds %d of this file's %d replicas, %d chunks in all)", victim, held[victim], len(st.Chunk)*3, nodeChunks(c, victim))
+	d.say("\nkilling %s (holds %d of this file's %d replicas)", victim, held[victim], len(st.Chunk)*3)
 	if err := d.docker.kill(victim); err != nil {
 		return fmt.Errorf("kill %s: %w", victim, err)
 	}
@@ -190,15 +190,6 @@ func (d *demo) run(size int64) error {
 	d.at("%s alive; %d extra copies trimmed; all chunks at 3 copies", victim, back.Health.RepairTrimmed-trimmed)
 	d.say("\ndone in %.0fs", time.Since(d.start).Seconds())
 	return nil
-}
-
-func nodeChunks(c client.Cluster, id string) int64 {
-	for _, n := range c.Nodes {
-		if n.ID == id {
-			return n.Chunks
-		}
-	}
-	return 0
 }
 
 // until polls the cluster twice a second, passing only new events to ok.
