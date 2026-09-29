@@ -1,6 +1,22 @@
 # Status
 
-Current phase: **v0.1.0 shipped** (phases 0–3 plus the ship-v1 milestone)
+Current phase: **Phase 4 complete** (dedup, versioning, delete, GC), on top of v0.1.0. Next: Phase 5, Raft.
+
+## Phase 4 (complete)
+
+Dedup through logged chunk claims, compare-and-swap versioned commits with opt-in last-writer-wins, soft delete with retention in logical GC epochs and undelete, upload leases, mark-and-sweep GC with a grace period and fenced node-side deletes, and per-epoch refcount reconciliation. ADRs 0014–0016. Dashboard: dedup savings, GC counters, per-file versions with restore, deleted files with undelete, gc and write events, and a shareable `gc` scenario.
+
+| Criterion | Evidence |
+|---|---|
+| `TestDedupSavings`: known overlap stored at the expected size, ratio recorded | 220 MiB logical, 60 MiB distinct, ratio 3.67 (in-place edits); a 1-byte insert dedups nothing, as fixed-size chunking predicts. `docs/benchmarks/dedup.md` |
+| `TestCASConflict`: two commits on the same expected version, exactly one wins | Passes; `TestChaosConcurrentWriters` repeats it over 25 lossy-network seeds, 4 rounds each |
+| `TestGCNoOrphanLeak`: after deletes, retention and 2 GC cycles, stored chunks == referenced chunks | Passes over 5 seeds with edits, a copy sharing every chunk of a deleted file, and deletes; fails at once with the sweep disabled |
+| `TestGCSparesInflightUpload`: an upload stalled past a GC cycle still commits with every chunk | Passes; `TestChaosGCDuringSlowUpload` stalls past the grace plus two sweeps on 25 seeds |
+| Chaos over 1,000 sim seeds, green, with GC invariants | `task chaos --seeds=1000`: 0 failed in 36 s. Every seed ends with `GCSettle` then `AssertCollected` (no orphan, no refcount or claim drift). CI runs 1,000 per push |
+| Scenario links still replay; the new `gc` scenario replays | Playwright (Edge locally, Chromium in CI): `kill-node`, `corrupt-chunk` and `gc` match `TestScenarioGolden` event for event; the older goldens are unchanged |
+| Dashboard works in sim and LIVE | Headless Edge: the sim `gc` scenario shows dedup, versions, undelete and collection; against `docker compose up`, delete and undelete round-trip through the gateway (bugs-found #11 fixed on the way) |
+
+Bugs found: #10 (upload lease shorter than GC grace plus two sweeps), #11 (undelete not routed when the gateway serves the dashboard).
 
 ## Ship v0.1.0 checklist
 
@@ -43,7 +59,8 @@ Chunked, replicated upload and download; see ADRs 0005–0009. `TestRoundTrip`, 
 
 ## Next
 
-- [ ] Phase 4: deduplication-aware placement and garbage collection (`06-phase4-dedup-gc`)
+- [ ] Phase 5: Raft for the metadata server (`07-phase5-raft`). `core/meta` State is the FSM; epochs, claims and leases are already logged ops. GC soft state (`orphanSince`, pending deletes) stays leader-local and resets on leader change. The dashboard's "Kill metadata leader" button becomes real.
+- [ ] Skip trims of chunks a pending upload has claimed (closes the trim-vs-dedup race in Known limitations)
 - [ ] Acknowledged incremental block reports (removes the up-to-30 s commit delay after a lost report)
 - [ ] Overlap chunk uploads (window of chunks in flight)
 - [ ] Per-step safety check in the chaos harness (real copies never below RF − 1, meta never counts a copy the store lacks); bugs #6 and #7 slipped past the end-state checker
