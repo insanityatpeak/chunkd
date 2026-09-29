@@ -1,50 +1,82 @@
 # chunkd
 
+A fault-tolerant distributed file store in Go, in the style of GFS and HDFS.
+
 [![ci](https://github.com/insanityatpeak/chunkd/actions/workflows/ci.yml/badge.svg)](https://github.com/insanityatpeak/chunkd/actions/workflows/ci.yml)
-[![pages](https://github.com/insanityatpeak/chunkd/actions/workflows/pages.yml/badge.svg)](https://insanityatpeak.github.io/chunkd/)
+[![Go](https://img.shields.io/badge/go-1.25%2B-00ADD8)](go.mod)
+[![license: MIT](https://img.shields.io/badge/license-MIT-blue)](LICENSE)
+[![live demo](https://img.shields.io/badge/live%20demo-in%20your%20browser-0f766e)](https://insanityatpeak.github.io/chunkd/)
 
-A fault-tolerant distributed file store in Go, in the style of GFS and HDFS. Files are split into 4 MiB content-addressed chunks, each stored on 3 nodes in different racks, and verified end to end by the client.
+![A storage node is killed; the cluster detects it, re-replicates its chunks, verifies a download, and trims the extra copies when the node returns](docs/assets/demo.gif)
 
-The same core code runs in two modes:
+**[Try it in your browser →](https://insanityatpeak.github.io/chunkd/)** A simulated cluster running the same core code, compiled to WebAssembly. Kill nodes, rot a disk, partition the network, and watch it recover. Nothing to install.
 
-- `real`: separate processes over gRPC, chunks on disk, metadata in a WAL with bbolt snapshots, wall clock.
-- `sim`: one process, in-memory network with loss, duplication, delay and partitions, fake clock, seeded RNG. Every run replays from its seed. It compiles to WebAssembly and runs in the browser.
+chunkd splits files into 4 MiB chunks named by their SHA-256 and keeps three copies of each, on nodes in different racks. A metadata server tracks versions and where every copy lives. It is built to stay correct while things break. A node can crash, freeze, turn slow or come back with an empty disk, and a disk can silently rot bits. Throughout, acknowledged data stays readable, every read is verified end to end, and lost copies are rebuilt within a stated time bound, at a capped rate, without copying anything for a node that only rebooted. Every claim below is a test that runs in CI: 500 seeded chaos schedules on every push in a deterministic simulator that replays any failure from its seed, plus a real-mode suite that kills, freezes and corrupts Docker containers.
 
-**Live demo:** https://insanityatpeak.github.io/chunkd/ (upload a file, see which node holds each chunk, crash a node, download and verify the SHA-256 in your browser). "Run scenario: kill node-3" plays a failure at up to 50× speed: suspect, dead, re-replication back to 3 copies, then trimming when the node returns. "Rot 3 chunks on node-2" flips bytes on a disk without telling anyone, and the scrubber finds and replaces them.
+## Architecture
 
-## Run it
+![Clients talk HTTP to the gateway; the gateway asks the metadata server where chunks go and moves the bytes to and from storage nodes directly; nodes heartbeat and report to the metadata server, which sends repair and trim commands](docs/assets/architecture.svg)
+
+The metadata server is never on the data path. Chunk locations are not stored: nodes report what they hold, as in GFS and HDFS. Design decisions are in [docs/adr](docs/adr), the protocol with sequence diagrams in [docs/design.md](docs/design.md).
+
+## Quickstart
 
 ```
-docker compose up -d --build --wait          # 3 metadata servers, 5 storage nodes over 3 racks, gateway on :8080
+git clone https://github.com/insanityatpeak/chunkd && cd chunkd
+docker compose up -d --build --wait
+```
+
+Open **http://localhost:8080**: the same dashboard, connected to the real cluster (1 metadata server, 5 storage nodes on 3 racks, a gateway). On a small machine, `docker compose --profile small up -d --build --wait` runs 1 metadata server and 3 nodes.
+
+From a Go toolchain:
+
+```
 go run ./cmd/chunkd put ./photo.jpg /photos/photo.jpg
-go run ./cmd/chunkd stat /photos/photo.jpg   # version, SHA-256, replicas per chunk
-go run ./cmd/chunkd get /photos/photo.jpg ./copy.jpg -expect-sha256 <hash>
-go run ./cmd/chunkd cluster
-go run ./tools/task e2e                      # 20 MiB round trip through the gateway
-go run ./tools/task chaos --seeds=500        # 500 seeded fault schedules in the sim
-go run ./tools/task chaos --seed=63 -v       # replay one, with its schedule and logs
-go run ./tools/task chaos --mode=real --short   # kill, blip, rot and freeze containers of the compose cluster
-docker compose exec node-2 chunkd debug corrupt -n 3   # flip bytes in 3 chunk files; watch the scrubber find them
+go run ./cmd/chunkd stat /photos/photo.jpg        # version, SHA-256, replicas per chunk
+go run ./cmd/chunkd get /photos/photo.jpg ./copy.jpg
+go run ./cmd/chunkd cluster status                # detector state, replication, repair
 ```
 
-The dashboard works against this cluster too: open the live demo with `?gateway=http://localhost:8080`.
+## Chaos demo
 
-`docker compose --profile small up` runs 1 metadata server and 3 nodes.
+```
+docker compose run --rm demo
+```
 
-## How it works
+Uploads 20 MiB, kills the node holding the most copies, and prints the failure detector's and the repair scheduler's timeline. Then it downloads with the node still down, checks the SHA-256, restarts the node, and watches the extra copies get trimmed. The demo container kills and starts containers through the Docker socket, which gives it root-equivalent access to Docker on your machine: it is opt-in and local. `go run ./tools/task demo` does the same from a clone.
 
-| | |
-|---|---|
-| Upload | `BeginUpload` (compare-and-swap on the version, placement per chunk) → client sends each chunk to 3 nodes in parallel → `CommitUpload` once at least 2 replicas per chunk are reported by the nodes. The version is invisible until that single commit. |
-| Download | Metadata returns chunk IDs and live replicas; the client fetches each chunk, checks its SHA-256 against the ID, and falls through to the next replica on mismatch or failure; then checks the file's SHA-256. |
-| Metadata | Ops appended to a CRC-framed WAL with fsync, snapshotted to bbolt every 1000 ops. Chunk locations are not stored: nodes report them. |
-| Storage | One file per chunk at `ab/cd/<sha256>`; temp file, fsync, rename, fsync directory. |
-| Failure detection | Heartbeats each second. Suspect after 3 s of silence (still readable, no new replicas), dead after 10 s, back to alive after 3 on-time beats. A stalled metadata server kills nobody ([ADR-0010](docs/adr/0010-failure-detector.md)). |
-| Repair | 20 s after a death, chunks below 3 copies are copied, fewest copies first, 8 at a time, at most 40 MiB/s. The target pulls from a surviving replica and verifies the hash. Extra copies from a returning node are trimmed ([ADR-0011](docs/adr/0011-re-replication.md)). |
-| Integrity | Nodes check every chunk's SHA-256 before serving it and clients check again. A copy that fails is quarantined and replaced from a good copy at once. A rate-capped scrubber re-reads every chunk each pass, so rot nobody reads is found too ([ADR-0013](docs/adr/0013-integrity-model.md)). |
-| Slow replicas | The client scores nodes by read latency and sends a second read after the p95 (20–500 ms) ([ADR-0012](docs/adr/0012-async-caller-and-hedged-reads.md)). |
+More ways to break it:
 
-Design decisions are in [docs/adr](docs/adr); bugs found by the tests in [docs/bugs-found.md](docs/bugs-found.md); current state in [docs/STATUS.md](docs/STATUS.md); the protocol with sequence diagrams in [docs/design.md](docs/design.md).
+```
+go run ./tools/task chaos --seeds=500                  # 500 random fault schedules in the simulator
+go run ./tools/task chaos --seed=63 -v                 # replay one, with its schedule and logs
+go run ./tools/task chaos --mode=real --short          # kill, blip, rot and freeze real containers
+docker compose exec node-2 chunkd debug corrupt -n 3   # rot 3 chunk files; the scrubber finds them
+```
+
+Shared dashboard links replay exactly: [kill a node](https://insanityatpeak.github.io/chunkd/?seed=7&scenario=kill-node&speed=10), [silent bit rot](https://insanityatpeak.github.io/chunkd/?seed=7&scenario=corrupt-chunk&speed=10), [lose a rack](https://insanityatpeak.github.io/chunkd/?seed=7&scenario=rack-loss&speed=10), [slow node](https://insanityatpeak.github.io/chunkd/?seed=7&scenario=slow-node&speed=10).
+
+## What's proven
+
+| Claim | Test | CI job |
+|---|---|---|
+| Round trips from 0 B to 37 MiB, with chunk and file hashes checked | `e2e.TestRoundTrip` (sim and real processes) | go |
+| An upload is invisible until it commits, and commits only with 2 reported copies | `TestUncommittedInvisible`, `TestCommitRequiresMinReplicas` | go |
+| Commit and delete are safe to repeat when responses are lost or duplicated | `TestCommitAndDeleteAreIdempotent`, `TestUploadsUnderMessageLoss` | go |
+| A crash mid-write never loses an acknowledged metadata op | `TestTornTailRecovers`, `TestCorruptionBeforeTailIsAnError` | go |
+| A dead node's chunks are back at 3 copies within the stated bound | `TestKillNodeRestoresRF` (sim), `kill-node-restores-rf` (containers) | go, compose |
+| A node that only reboots costs zero copies | `TestTransientBlipNoRepair`, `transient-blip-no-repair` | go, compose |
+| Repair never exceeds its concurrency limits and byte rate | `TestRepairThrottle` | go |
+| A slow replica does not slow reads | `TestSlowNodeHedgedRead` (hedged p99 under 200 ms against 4–10 s) | go |
+| A corrupt copy is caught on read, quarantined and replaced | `TestCorruptChunkDetectedOnRead`, `corrupt-replicas` | go, compose |
+| Rot that nobody reads is found within one scrub pass | `TestScrubberFindsCorruption` | go |
+| When every copy is bad, the read fails loudly instead of returning bad bytes | `TestAllReplicasCorrupt` | go |
+| Block reports reordered by the network never drop or resurrect a copy | `TestClusterReportOrdering` | go |
+| Under random faults, acknowledged data stays readable, RF returns within the bound, rot is found, and no read returns bytes never written | 500 chaos seeds per push (20,000 on demand) | go |
+| A seed replays the same run, in Go and in the browser | `TestSameSeedSameTrace`, `TestScenarioGolden` + Playwright replay | go, web |
+| The demo runs with only Docker installed | `docker compose run --rm demo` | compose |
+
+Bugs these tests caught, with root causes and fixes: [docs/bugs-found.md](docs/bugs-found.md).
 
 ## Known limitations
 
@@ -71,6 +103,33 @@ Design decisions are in [docs/adr](docs/adr); bugs found by the tests in [docs/b
 | Placement does not avoid slow nodes; only reads route around them | Hedged reads bound the read cost; writes need 2 of 3 | Feed client latency reports into placement (HDFS slow-node detection) |
 | A trim can race a client write that dedups against the trimmed chunk: the commit may count a copy that is deleted a moment later | The chunk keeps at least RF confirmed copies before the trim, and repair tops it up on the next report or scan | Pin chunks of pending uploads against trims (Phase 4 GC) |
 | Dedup'd writes can leave chunks over-replicated until the next block report | Correct, just extra copies, trimmed on the next report | Dedup-aware placement (Phase 4) |
+
+## Project layout
+
+| Path | Contents |
+|---|---|
+| `internal/core/` | Deterministic logic: chunking, placement, metadata state machine, failure detector, repair scheduler, scrubber, storage node. Imports no network, disk, clock or randomness. |
+| `internal/iface/` | The seams: transport, clock, block store, metadata log, randomness, with conformance suites every implementation must pass |
+| `internal/sim/` | Fake clock, seeded network with loss, duplication, delay, partitions and crashes, in-memory stores, the cluster harness |
+| `internal/real/` | gRPC transport, disk block store, WAL + bbolt metadata log, HTTP gateway, process runtime |
+| `internal/chaos/` | Seeded fault schedules with invariant checks, in the sim and against docker compose |
+| `internal/client/` | The client library the CLI, gateway, tests and browser all use |
+| `cmd/` | `chunkd` (CLI), `chunkd-meta`, `chunkd-node`, `chunkd-gateway`, `chunkd-demo`, `chunkd-chaos`, `chunkd-wasm` |
+| `web/` | Preact + TypeScript dashboard, one UI for the simulation and the real cluster |
+| `deploy/` | Dockerfile, compose file, the GIF's `vhs` tape |
+| `docs/` | ADRs, design, status, bugs found |
+
+Every command runs through `go run ./tools/task <name>`, the same on Windows, Linux and CI; see [CONTRIBUTING.md](CONTRIBUTING.md).
+
+## Roadmap
+
+- [x] Chunked, replicated upload and download with end-to-end verification
+- [x] Failure detection, throttled re-replication, hedged reads
+- [x] Integrity: verify on read, scrubbing, quarantine, corruption repair
+- [ ] High-availability metadata with Raft (replicated log, leader election)
+- [ ] Deduplication-aware placement and garbage collection
+- [ ] Rebalancing when nodes join or leave
+- [ ] Erasure coding for cold data
 
 ## License
 

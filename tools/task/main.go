@@ -32,6 +32,7 @@ var commands = map[string]command{
 	"up":           {"start the compose cluster (--small for 1 meta + 3 nodes)", up},
 	"down":         {"stop the compose cluster (-v also deletes its volumes)", down},
 	"demo":         {"start the compose cluster, kill a node, narrate the repair, verify the download", demo},
+	"diagram":      {"render docs/assets/architecture.svg from its D2 source, in Docker", diagram},
 	"gif":          {"render docs/assets/demo.gif from deploy/demo.tape with vhs in Docker", gif},
 	"chaos":        {"randomized fault scenarios with invariant checks (--seed=N replays one; --seeds=N)", chaos},
 	"e2e":          {"put and get 20 MiB via the compose gateway (--up to start, --down to clean up)", e2e},
@@ -81,6 +82,17 @@ func demo(args []string) error {
 		return err
 	}
 	return goCmd(nil, append([]string{"run", "./cmd/chunkd-demo"}, args...)...)
+}
+
+// diagram renders the README's architecture SVG from its D2 source.
+func diagram([]string) error {
+	wd, err := os.Getwd()
+	if err != nil {
+		return err
+	}
+	return run(nil, "", "docker", "run", "--rm", "-v", wd+":/home/debian/src", "-w", "/home/debian/src",
+		"terrastruct/d2:v0.7.1", "--theme=0", "--dark-theme=200", "--pad=24",
+		"docs/assets/architecture.d2", "docs/assets/architecture.svg")
 }
 
 // gif renders the README GIF: the demo against a live compose cluster,

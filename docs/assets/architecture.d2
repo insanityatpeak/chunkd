@@ -1,0 +1,56 @@
+# chunkd architecture. Render: go run ./tools/task diagram
+vars: {
+  d2-config: {
+    layout-engine: elk
+  }
+}
+direction: down
+
+clients: "chunkd CLI · dashboard" {
+  style.font-size: 20
+}
+
+gateway: "Gateway\nHTTP API + dashboard\nverifies every chunk it reads" {
+  style.font-size: 18
+}
+
+meta: "Metadata server\nnamespace + versions (WAL, bbolt)\nchunk locations from block reports\nfailure detector · repair scheduler" {
+  style.font-size: 18
+}
+
+nodes: "Storage nodes: chunks by SHA-256, verified on read, scrubbed" {
+  style.font-size: 20
+  grid-columns: 3
+  grid-gap: 24
+  r1: rack r1 {
+    style.font-size: 18
+    grid-rows: 2
+    n1: node-1 {style.font-size: 18}
+    n4: node-4 {style.font-size: 18}
+  }
+  r2: rack r2 {
+    style.font-size: 18
+    grid-rows: 2
+    n2: node-2 {style.font-size: 18}
+    n5: node-5 {style.font-size: 18}
+  }
+  r3: rack r3 {
+    style.font-size: 18
+    n3: node-3 {style.font-size: 18}
+  }
+}
+
+clients -> gateway: HTTP {style.font-size: 16}
+gateway -> meta: "begin · commit · stat" {style.font-size: 16}
+gateway <-> nodes: "chunk put / get\n3 replicas in parallel" {
+  style.stroke-width: 3
+  style.font-size: 16
+}
+nodes -> meta: "heartbeats 1 s\nblock reports" {
+  style.stroke-dash: 3
+  style.font-size: 16
+}
+meta -> nodes: "copy · trim" {
+  style.stroke-dash: 3
+  style.font-size: 16
+}
