@@ -57,6 +57,7 @@ func (v repairView) Target(size int64, exclude []iface.NodeID) (iface.NodeID, bo
 // sendCopy tells the target to pull the chunk from the source.
 func (s *Server) sendCopy(c repair.Copy) {
 	src, _ := s.cluster.Node(c.Source)
+	s.copyStarted(c)
 	s.d.Log.Info("repair copy", "copy", c.ID, "chunk", c.Chunk.String()[:12], "from", c.Source, "to", c.Target, "bytes", c.Size)
 	s.d.Net.Send(c.Target, iface.Message{From: s.cfg.ID, Kind: wire.KindReplicate,
 		Body: wire.Marshal(&chunkdv1.ReplicateChunk{CopyId: c.ID, ChunkId: c.Chunk[:], Source: string(c.Source), SourceAddr: src.Addr})})
@@ -64,6 +65,7 @@ func (s *Server) sendCopy(c repair.Copy) {
 
 // sendTrim tells a node to drop its copy of an over-replicated chunk.
 func (s *Server) sendTrim(t repair.Trim) {
+	s.trimSent(t)
 	s.d.Log.Info("trim replica", "trim", t.ID, "chunk", t.Chunk.String()[:12], "node", t.Node)
 	s.d.Net.Send(t.Node, iface.Message{From: s.cfg.ID, Kind: wire.KindDeleteReplica,
 		Body: wire.Marshal(&chunkdv1.DeleteReplica{TrimId: t.ID, ChunkId: t.Chunk[:]})})

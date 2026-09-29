@@ -96,10 +96,34 @@ type Trim struct {
 	Node  iface.NodeID
 }
 
-// Sender delivers the scheduler's decisions to storage nodes.
+// Outcome is how a copy ended.
+type Outcome int
+
+const (
+	Completed Outcome = iota + 1 // the target reported the chunk
+	TimedOut
+	Failed // the target reported an error
+)
+
+func (o Outcome) String() string {
+	switch o {
+	case Completed:
+		return "completed"
+	case TimedOut:
+		return "timed out"
+	case Failed:
+		return "failed"
+	}
+	return "unknown"
+}
+
+// Sender delivers the scheduler's decisions to storage nodes. Done and
+// Trimmed are optional observers of how copies and trims end.
 type Sender struct {
-	Copy func(Copy)
-	Trim func(Trim)
+	Copy    func(Copy)
+	Trim    func(Trim)
+	Done    func(Copy, Outcome)
+	Trimmed func(Trim)
 }
 
 // Stats are cumulative counters plus current gauges.
@@ -351,7 +375,7 @@ func (s *Scheduler) dispatch() {
 		s.clock.AfterFunc(s.cfg.CopyTimeout, func() {
 			if cur := s.inflight[c.Chunk]; cur != nil && cur.ID == c.ID {
 				s.stats.TimedOut++
-				s.finish(c)
+				s.finish(c, TimedOut)
 			}
 		})
 		s.send.Copy(*c)
@@ -438,6 +462,9 @@ func (s *Scheduler) Removed(node iface.NodeID, chunks []iface.ChunkID) {
 		if t, ok := s.trimming[id]; ok && t.Node == node {
 			delete(s.trimming, id)
 			s.stats.Trimmed++
+			if s.send.Trimmed != nil {
+				s.send.Trimmed(t)
+			}
 		}
 	}
 }
@@ -462,8 +489,11 @@ func (s *Scheduler) pickSource(holders []Holder) (iface.NodeID, bool) {
 
 // finish releases a copy's slots and re-queues its chunk if it still needs
 // more replicas.
-func (s *Scheduler) finish(c *Copy) {
+func (s *Scheduler) finish(c *Copy, o Outcome) {
 	delete(s.inflight, c.Chunk)
+	if s.send.Done != nil {
+		s.send.Done(*c, o)
+	}
 	s.src[c.Source]--
 	s.dst[c.Target]--
 	if s.src[c.Source] == 0 {
@@ -498,7 +528,7 @@ func (s *Scheduler) Reported(node iface.NodeID, chunks []iface.ChunkID) {
 		if c := s.inflight[id]; c != nil && c.Target == node {
 			s.stats.Completed++
 			s.stats.Bytes += uint64(c.Size)
-			s.finish(c)
+			s.finish(c, Completed)
 			continue
 		}
 		// A client write that dedups against an existing chunk, or a late
@@ -512,7 +542,7 @@ func (s *Scheduler) Reported(node iface.NodeID, chunks []iface.ChunkID) {
 func (s *Scheduler) Failed(id uint64, chunk iface.ChunkID) {
 	if c := s.inflight[chunk]; c != nil && c.ID == id {
 		s.stats.Failed++
-		s.finish(c)
+		s.finish(c, Failed)
 	}
 }
 

@@ -145,9 +145,13 @@ func (c *Client) Delete(ctx context.Context, path string, expectedVersion uint64
 	return out.Version, err
 }
 
-// Cluster returns the node view.
-func (c *Client) Cluster(ctx context.Context) (client.Cluster, error) {
+// Cluster returns the cluster view with events after eventsAfter.
+func (c *Client) Cluster(ctx context.Context, eventsAfter uint64) (client.Cluster, error) {
 	var out client.Cluster
-	_, err := c.do(ctx, http.MethodGet, c.url("/cluster", nil), nil, 0, &out)
+	q := url.Values{}
+	if eventsAfter != 0 {
+		q.Set("events_after", strconv.FormatUint(eventsAfter, 10))
+	}
+	_, err := c.do(ctx, http.MethodGet, c.url("/cluster", q), nil, 0, &out)
 	return out, err
 }

@@ -115,7 +115,7 @@ func Start(dir string, n int, cfg meta.Config) (*Cluster, error) {
 
 	deadline := time.Now().Add(10 * time.Second)
 	for {
-		info, err := c.Client.Cluster(ctx)
+		info, err := c.Client.Cluster(ctx, 0)
 		alive := 0
 		for _, nd := range info.Nodes {
 			if nd.Alive {

@@ -5,12 +5,13 @@
 //
 //	start(seed)             build a cluster
 //	tick(ms)                advance simulated time
-//	state()                 JSON snapshot
+//	state(afterSeq)         JSON snapshot with timeline events after afterSeq
 //	upload(path, bytes)     JSON manifest; runs the real client, advancing sim time
 //	download(path)          {manifest: JSON, data: Uint8Array}; verified by the client
 //	stat(path)              JSON manifest with replica locations
 //	remove(path)            JSON {version}
-//	crash(node), restart(node)
+//	crash(node), restart(node)  kill a node's process (disk kept); start a new one
+//	scenario(node, downMs)  load demo files if empty, kill node, restart it after downMs
 //
 // Errors come back as {"error": "..."} JSON. The worker only calls tick with
 // a fixed step, so a seed always yields the same state sequence.
@@ -71,7 +72,13 @@ func main() {
 			c.Tick(time.Duration(args[0].Int()) * time.Millisecond)
 			return nil
 		}),
-		"state": needCluster(func([]js.Value) any { return jsonValue(c.State(), nil) }),
+		"state": needCluster(func(args []js.Value) any {
+			var after uint64
+			if len(args) > 0 && args[0].Type() == js.TypeNumber {
+				after = uint64(args[0].Float())
+			}
+			return jsonValue(c.StateSince(after), nil)
+		}),
 		"upload": needCluster(func(args []js.Value) any {
 			data := make([]byte, args[1].Get("length").Int())
 			js.CopyBytesToGo(data, args[1])
@@ -96,12 +103,16 @@ func main() {
 			return jsonValue(map[string]uint64{"version": v}, err)
 		}),
 		"crash": needCluster(func(args []js.Value) any {
-			c.Net().Crash(iface.NodeID(args[0].String()))
+			c.KillNode(iface.NodeID(args[0].String()))
 			return nil
 		}),
 		"restart": needCluster(func(args []js.Value) any {
-			c.Net().Restart(iface.NodeID(args[0].String()))
+			c.RestartNode(iface.NodeID(args[0].String()))
 			return nil
+		}),
+		"scenario": needCluster(func(args []js.Value) any {
+			err := c.ScriptKillNode(iface.NodeID(args[0].String()), time.Duration(args[1].Int())*time.Millisecond)
+			return jsonValue(struct{}{}, err)
 		}),
 	}
 	js.Global().Set("chunkd", js.ValueOf(api))

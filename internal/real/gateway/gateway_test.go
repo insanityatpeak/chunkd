@@ -53,10 +53,10 @@ func (l *locked) Delete(ctx context.Context, p string, v uint64) (uint64, error)
 	defer l.mu.Unlock()
 	return l.api.Delete(ctx, p, v)
 }
-func (l *locked) Cluster(ctx context.Context) (client.Cluster, error) {
+func (l *locked) Cluster(ctx context.Context, after uint64) (client.Cluster, error) {
 	l.mu.Lock()
 	defer l.mu.Unlock()
-	return l.api.Cluster(ctx)
+	return l.api.Cluster(ctx, after)
 }
 
 func setup(t *testing.T) (*httptest.Server, *cluster.Cluster) {
@@ -108,9 +108,19 @@ func TestGatewayRoundTrip(t *testing.T) {
 	if err != nil || len(files) != 1 || files[0].Path != "/docs/a.bin" {
 		t.Fatalf("list %+v %v", files, err)
 	}
-	c, err := api.Cluster(ctx)
+	c, err := api.Cluster(ctx, 0)
 	if err != nil || len(c.Nodes) != 5 || c.Files != 1 {
 		t.Fatalf("cluster %+v %v", c, err)
+	}
+	if len(c.FileHealth) != 1 || c.FileHealth[0].Chunks != 5 || c.FileHealth[0].MinLive < 2 {
+		t.Fatalf("file health %+v", c.FileHealth)
+	}
+	// Five joins on the timeline; asking after the latest returns none.
+	if len(c.Events) < 5 || c.Events[len(c.Events)-1].Seq != c.EventSeq {
+		t.Fatalf("events %+v, latest %d", c.Events, c.EventSeq)
+	}
+	if again, err := api.Cluster(ctx, c.EventSeq); err != nil || len(again.Events) != 0 || again.EventSeq < c.EventSeq {
+		t.Fatalf("events after %d: %+v %v", c.EventSeq, again.Events, err)
 	}
 
 	// Compare-and-swap through HTTP: stale expected version is a conflict.
@@ -138,6 +148,7 @@ func TestGatewayStatusCodes(t *testing.T) {
 		{"POST", "/files/x", strings.NewReader("abc"), true, http.StatusLengthRequired},
 		{"POST", "/files/x?expected=zz", strings.NewReader("abc"), false, http.StatusBadRequest},
 		{"DELETE", "/files/missing", nil, false, http.StatusNotFound},
+		{"GET", "/cluster?events_after=-1", nil, false, http.StatusBadRequest},
 		{"OPTIONS", "/files/x", nil, false, http.StatusNoContent},
 	}
 	for _, tt := range tests {

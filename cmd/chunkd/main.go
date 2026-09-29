@@ -107,7 +107,7 @@ func main() {
 		}
 	case cmd == "cluster" && (len(args) == 1 || len(args) == 2 && args[1] == "status"):
 		var c client.Cluster
-		if c, err = api.Cluster(ctx); err == nil {
+		if c, err = api.Cluster(ctx, 0); err == nil {
 			out.cluster(c)
 		}
 	case cmd == "ping" && len(args) == 2:

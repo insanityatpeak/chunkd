@@ -107,6 +107,7 @@ export function Files({ api, files, nodes }: Props) {
               <th>Version</th>
               <th>Size</th>
               <th>Chunks</th>
+              <th title="Fewest copies of any chunk on alive nodes, of 3">Replicas</th>
               <th />
             </tr>
           </thead>
@@ -121,6 +122,9 @@ export function Files({ api, files, nodes }: Props) {
                 <td>v{f.version}</td>
                 <td>{formatBytes(f.size)}</td>
                 <td>{f.chunks}</td>
+                <td>
+                  <Replicas file={f} />
+                </td>
                 <td class="actions">
                   <button type="button" onClick={() => onDownload(f.path)} disabled={!!busy}>
                     Download
@@ -145,6 +149,24 @@ export function Files({ api, files, nodes }: Props) {
         </p>
       )}
     </section>
+  );
+}
+
+const RF = 3;
+
+// Replicas is the file's weakest chunk: RF copies is healthy, fewer is
+// under-replicated (repair pending), none alive means reads use suspect
+// nodes or fail.
+function Replicas({ file }: { file: FileInfo }) {
+  if (file.minLive === undefined) return <span class="muted">–</span>;
+  if (file.chunks === 0) return <span class="rep ok">empty</span>;
+  const cls = file.minLive === 0 ? 'lost' : file.minLive < RF ? 'under' : 'ok';
+  const detail = file.underReplicated ? `, ${file.underReplicated} of ${file.chunks} chunks below ${RF}` : '';
+  return (
+    <span class={`rep ${cls}`} title={`fewest alive copies ${file.minLive}${detail}`}>
+      {file.minLive}/{RF}
+      {file.underReplicated ? ` · ${file.underReplicated} low` : ''}
+    </span>
   );
 }
 

@@ -95,6 +95,6 @@ func (t *Target) Delete(path string) error {
 func (t *Target) Health() (client.Health, error) {
 	c, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
-	cl, err := t.api.Cluster(c)
+	cl, err := t.api.Cluster(c, 0)
 	return cl.Health, err
 }

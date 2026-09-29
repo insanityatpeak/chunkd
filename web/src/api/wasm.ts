@@ -84,6 +84,10 @@ export class WasmClusterAPI implements ClusterAPI {
     void this.call('restart', [node]);
   }
 
+  async scenario(node: string, downMs: number): Promise<void> {
+    await this.call('scenario', [node, downMs]);
+  }
+
   dispose() {
     this.worker.terminate();
     this.subs.clear();

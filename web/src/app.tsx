@@ -4,13 +4,16 @@ import { HttpClusterAPI } from './api/http';
 import { WasmClusterAPI } from './api/wasm';
 import { ClusterView } from './cluster-view';
 import { Files } from './files';
+import { Replication } from './repair';
+import { EventTimeline } from './timeline';
 
-const SPEEDS = [
-  { label: '0.5×', simMsPerSec: 500 },
-  { label: '1×', simMsPerSec: 1000 },
-  { label: '4×', simMsPerSec: 4000 },
-  { label: '16×', simMsPerSec: 16000 },
-];
+const SPEEDS = [1, 5, 10, 25, 50].map((x) => ({ label: `${x}×`, simMsPerSec: x * 1000 }));
+
+// The scripted failure: node-3 stays down 90 s, past dead (10 s) plus the
+// repair delay (20 s), so the run shows re-replication and then the trims
+// after it returns.
+const SCRIPT_NODE = 'node-3';
+const SCRIPT_DOWN_MS = 90_000;
 
 const params = new URLSearchParams(location.search);
 
@@ -38,7 +41,9 @@ export function App() {
 
   useEffect(() => {
     // Go encodes empty slices as null; normalise once here.
-    const unsub = api.subscribe((v) => setView({ ...v, nodes: v.nodes ?? [], files: v.files ?? [] }));
+    const unsub = api.subscribe((v) =>
+      setView({ ...v, nodes: v.nodes ?? [], files: v.files ?? [], copies: v.copies ?? [], timeline: v.timeline ?? [] }),
+    );
     api.start(seed).catch((e: Error) => setError(e.message));
     return () => {
       unsub();
@@ -54,6 +59,10 @@ export function App() {
   const changeSpeed = (v: number) => {
     api.setSpeed(v);
     setSpeed(v);
+  };
+  const runScript = () => {
+    setError(null);
+    api.scenario(SCRIPT_NODE, SCRIPT_DOWN_MS).catch((e: Error) => setError(e.message));
   };
 
   return (
@@ -90,14 +99,21 @@ export function App() {
               </button>
             ))}
           </span>
+          <button type="button" class="script" onClick={runScript} title={`Kill ${SCRIPT_NODE}, restart it after ${SCRIPT_DOWN_MS / 1000} s`}>
+            Run scenario: kill {SCRIPT_NODE}
+          </button>
         </section>
       )}
 
-      {error && <p class="error">Failed to start: {error}</p>}
+      {error && <p class="error">{view ? error : `Failed to start: ${error}`}</p>}
       {!view && !error && <p class="loading">{sim ? 'Loading cluster.wasm…' : 'Contacting the gateway…'}</p>}
       {view && (
         <>
           <ClusterView view={view} sim={sim} onToggle={(n) => (n.crashed ? api.restart(n.id) : api.crash(n.id))} />
+          <div class="panels">
+            <Replication view={view} />
+            <EventTimeline view={view} sim={sim} />
+          </div>
           <Files api={api} files={view.files} nodes={view.nodes} />
         </>
       )}

@@ -54,6 +54,7 @@ type Server struct {
 	repair    *repair.Scheduler
 	applied   iface.Index
 	sinceSnap int
+	events    events
 }
 
 // NewServer recovers durable state: the latest snapshot, then every WAL
@@ -73,7 +74,7 @@ func NewServer(ctx context.Context, d Deps, cfg Config) (*Server, error) {
 	s := &Server{d: d, cfg: cfg, state: state, cluster: NewCluster(cfg.Detector), applied: at}
 	rc := cfg.Repair
 	rc.Replicas = cfg.Replicas
-	s.repair = repair.New(rc, d.Clock, repairView{s}, repair.Sender{Copy: s.sendCopy, Trim: s.sendTrim})
+	s.repair = repair.New(rc, d.Clock, repairView{s}, repair.Sender{Copy: s.sendCopy, Trim: s.sendTrim, Done: s.copyDone, Trimmed: s.trimmed})
 	err = d.Store.Replay(ctx, at+1, func(i iface.Index, b []byte) error {
 		var op chunkdv1.Op
 		if err := proto.Unmarshal(b, &op); err != nil {
@@ -120,6 +121,7 @@ func (s *Server) tick() {
 }
 
 func (s *Server) transition(tr detector.Transition) {
+	s.nodeEvent(tr)
 	if tr.From == 0 {
 		s.d.Log.Info("node joined", "node", tr.Node)
 		return
@@ -372,16 +374,40 @@ func (s *Server) list(m iface.Message, respond iface.Responder) {
 	respond(wire.Marshal(resp), nil)
 }
 
-func (s *Server) clusterInfo(_ iface.Message, respond iface.Responder) {
-	resp := &chunkdv1.ClusterResponse{}
+func (s *Server) clusterInfo(m iface.Message, respond iface.Responder) {
+	var req chunkdv1.ClusterRequest
+	if err := wire.Decode(m.Body, &req); err != nil {
+		respond(nil, err)
+		return
+	}
+	respond(wire.Marshal(s.ClusterView(req.GetEventsAfter())), nil)
+}
+
+// ClusterView is everything the dashboard shows: nodes, replication health
+// per chunk and per file, copies in flight, and events after eventsAfter.
+// The sim reads it directly; real mode reads it through the cluster RPC.
+// O(chunks); called about once a second.
+func (s *Server) ClusterView(eventsAfter uint64) *chunkdv1.ClusterResponse {
+	now := s.d.Clock.Now()
+	ms := func(t iface.Instant) int64 { return int64(t.Sub(0) / time.Millisecond) }
+	resp := &chunkdv1.ClusterResponse{NowMs: ms(now)}
 	for _, n := range s.cluster.Nodes() {
 		resp.Nodes = append(resp.Nodes, &chunkdv1.NodeInfo{Id: string(n.ID), Rack: n.Rack, Addr: n.Addr, UsedBytes: n.Used,
 			ChunkCount: n.Chunks, Alive: s.cluster.Alive(n.ID), Draining: n.Draining, State: n.State.String(),
-			HeartbeatAgeMs: int64(s.d.Clock.Now().Sub(n.LastSeen) / time.Millisecond)})
+			HeartbeatAgeMs: int64(now.Sub(n.LastSeen) / time.Millisecond)})
 	}
 	for _, e := range s.state.List("/") {
 		resp.Files++
 		resp.LogicalBytes += e.Size
+		fh := &chunkdv1.FileHealth{Path: e.Path, Chunks: int32(len(e.Chunks)), MinLive: int32(s.cfg.Replicas)}
+		for _, id := range e.Chunks {
+			live := int32(len(s.liveLocations(id)))
+			fh.MinLive = min(fh.MinLive, live)
+			if live < int32(s.cfg.Replicas) {
+				fh.UnderReplicated++
+			}
+		}
+		resp.FileHealth = append(resp.FileHealth, fh)
 	}
 	h := s.Health()
 	resp.Health = &chunkdv1.ClusterHealth{Chunks: int64(h.Chunks), UnderReplicated: int64(h.UnderReplicated), OverReplicated: int64(h.OverReplicated),
@@ -391,5 +417,14 @@ func (s *Server) clusterInfo(_ iface.Message, respond iface.Responder) {
 	for _, n := range h.Replicas {
 		resp.Health.Replicas = append(resp.Health.Replicas, int64(n))
 	}
-	respond(wire.Marshal(resp), nil)
+	for _, c := range s.repair.InFlight() {
+		resp.Copies = append(resp.Copies, &chunkdv1.RepairCopy{Id: c.ID, ChunkId: c.Chunk[:], Source: string(c.Source), Target: string(c.Target),
+			Bytes: c.Size, StartedMs: ms(c.Started)})
+	}
+	evs, latest := s.Events(eventsAfter)
+	resp.EventSeq = latest
+	for _, e := range evs {
+		resp.Events = append(resp.Events, &chunkdv1.Event{Seq: e.Seq, AtMs: ms(e.At), Kind: e.Kind, Node: string(e.Node), Text: e.Text})
+	}
+	return resp
 }

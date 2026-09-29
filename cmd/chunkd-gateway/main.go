@@ -33,7 +33,7 @@ func main() {
 		p.Healthy = func() error {
 			ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
 			defer cancel()
-			if _, err := api.Cluster(ctx); err != nil {
+			if _, err := api.Cluster(ctx, 0); err != nil {
 				return fmt.Errorf("metadata server unreachable: %w", err)
 			}
 			return nil

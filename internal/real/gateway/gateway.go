@@ -26,7 +26,7 @@ const (
 //	GET    /files/{path}?manifest=1 metadata and chunk layout
 //	GET    /files?prefix=/p         list
 //	DELETE /files/{path}            tombstone; ?expected=N
-//	GET    /cluster                 nodes and totals
+//	GET    /cluster                 nodes, health, copies; ?events_after=N
 func Handler(api client.API, log *slog.Logger) http.Handler {
 	h := &handler{api: api, log: log}
 	mux := http.NewServeMux()
@@ -135,7 +135,16 @@ func (h *handler) delete(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h *handler) cluster(w http.ResponseWriter, r *http.Request) {
-	c, err := h.api.Cluster(r.Context())
+	var after uint64
+	if e := r.URL.Query().Get("events_after"); e != "" {
+		v, err := strconv.ParseUint(e, 10, 64)
+		if err != nil {
+			writeError(w, iface.Errorf(iface.CodeInvalid, "bad events_after %q", e), 0)
+			return
+		}
+		after = v
+	}
+	c, err := h.api.Cluster(r.Context(), after)
 	if err != nil {
 		writeError(w, err, 0)
 		return

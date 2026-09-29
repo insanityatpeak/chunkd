@@ -1,6 +1,6 @@
 /// <reference lib="webworker" />
 import { STEP_MS, type FromWorker, type Method, type ToWorker } from './api/protocol';
-import type { ClusterView } from './api/cluster';
+import { Timeline, type ClusterView, type TimelineEvent } from './api/cluster';
 
 declare const self: DedicatedWorkerGlobalScope;
 
@@ -12,14 +12,18 @@ interface GoRuntime {
 interface ChunkdGlobal {
   start(seed: number): void;
   tick(ms: number): void;
-  state(): string;
+  state(afterSeq: number): string;
   upload(path: string, data: Uint8Array): string;
   download(path: string): { manifest: string; data?: Uint8Array };
   stat(path: string): string;
   remove(path: string): string;
   crash(node: string): void;
   restart(node: string): void;
+  scenario(node: string, downMs: number): string;
 }
+
+// SimState is cluster.State in Go; events arrive incrementally by seq.
+type SimState = Omit<ClusterView, 'timeline'> & { events: TimelineEvent[] | null; eventSeq: number };
 
 const g = globalThis as unknown as { Go: new () => GoRuntime; chunkd?: ChunkdGlobal };
 
@@ -28,6 +32,7 @@ let simMsPerSec = 1000;
 let running = false;
 let timer: ReturnType<typeof setInterval> | undefined;
 let owed = 0; // fractional steps carried between frames
+const timeline = new Timeline();
 
 function post(m: FromWorker, transfer: Transferable[] = []) {
   self.postMessage(m, transfer);
@@ -61,8 +66,10 @@ function frame() {
 }
 
 function publish() {
-  const raw = g.chunkd?.state();
-  if (raw) post({ type: 'state', state: JSON.parse(raw) as ClusterView });
+  const raw = g.chunkd?.state(timeline.seq);
+  if (!raw) return;
+  const { events, eventSeq, ...rest } = JSON.parse(raw) as SimState;
+  post({ type: 'state', state: { ...rest, timeline: timeline.merge(events, eventSeq) } });
 }
 
 // Go returns JSON; errors arrive as {"error": ..., "code": ...}.
@@ -95,6 +102,8 @@ function call(method: Method, args: unknown[]): { value: unknown; transfer: Tran
     case 'restart':
       api.restart(a);
       return { value: null, transfer: [] };
+    case 'scenario':
+      return { value: parse(api.scenario(a, args[1] as number)), transfer: [] };
   }
 }
 
@@ -106,6 +115,7 @@ self.onmessage = async (e: MessageEvent<ToWorker>) => {
         if (!g.chunkd) await load(m.baseUrl);
         g.chunkd!.start(m.seed);
         owed = 0;
+        timeline.reset();
         running = true;
         timer ??= setInterval(frame, FRAME_MS);
         post({ type: 'ready' });

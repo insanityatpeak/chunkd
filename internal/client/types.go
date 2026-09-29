@@ -72,12 +72,47 @@ type Health struct {
 	DetectorStalls  uint64  `json:"detectorStalls"`
 }
 
-// Cluster is the metadata server's view of the cluster.
+// FileHealth is one committed file's replication state.
+type FileHealth struct {
+	Path            string `json:"path"`
+	Chunks          int    `json:"chunks"`
+	UnderReplicated int    `json:"underReplicated"`
+	MinLive         int    `json:"minLive"` // fewest alive copies of any chunk
+}
+
+// RepairCopy is one re-replication in flight.
+type RepairCopy struct {
+	ID        uint64 `json:"id"`
+	Chunk     string `json:"chunk"`
+	Source    string `json:"source"`
+	Target    string `json:"target"`
+	Bytes     int64  `json:"bytes"`
+	StartedMs int64  `json:"startedMs"`
+}
+
+// Event is one entry of the metadata server's recent-event timeline.
+type Event struct {
+	Seq  uint64 `json:"seq"`
+	AtMs int64  `json:"atMs"`
+	Kind string `json:"kind"` // node, copy or trim
+	Node string `json:"node"`
+	Text string `json:"text"`
+}
+
+// Cluster is the metadata server's view of the cluster. Every *Ms instant
+// is on the metadata server's clock, whose current reading is NowMs.
 type Cluster struct {
-	Nodes        []NodeInfo `json:"nodes"`
-	Files        int64      `json:"files"`
-	LogicalBytes int64      `json:"logicalBytes"`
-	Health       Health     `json:"health"`
+	NowMs        int64        `json:"nowMs"`
+	Nodes        []NodeInfo   `json:"nodes"`
+	Files        int64        `json:"files"`
+	LogicalBytes int64        `json:"logicalBytes"`
+	Health       Health       `json:"health"`
+	FileHealth   []FileHealth `json:"fileHealth"`
+	Copies       []RepairCopy `json:"copies"`
+	// Events after the requested seq; EventSeq below that seq means the
+	// metadata server restarted and its timeline began again.
+	Events   []Event `json:"events"`
+	EventSeq uint64  `json:"eventSeq"`
 }
 
 // PutOptions controls version checks on upload.
@@ -98,7 +133,8 @@ type API interface {
 	Stat(ctx context.Context, path string) (Manifest, error)
 	List(ctx context.Context, prefix string) ([]FileInfo, error)
 	Delete(ctx context.Context, path string, expectedVersion uint64) (uint64, error)
-	Cluster(ctx context.Context) (Cluster, error)
+	// Cluster returns the cluster view with timeline events after eventsAfter.
+	Cluster(ctx context.Context, eventsAfter uint64) (Cluster, error)
 }
 
 // ManifestWriter is an io.Writer that wants the manifest before the first

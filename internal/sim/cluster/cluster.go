@@ -163,3 +163,25 @@ func (c *Cluster) Config() Config { return c.cfg }
 
 // NewCaller returns a client endpoint on the sim network.
 func (c *Cluster) NewCaller(id iface.NodeID) *sim.Caller { return c.net.NewCaller(id, c.cfg.CallTimeout) }
+
+// ScriptKillNode is the dashboard's scripted failure: load 8 files of 5 MiB
+// if the cluster holds none, kill id now and restart it after down, all on
+// the simulation clock so a seed replays it exactly. With down above dead
+// (10 s) plus the repair delay (20 s), the timeline shows suspect, dead,
+// re-replication to RF 3, the node's return and the trims.
+func (c *Cluster) ScriptKillNode(id iface.NodeID, down time.Duration) error {
+	if len(c.meta.State().List("/")) == 0 {
+		for i := range 8 {
+			if _, _, err := c.UploadRandom(fmt.Sprintf("/demo/file-%d.bin", i), 5<<20); err != nil {
+				return err
+			}
+		}
+	}
+	c.KillNode(id)
+	c.clock.AfterFunc(down, func() {
+		if c.net.Crashed(id) {
+			c.RestartNode(id)
+		}
+	})
+	return nil
+}

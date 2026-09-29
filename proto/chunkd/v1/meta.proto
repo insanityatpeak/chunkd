@@ -188,13 +188,51 @@ message NodeInfo {
   int64 heartbeat_age_ms = 9;
 }
 
-message ClusterRequest {}
+message ClusterRequest {
+  // Return timeline events with seq > events_after.
+  uint64 events_after = 1;
+}
 
 message ClusterResponse {
   repeated NodeInfo nodes = 1;
   int64 files = 2;
   int64 logical_bytes = 3;
   ClusterHealth health = 4;
+  repeated FileHealth file_health = 5;
+  repeated RepairCopy copies = 6;
+  repeated Event events = 7;
+  // Latest event seq; below events_after after a metadata server restart.
+  uint64 event_seq = 8;
+  // The metadata server's clock, the reference for every *_ms instant.
+  int64 now_ms = 9;
+}
+
+// FileHealth is one committed file's replication state.
+message FileHealth {
+  string path = 1;
+  int32 chunks = 2;
+  int32 under_replicated = 3;
+  // Fewest copies on alive nodes across the file's chunks.
+  int32 min_live = 4;
+}
+
+// RepairCopy is one re-replication in flight.
+message RepairCopy {
+  uint64 id = 1;
+  bytes chunk_id = 2;
+  string source = 3;
+  string target = 4;
+  int64 bytes = 5;
+  int64 started_ms = 6;
+}
+
+// Event is one entry of the metadata server's recent-event ring.
+message Event {
+  uint64 seq = 1;
+  int64 at_ms = 2;
+  string kind = 3;
+  string node = 4;
+  string text = 5;
 }
 
 // ClusterHealth is replication state across all wanted chunks.

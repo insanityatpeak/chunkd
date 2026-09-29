@@ -4,7 +4,7 @@ import { formatBytes } from './verify';
 const W = 760;
 const META_W = 200;
 const NODE_W = 132;
-const NODE_H = 96;
+const NODE_H = 112;
 const META_Y = 12;
 const NODE_Y = 150;
 
@@ -14,9 +14,9 @@ interface Props {
   onToggle(node: NodeView): void;
 }
 
-// ClusterView draws the metadata server above the storage nodes. A link is
-// solid while the metadata server hears the node's heartbeats and dashed
-// once it stops.
+// ClusterView draws the metadata server above the storage nodes, coloured by
+// the failure detector's state: alive, suspect after 3 s without a
+// heartbeat, dead after 10 s. A crashed process (sim only) is dashed.
 export function ClusterView({ view, sim, onToggle }: Props) {
   const nodes = view.nodes;
   const slot = W / Math.max(nodes.length, 1);
@@ -62,10 +62,13 @@ export function ClusterView({ view, sim, onToggle }: Props) {
             <text class="stat" x="10" y="66">
               {formatBytes(n.usedBytes)}
             </text>
-            <rect class="bar-bg" x="10" y="78" width={NODE_W - 20} height="6" rx="3" />
-            <rect class="bar" x="10" y="78" width={((NODE_W - 20) * n.usedBytes) / maxUsed} height="6" rx="3" />
+            <text class={`sub hb ${status(n)}`} x="10" y="86">
+              heartbeat {formatAge(n.heartbeatAgeMs)} ago
+            </text>
+            <rect class="bar-bg" x="10" y="96" width={NODE_W - 20} height="6" rx="3" />
+            <rect class="bar" x="10" y="96" width={((NODE_W - 20) * n.usedBytes) / maxUsed} height="6" rx="3" />
             <text class={`state ${status(n)}`} x={NODE_W / 2} y={NODE_H + 18} text-anchor="middle">
-              {LABEL[status(n)]}
+              {n.crashed ? `process down · ${n.state}` : n.state}
             </text>
           </g>
         ))}
@@ -89,11 +92,17 @@ export function ClusterView({ view, sim, onToggle }: Props) {
   );
 }
 
-type Status = 'alive' | 'dead' | 'crashed';
-
-const LABEL: Record<Status, string> = { alive: 'alive', dead: 'missed heartbeats', crashed: 'crashed' };
+type Status = NodeView['state'] | 'crashed';
 
 function status(n: NodeView): Status {
-  if (n.crashed) return 'crashed';
-  return n.alive ? 'alive' : 'dead';
+  // The metadata server's view wins once it has noticed; until then a
+  // crashed process still shows as alive there, so mark it.
+  if (n.crashed && n.state === 'alive') return 'crashed';
+  return n.state;
+}
+
+function formatAge(ms: number): string {
+  if (ms < 10_000) return `${(ms / 1000).toFixed(1)} s`;
+  if (ms < 120_000) return `${Math.round(ms / 1000)} s`;
+  return `${Math.round(ms / 60_000)} min`;
 }

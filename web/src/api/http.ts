@@ -1,7 +1,30 @@
-import { ChunkdError, type ClusterAPI, type ClusterView, type Download, type FileInfo, type Manifest, type NodeView } from './cluster';
+import {
+  ChunkdError,
+  Timeline,
+  type ClusterAPI,
+  type ClusterView,
+  type Download,
+  type FileInfo,
+  type Health,
+  type Manifest,
+  type NodeView,
+  type RepairCopy,
+  type TimelineEvent,
+} from './cluster';
 import { sha256Hex } from '../verify';
 
 const POLL_MS = 1000;
+
+// GatewayCluster is GET /cluster (client.Cluster in Go).
+interface GatewayCluster {
+  nowMs: number;
+  nodes: NodeView[] | null;
+  health: Health;
+  fileHealth: { path: string; underReplicated: number; minLive: number }[] | null;
+  copies: RepairCopy[] | null;
+  events: TimelineEvent[] | null;
+  eventSeq: number;
+}
 
 // HttpClusterAPI talks to a real gateway. It does not trust the gateway: a
 // download is checked chunk by chunk against the manifest's hashes, and the
@@ -11,6 +34,7 @@ export class HttpClusterAPI implements ClusterAPI {
   readonly label: string;
   private subs = new Set<(v: ClusterView) => void>();
   private timer?: ReturnType<typeof setInterval>;
+  private timeline = new Timeline();
 
   constructor(private readonly base: string) {
     this.base = base.replace(/\/+$/, '');
@@ -29,10 +53,18 @@ export class HttpClusterAPI implements ClusterAPI {
 
   private async poll() {
     const [cluster, files] = await Promise.all([
-      this.json<{ nodes: NodeView[] | null }>('/cluster'),
+      this.json<GatewayCluster>(`/cluster?events_after=${this.timeline.seq}`),
       this.json<FileInfo[] | null>('/files?prefix=/'),
     ]);
-    const view: ClusterView = { nodes: cluster.nodes ?? [], files: files ?? [] };
+    const health = new Map((cluster.fileHealth ?? []).map((f) => [f.path, f]));
+    const view: ClusterView = {
+      nowMs: cluster.nowMs,
+      nodes: cluster.nodes ?? [],
+      files: (files ?? []).map((f) => ({ ...f, ...health.get(f.path), path: f.path })),
+      health: cluster.health,
+      copies: cluster.copies ?? [],
+      timeline: this.timeline.merge(cluster.events, cluster.eventSeq),
+    };
     this.subs.forEach((fn) => fn(view));
   }
 
@@ -82,6 +114,9 @@ export class HttpClusterAPI implements ClusterAPI {
   setSpeed(_simMsPerSec: number) {}
   crash(_node: string) {}
   restart(_node: string) {}
+  scenario(_node: string, _downMs: number): Promise<void> {
+    return Promise.reject(new ChunkdError('scripted faults run in the simulation only; use docker compose kill', 'unimplemented'));
+  }
 
   dispose() {
     clearInterval(this.timer);

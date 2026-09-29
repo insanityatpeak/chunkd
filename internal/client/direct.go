@@ -346,13 +346,20 @@ func (c *Direct) Delete(ctx context.Context, path string, expectedVersion uint64
 	return resp.GetVersion(), err
 }
 
-// Cluster returns the metadata server's view of the nodes.
-func (c *Direct) Cluster(ctx context.Context) (Cluster, error) {
+// Cluster returns the metadata server's view of the cluster.
+func (c *Direct) Cluster(ctx context.Context, eventsAfter uint64) (Cluster, error) {
 	var resp chunkdv1.ClusterResponse
-	if err := c.meta(ctx, wire.KindCluster, &chunkdv1.ClusterRequest{}, &resp); err != nil {
+	if err := c.meta(ctx, wire.KindCluster, &chunkdv1.ClusterRequest{EventsAfter: eventsAfter}, &resp); err != nil {
 		return Cluster{}, err
 	}
-	out := Cluster{Files: resp.GetFiles(), LogicalBytes: resp.GetLogicalBytes()}
+	return ClusterFromProto(&resp), nil
+}
+
+// ClusterFromProto converts the metadata server's cluster view. Slices are
+// never nil, so JSON carries [] rather than null.
+func ClusterFromProto(resp *chunkdv1.ClusterResponse) Cluster {
+	out := Cluster{NowMs: resp.GetNowMs(), Files: resp.GetFiles(), LogicalBytes: resp.GetLogicalBytes(), EventSeq: resp.GetEventSeq(),
+		Nodes: []NodeInfo{}, FileHealth: []FileHealth{}, Copies: []RepairCopy{}, Events: []Event{}}
 	for _, n := range resp.GetNodes() {
 		out.Nodes = append(out.Nodes, NodeInfo{ID: n.GetId(), Rack: n.GetRack(), Alive: n.GetAlive(), State: n.GetState(), Draining: n.GetDraining(),
 			UsedBytes: n.GetUsedBytes(), Chunks: n.GetChunkCount(), HeartbeatAgeMs: n.GetHeartbeatAgeMs()})
@@ -362,5 +369,16 @@ func (c *Direct) Cluster(ctx context.Context) (Cluster, error) {
 		Replicas: h.GetReplicas(), RepairQueued: h.GetRepairQueued(), RepairInFlight: h.GetRepairInFlight(), RepairWaiting: h.GetRepairWaiting(),
 		RepairCompleted: h.GetRepairCompleted(), RepairBytes: h.GetRepairBytes(), RepairTrimmed: h.GetRepairTrimmed(),
 		RepairTimedOut: h.GetRepairTimedOut(), RepairFailed: h.GetRepairFailed(), DetectorStalls: h.GetDetectorStalls()}
-	return out, nil
+	for _, f := range resp.GetFileHealth() {
+		out.FileHealth = append(out.FileHealth, FileHealth{Path: f.GetPath(), Chunks: int(f.GetChunks()),
+			UnderReplicated: int(f.GetUnderReplicated()), MinLive: int(f.GetMinLive())})
+	}
+	for _, c := range resp.GetCopies() {
+		out.Copies = append(out.Copies, RepairCopy{ID: c.GetId(), Chunk: hex.EncodeToString(c.GetChunkId()), Source: c.GetSource(),
+			Target: c.GetTarget(), Bytes: c.GetBytes(), StartedMs: c.GetStartedMs()})
+	}
+	for _, e := range resp.GetEvents() {
+		out.Events = append(out.Events, Event{Seq: e.GetSeq(), AtMs: e.GetAtMs(), Kind: e.GetKind(), Node: e.GetNode(), Text: e.GetText()})
+	}
+	return out
 }
