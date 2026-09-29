@@ -38,7 +38,7 @@ When a node returns after repair has already run, its chunks are over-replicated
 
 ## Consequences
 
-- `TestKillNodeRestoresRF`: 196 MiB on the dead node, RF 3 restored in 42.8–44.8 s against a 49.9 s bound (seeds 1–3, about 77 copies each). Real mode: 28 s longest under-replication, 18 copies.
+- `TestKillNodeRestoresRF`: 196 MiB on the dead node, RF 3 restored in 42.8–44.8 s against a 49.9 s bound (seeds 1–3, about 77 copies each). Real mode, 50 files (about 115 MiB): longest under-replication 32 s against 90 s, 97 copies.
 - `TestTransientBlipNoRepair` and `transient-blip-no-repair`: zero copies for 2, 15 and 25 s outages.
 - `TestRepairThrottle`: peaks of 4 in flight, 2 per source, 2 per target, never above the limits.
 - `TestReturningNodeReconciled`, `TestWipedNodeReturnsEmpty`, `TestTrimSafety`, `TestTrimRetrySameVictim`.

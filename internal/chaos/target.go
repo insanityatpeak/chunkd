@@ -220,11 +220,12 @@ func RunTarget(s Scenario, t Target, bound time.Duration, logf func(string, ...a
 // ShortSuite is the real-mode suite CI runs on every push. Timings assume
 // the default detector (dead after 10 s) and repair delay (20 s).
 func ShortSuite() []Scenario {
+	// n files of 0.5 to 4 MiB (+1 byte, so chunk boundaries vary), 200 ms apart.
 	preload := func(n int) []Op {
 		var ops []Op
 		for i := range n {
 			ops = append(ops, Op{At: time.Duration(i) * 200 * time.Millisecond, Kind: Put,
-				Path: fmt.Sprintf("/chaos/f%02d", i), Size: 1 + int64(i+1)*(700<<10)})
+				Path: fmt.Sprintf("/chaos/f%02d", i), Size: 1 + int64(i%8+1)*(512<<10)})
 		}
 		return ops
 	}
@@ -237,12 +238,13 @@ func ShortSuite() []Scenario {
 	}
 	return []Scenario{
 		{
-			// TestKillNodeRestoresRF, real mode: the node stays down well
-			// past dead + delay, so repair must restore RF 3 on the other
-			// four nodes; on return the extra copies are trimmed.
-			Name: "kill-node-restores-rf", Seed: 101, Nodes: 5, Length: 100 * time.Second,
-			Ops:    append(preload(12), reads(10*time.Second, 90*time.Second, 12)...),
-			Faults: []Fault{{At: 8 * time.Second, Kind: Kill, Node: "node-3"}, {At: 85 * time.Second, Kind: Restart, Node: "node-3"}},
+			// TestKillNodeRestoresRF, real mode: 50 files (about 115 MiB),
+			// then the node stays down well past dead + delay, so repair
+			// must restore RF 3 on the other four nodes; on return the
+			// extra copies are trimmed.
+			Name: "kill-node-restores-rf", Seed: 101, Nodes: 5, Length: 120 * time.Second,
+			Ops:    append(preload(50), reads(20*time.Second, 110*time.Second, 50)...),
+			Faults: []Fault{{At: 20 * time.Second, Kind: Kill, Node: "node-3"}, {At: 105 * time.Second, Kind: Restart, Node: "node-3"}},
 		},
 		{
 			// TestTransientBlipNoRepair, real mode: restarted inside the
