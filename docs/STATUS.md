@@ -17,7 +17,7 @@ Current phase: **v0.1.0 shipped** (phases 0–3 plus the ship-v1 milestone)
 - [x] README rewritten: GIF, pitch, D2 architecture SVG (`task diagram`), quickstart, proof table, limitations, layout, roadmap
 - [x] Social preview image, CHANGELOG
 - [x] `trace-check --all`: every commit in history and every tracked file clean
-- [ ] Repo description, topics, website, social image upload; tag and GitHub release (waiting on owner approval)
+- [x] Repo description, topics and website set; tag `v0.1.0` and [GitHub release](https://github.com/insanityatpeak/chunkd/releases/tag/v0.1.0) published (social preview image: uploaded by hand in repo settings)
 
 ## Exit criteria
 
@@ -27,7 +27,7 @@ Current phase: **v0.1.0 shipped** (phases 0–3 plus the ship-v1 milestone)
 | Every scenario link replays identically | Playwright in the CI `web` job loads `kill-node` and `corrupt-chunk` (seed 7) and compares the page's timeline with `TestScenarioGolden`'s, event for event |
 | README renders on GitHub and the GIF plays | Checked on github.com after the push |
 | Lighthouse on the Pages URL: performance ≥ 80, accessibility ≥ 90 | Performance 97, accessibility 100, best practices 96 (LCP 1.3 s, TBT 170 ms, CLS 0.048), run locally against the live URL |
-| `trace-check` passes; release `v0.1.0` published | `trace-check --all`: 170 files, 57 commits clean; release waiting on approval |
+| `trace-check` passes; release `v0.1.0` published | `trace-check --all`: every file and commit clean; [v0.1.0](https://github.com/insanityatpeak/chunkd/releases/tag/v0.1.0) published |
 
 ## Phase 3 (complete)
 
