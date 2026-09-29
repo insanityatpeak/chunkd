@@ -1,0 +1,33 @@
+name: chaos
+
+# Long sim chaos run, on demand: every seed is an independent fault schedule
+# over the same core code the binaries run. A failing seed replays locally
+# with go run ./tools/task chaos --seed=N.
+on:
+  workflow_dispatch:
+    inputs:
+      seeds:
+        description: number of seeds
+        default: '20000'
+      from:
+        description: first seed
+        default: '1'
+
+permissions:
+  contents: read
+
+jobs:
+  sim:
+    runs-on: ubuntu-latest
+    timeout-minutes: 120
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-go@v6
+        with:
+          go-version: '1.27.x'
+          cache-dependency-path: go.sum
+      - name: chaos
+        env:
+          SEEDS: ${{ inputs.seeds }}
+          FROM: ${{ inputs.from }}
+        run: go run ./tools/task chaos --seeds="$SEEDS" --from="$FROM"

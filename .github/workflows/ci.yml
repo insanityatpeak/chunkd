@@ -29,6 +29,8 @@ jobs:
         run: go run ./tools/task lint-imports
       - name: test (race)
         run: go run ./tools/task test
+      - name: chaos, 500 sim seeds (failures print a replay command)
+        run: go run ./tools/task chaos --seeds=500
       - name: wasm size budget
         run: go run ./tools/task wasm
       - name: generated code is up to date
@@ -69,6 +71,8 @@ jobs:
           curl -fsS http://localhost:8080/healthz
       - name: e2e put and get 20 MiB through the gateway
         run: go run ./tools/task e2e
+      - name: real-mode chaos, short suite (kill, blip, freeze)
+        run: go run ./tools/task chaos --mode=real --short
       - name: small profile selects 1 meta + 3 nodes + gateway
         run: |
           docker compose down -v
