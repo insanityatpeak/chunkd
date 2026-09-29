@@ -144,6 +144,10 @@ type VersionInfo struct {
 	Chunks  int    `json:"chunks"`
 	// Deleted marks a tombstone: the path reads as not found from here on.
 	Deleted bool `json:"deleted,omitempty"`
+	// Retired versions were superseded; undelete can restore them until
+	// the metadata epoch reaches ExpiresEpoch.
+	Retired      bool   `json:"retired,omitempty"`
+	ExpiresEpoch uint64 `json:"expiresEpoch,omitempty"`
 }
 
 // API is implemented by the direct client and the HTTP gateway client.
@@ -155,6 +159,9 @@ type API interface {
 	Stat(ctx context.Context, path string) (Manifest, error)
 	List(ctx context.Context, prefix string) ([]FileInfo, error)
 	Delete(ctx context.Context, path string, expectedVersion uint64) (uint64, error)
+	// Undelete restores a retained version of path as its newest version;
+	// version 0 picks the newest one that is not a delete marker.
+	Undelete(ctx context.Context, path string, version uint64) (uint64, error)
 	// Log returns every retained version of path, oldest first.
 	Log(ctx context.Context, path string) ([]VersionInfo, error)
 	// StatVersion is Stat for a given version; 0 is the live one.

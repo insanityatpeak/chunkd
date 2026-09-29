@@ -31,9 +31,16 @@ type Version struct {
 	Chunks    []iface.ChunkID
 	ChunkSize int
 	Tombstone bool
+	// Retired: superseded at epoch RetiredAt. It still holds its chunks, so
+	// undelete can restore it, until hard delete drops it.
+	Retired   bool
+	RetiredAt uint64
+	// RestoredFrom is the version an undelete copied; 0 otherwise.
+	RestoredFrom uint64
 }
 
-// File is every version of a path, oldest first.
+// File is every version of a path, oldest first. The newest entry is never
+// dropped, even if it is a tombstone, so version numbers are never reused.
 type File struct {
 	Path     string
 	Versions []Version
@@ -74,6 +81,9 @@ type State struct {
 	// committed indexes versions by the upload that created them; rebuilt
 	// from files on restore, so it is not stored separately.
 	committed map[uint64]Committed
+	// epoch is logical GC time, advanced only by logged AdvanceEpoch ops, so
+	// retention never depends on any machine's clock.
+	epoch uint64
 }
 
 // Committed locates the version an upload produced.
@@ -86,6 +96,8 @@ type Committed struct {
 type Result struct {
 	UploadID uint64
 	Version  uint64
+	// Dropped counts versions hard-deleted by an AdvanceEpoch.
+	Dropped int
 }
 
 // New returns empty state.
@@ -198,6 +210,18 @@ func (s *State) Validate(op *chunkdv1.Op) error {
 		if d.GetExpectedVersion() != 0 && d.GetExpectedVersion() != live {
 			return iface.Errorf(iface.CodeConflict, "%s is at version %d, expected %d", d.GetPath(), live, d.GetExpectedVersion())
 		}
+	case *chunkdv1.Op_Undelete:
+		u := o.Undelete
+		if _, err := s.StatVersion(u.GetPath(), u.GetVersion()); err != nil || u.GetVersion() == 0 {
+			return iface.Errorf(iface.CodeNotFound, "%s has no retained version %d to restore", u.GetPath(), u.GetVersion())
+		}
+		if live := s.liveVersion(u.GetPath()); live != u.GetExpectedVersion() {
+			return iface.Errorf(iface.CodeConflict, "%s is at version %d, expected %d", u.GetPath(), live, u.GetExpectedVersion())
+		}
+	case *chunkdv1.Op_AdvanceEpoch:
+		if o.AdvanceEpoch.GetRetainEpochs() == 0 {
+			return iface.Errorf(iface.CodeInvalid, "retain_epochs must be at least 1")
+		}
 	default:
 		return iface.Errorf(iface.CodeInvalid, "empty op")
 	}
@@ -258,6 +282,20 @@ func (s *State) Apply(op *chunkdv1.Op) Result {
 		v := Version{V: s.lastVersion(p) + 1, Tombstone: true}
 		s.appendVersion(p, v)
 		return Result{Version: v.V}
+	case *chunkdv1.Op_Undelete:
+		u := o.Undelete
+		src, _ := s.StatVersion(u.GetPath(), u.GetVersion())
+		v := Version{V: s.lastVersion(u.GetPath()) + 1, Size: src.Size, SHA256: src.SHA256, Chunks: slices.Clone(src.Chunks), ChunkSize: src.ChunkSize, RestoredFrom: src.V}
+		// src is retained, so it still holds a reference to every chunk: the
+		// records exist and none can have been collected.
+		for _, id := range v.Chunks {
+			s.chunks[id].Refcount++
+		}
+		s.appendVersion(u.GetPath(), v)
+		return Result{Version: v.V}
+	case *chunkdv1.Op_AdvanceEpoch:
+		s.epoch++
+		return Result{Dropped: s.hardDelete(uint64(o.AdvanceEpoch.GetRetainEpochs()))}
 	}
 	panic("unreachable")
 }
@@ -299,13 +337,72 @@ func (s *State) Dedup() (referenced, unique int64) {
 	return referenced, unique
 }
 
+// appendVersion adds v as the newest version of p and retires the one it
+// supersedes (data or tombstone) at the current epoch.
 func (s *State) appendVersion(p string, v Version) {
 	f := s.files[p]
 	if f == nil {
 		f = &File{Path: p}
 		s.files[p] = f
 	}
+	if n := len(f.Versions); n > 0 {
+		f.Versions[n-1].Retired, f.Versions[n-1].RetiredAt = true, s.epoch
+	}
 	f.Versions = append(f.Versions, v)
+}
+
+// hardDelete drops versions retired at least retain epochs ago, except the
+// newest version of each path, and releases their chunk references.
+func (s *State) hardDelete(retain uint64) int {
+	dropped := 0
+	for _, f := range s.files {
+		keep := f.Versions[:0]
+		for i, v := range f.Versions {
+			if i == len(f.Versions)-1 || !v.Retired || v.RetiredAt+retain > s.epoch {
+				keep = append(keep, v)
+				continue
+			}
+			dropped++
+			delete(s.committed, v.UploadID)
+			for _, id := range v.Chunks {
+				s.unref(id)
+			}
+		}
+		clear(f.Versions[len(keep):])
+		f.Versions = keep
+	}
+	return dropped
+}
+
+// unref drops one reference to id. At zero the record goes: the chunk is
+// unmarked, and GC removes its copies once the grace period has passed.
+func (s *State) unref(id iface.ChunkID) {
+	ci := s.chunks[id]
+	if ci.Refcount--; ci.Refcount == 0 {
+		delete(s.chunks, id)
+	}
+}
+
+// Epoch returns the current GC epoch.
+func (s *State) Epoch() uint64 { return s.epoch }
+
+// Restored reports whether the newest version of p is an undelete of
+// version from that replaced live version prev (0: the path was deleted),
+// and returns it: a retried undelete finds its own result here.
+func (s *State) Restored(p string, from, prev uint64) (uint64, bool) {
+	f := s.files[p]
+	if f == nil || len(f.Versions) < 2 {
+		return 0, false
+	}
+	last, before := f.Versions[len(f.Versions)-1], f.Versions[len(f.Versions)-2]
+	was := before.V
+	if before.Tombstone {
+		was = 0
+	}
+	if last.RestoredFrom != from || was != prev {
+		return 0, false
+	}
+	return last.V, true
 }
 
 // Stat returns the live version of p.
@@ -413,12 +510,13 @@ func (s *State) PendingUploads() int { return len(s.uploads) }
 
 // Snapshot encodes the state deterministically (sorted, deterministic proto).
 func (s *State) Snapshot() []byte {
-	snap := &chunkdv1.MetaSnapshot{LastUploadId: s.lastUploadID}
+	snap := &chunkdv1.MetaSnapshot{LastUploadId: s.lastUploadID, Epoch: s.epoch}
 	for _, p := range slices.Sorted(maps.Keys(s.files)) {
 		f := s.files[p]
 		rec := &chunkdv1.FileRecord{Path: p}
 		for _, v := range f.Versions {
-			fv := &chunkdv1.FileVersion{Version: v.V, UploadId: v.UploadID, Size: v.Size, ChunkSize: int32(v.ChunkSize), State: chunkdv1.VersionState_VERSION_STATE_COMMITTED}
+			fv := &chunkdv1.FileVersion{Version: v.V, UploadId: v.UploadID, Size: v.Size, ChunkSize: int32(v.ChunkSize), State: chunkdv1.VersionState_VERSION_STATE_COMMITTED,
+				Retired: v.Retired, RetiredAt: v.RetiredAt, RestoredFrom: v.RestoredFrom}
 			if v.Tombstone {
 				fv.State = chunkdv1.VersionState_VERSION_STATE_TOMBSTONE
 			} else {
@@ -470,11 +568,12 @@ func Restore(data []byte) (*State, error) {
 	if err := proto.Unmarshal(data, &snap); err != nil {
 		return nil, err
 	}
-	s.lastUploadID = snap.GetLastUploadId()
+	s.lastUploadID, s.epoch = snap.GetLastUploadId(), snap.GetEpoch()
 	for _, rec := range snap.GetFiles() {
 		f := &File{Path: rec.GetPath()}
 		for _, fv := range rec.GetVersions() {
-			v := Version{V: fv.GetVersion(), UploadID: fv.GetUploadId(), Size: fv.GetSize(), ChunkSize: int(fv.GetChunkSize()), Tombstone: fv.GetState() == chunkdv1.VersionState_VERSION_STATE_TOMBSTONE}
+			v := Version{V: fv.GetVersion(), UploadID: fv.GetUploadId(), Size: fv.GetSize(), ChunkSize: int(fv.GetChunkSize()), Tombstone: fv.GetState() == chunkdv1.VersionState_VERSION_STATE_TOMBSTONE,
+				Retired: fv.GetRetired(), RetiredAt: fv.GetRetiredAt(), RestoredFrom: fv.GetRestoredFrom()}
 			if v.UploadID != 0 {
 				s.committed[v.UploadID] = Committed{Path: rec.GetPath(), Version: v.V}
 			}

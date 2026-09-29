@@ -27,6 +27,7 @@ const (
 //	GET    /files/{path}?log=1      every retained version, oldest first
 //	GET    /files?prefix=/p         list
 //	DELETE /files/{path}            tombstone; ?expected=N
+//	POST   /undelete/{path}         restore a retained version; ?version=N, else the newest
 //	GET    /cluster                 nodes, health, copies; ?events_after=N
 func Handler(api client.API, log *slog.Logger) http.Handler {
 	h := &handler{api: api, log: log}
@@ -35,6 +36,7 @@ func Handler(api client.API, log *slog.Logger) http.Handler {
 	mux.HandleFunc("GET /files/{path...}", h.get)
 	mux.HandleFunc("GET /files", h.list)
 	mux.HandleFunc("DELETE /files/{path...}", h.delete)
+	mux.HandleFunc("POST /undelete/{path...}", h.undelete)
 	mux.HandleFunc("GET /cluster", h.cluster)
 	return cors(mux)
 }
@@ -146,6 +148,24 @@ func (h *handler) delete(w http.ResponseWriter, r *http.Request) {
 		expected = v
 	}
 	v, err := h.api.Delete(r.Context(), filePath(r), expected)
+	if err != nil {
+		writeError(w, err, 0)
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]uint64{"version": v})
+}
+
+func (h *handler) undelete(w http.ResponseWriter, r *http.Request) {
+	var version uint64
+	if e := r.URL.Query().Get("version"); e != "" {
+		v, err := strconv.ParseUint(e, 10, 64)
+		if err != nil {
+			writeError(w, iface.Errorf(iface.CodeInvalid, "bad version %q", e), 0)
+			return
+		}
+		version = v
+	}
+	v, err := h.api.Undelete(r.Context(), filePath(r), version)
 	if err != nil {
 		writeError(w, err, 0)
 		return

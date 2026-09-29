@@ -26,16 +26,17 @@ const (
 // RPCs. Kinds starting with "chunk." carry chunk data and are streamed in
 // real mode.
 const (
-	KindBegin   = "meta.begin"
-	KindClaim   = "meta.claim"
-	KindCommit  = "meta.commit"
-	KindAbort   = "meta.abort"
-	KindDelete  = "meta.delete"
-	KindStat    = "meta.stat"
-	KindList    = "meta.list"
-	KindLog     = "meta.log"
-	KindCluster = "meta.cluster"
-	KindSuspect = "meta.suspect"
+	KindBegin    = "meta.begin"
+	KindClaim    = "meta.claim"
+	KindCommit   = "meta.commit"
+	KindAbort    = "meta.abort"
+	KindDelete   = "meta.delete"
+	KindUndelete = "meta.undelete"
+	KindStat     = "meta.stat"
+	KindList     = "meta.list"
+	KindLog      = "meta.log"
+	KindCluster  = "meta.cluster"
+	KindSuspect  = "meta.suspect"
 
 	KindPutChunk = "chunk.put"
 	KindGetChunk = "chunk.get"

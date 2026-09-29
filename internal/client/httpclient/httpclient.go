@@ -175,6 +175,13 @@ func (c *Client) Delete(ctx context.Context, path string, expectedVersion uint64
 	return out.Version, err
 }
 
+// Undelete restores a retained version; 0 picks the newest.
+func (c *Client) Undelete(ctx context.Context, path string, version uint64) (uint64, error) {
+	var out struct{ Version uint64 }
+	_, err := c.do(ctx, http.MethodPost, c.url("/undelete"+path, versionQuery(version, nil)), nil, 0, &out)
+	return out.Version, err
+}
+
 // Cluster returns the cluster view with events after eventsAfter.
 func (c *Client) Cluster(ctx context.Context, eventsAfter uint64) (client.Cluster, error) {
 	var out client.Cluster

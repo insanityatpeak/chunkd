@@ -48,4 +48,15 @@ func TestGatewayVersions(t *testing.T) {
 	if err != nil || st.SHA256 != log[0].SHA256 {
 		t.Fatalf("stat v3: %+v, %v", st.FileInfo, err)
 	}
+	// Undelete with no version restores the newest data version, v3.
+	if v, err := api.Undelete(ctx, "/v.bin", 0); err != nil || v != 5 {
+		t.Fatalf("undelete: v%d, %v; want v5", v, err)
+	}
+	got.Reset()
+	if m, err := api.Get(ctx, "/v.bin", &got); err != nil || m.Version != 5 || !bytes.Equal(got.Bytes(), v1) {
+		t.Fatalf("get after undelete: v%d, %v", m.Version, err)
+	}
+	if log, _ := api.Log(ctx, "/v.bin"); !log[0].Retired || log[0].ExpiresEpoch == 0 || log[4].Retired {
+		t.Fatalf("log after undelete: %+v", log)
+	}
 }

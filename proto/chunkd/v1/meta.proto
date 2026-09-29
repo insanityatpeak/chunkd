@@ -54,6 +54,21 @@ message DeleteOp {
   uint64 expected_version = 2;
 }
 
+// UndeleteOp publishes a copy of a retained version as the new latest one.
+message UndeleteOp {
+  string path = 1;
+  uint64 version = 2;
+  // Live version the caller expects; 0 means the path must be deleted.
+  uint64 expected_version = 3;
+}
+
+// AdvanceEpochOp moves logical time forward one GC epoch. Retired versions
+// older than retain_epochs are dropped when it applies. The retention is in
+// the op, not in config, so every replica of the log drops the same ones.
+message AdvanceEpochOp {
+  uint32 retain_epochs = 1;
+}
+
 message Op {
   oneof op {
     BeginUploadOp begin = 1;
@@ -61,6 +76,8 @@ message Op {
     AbortUploadOp abort = 3;
     DeleteOp delete = 4;
     ClaimChunksOp claim = 5;
+    UndeleteOp undelete = 6;
+    AdvanceEpochOp advance_epoch = 7;
   }
 }
 
@@ -81,6 +98,12 @@ message FileVersion {
   VersionState state = 6;
   // Upload that created this version; makes a retried commit idempotent.
   uint64 upload_id = 7;
+  // Superseded by a newer version (or a delete) at epoch retired_at; kept
+  // for undelete until retain_epochs later.
+  bool retired = 8;
+  uint64 retired_at = 9;
+  // Set on versions created by undelete: the version they copied.
+  uint64 restored_from = 10;
 }
 
 message FileRecord {
@@ -105,6 +128,7 @@ message MetaSnapshot {
   repeated ChunkRecord chunks = 2;
   repeated UploadRecord uploads = 3;
   uint64 last_upload_id = 4;
+  uint64 epoch = 5;
 }
 
 // ---- Client RPCs to the metadata server.
@@ -174,6 +198,17 @@ message DeleteResponse {
   uint64 version = 1;
 }
 
+message UndeleteRequest {
+  string path = 1;
+  // 0 restores the newest retained version that is not a delete marker.
+  uint64 version = 2;
+  uint64 expected_version = 3;
+}
+
+message UndeleteResponse {
+  uint64 version = 1;
+}
+
 message ChunkLocation {
   bytes id = 1;
   int64 size = 2;
@@ -206,11 +241,16 @@ message VersionInfo {
   int32 chunk_count = 4;
   // A delete marker: the path read as not found from this version on.
   bool tombstone = 5;
+  // Superseded; undelete can restore it until it expires.
+  bool retired = 6;
+  // Epoch at which a retired version is dropped.
+  uint64 expires_epoch = 7;
 }
 
 message LogResponse {
   // Oldest first.
   repeated VersionInfo versions = 1;
+  uint64 epoch = 2;
 }
 
 message ListRequest {

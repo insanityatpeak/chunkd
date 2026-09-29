@@ -60,6 +60,11 @@ func (l *locked) Cluster(ctx context.Context, after uint64) (client.Cluster, err
 	defer l.mu.Unlock()
 	return l.api.Cluster(ctx, after)
 }
+func (l *locked) Undelete(ctx context.Context, p string, v uint64) (uint64, error) {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	return l.api.Undelete(ctx, p, v)
+}
 func (l *locked) Log(ctx context.Context, p string) ([]client.VersionInfo, error) {
 	l.mu.Lock()
 	defer l.mu.Unlock()

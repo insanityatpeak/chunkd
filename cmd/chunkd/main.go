@@ -50,14 +50,14 @@ func main() {
 	expected := fs.Uint64("expected", 0, "put/rm: expected live version (compare-and-swap); 0 with put means overwrite")
 	create := fs.Bool("create", false, "put: fail if the path exists")
 	lww := fs.Bool("lww", false, "put: last writer wins, no version check (a concurrent update is lost)")
-	version := fs.Uint64("version", 0, "get: download this version instead of the live one")
+	version := fs.Uint64("version", 0, "get: download this version instead of the live one; undelete: the version to restore (default newest)")
 	expectSHA := fs.String("expect-sha256", "", "get: fail unless the content has this SHA-256")
 	asJSON := fs.Bool("json", false, "print JSON")
 	root := fs.String("root", envOr("CHUNKD_DATA", "data/node"), "debug corrupt: the node's chunk directory")
 	rotN := fs.Int("n", 1, "debug corrupt: number of chunks")
 	pick := fs.Uint64("pick", 0, "debug corrupt: first chunk, as an index into the chunks in ID order")
 	fs.Usage = func() {
-		fmt.Fprintln(os.Stderr, "usage: chunkd [flags] put|get|log|ls|stat|rm|cluster|ping|probe|debug corrupt ...")
+		fmt.Fprintln(os.Stderr, "usage: chunkd [flags] put|get|log|ls|stat|rm|undelete|cluster|ping|probe|debug corrupt ...")
 		fs.PrintDefaults()
 	}
 	// Flags may come before or after the command.
@@ -94,6 +94,11 @@ func main() {
 		err = put(ctx, api, args[1], args[2], opts, out)
 	case cmd == "get" && len(args) == 3:
 		err = get(ctx, api, args[1], args[2], *version, *expectSHA, out)
+	case cmd == "undelete" && len(args) == 2:
+		var v uint64
+		if v, err = api.Undelete(ctx, args[1], *version); err == nil {
+			fmt.Printf("restored %s as v%d\n", args[1], v)
+		}
 	case cmd == "log" && len(args) == 2:
 		var vs []client.VersionInfo
 		if vs, err = api.Log(ctx, args[1]); err == nil {

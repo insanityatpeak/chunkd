@@ -247,7 +247,7 @@ func (c *Direct) Log(ctx context.Context, path string) ([]VersionInfo, error) {
 	}
 	out := make([]VersionInfo, 0, len(resp.GetVersions()))
 	for _, v := range resp.GetVersions() {
-		vi := VersionInfo{Version: v.GetVersion(), Size: v.GetSize(), Chunks: int(v.GetChunkCount()), Deleted: v.GetTombstone()}
+		vi := VersionInfo{Version: v.GetVersion(), Size: v.GetSize(), Chunks: int(v.GetChunkCount()), Deleted: v.GetTombstone(), Retired: v.GetRetired(), ExpiresEpoch: v.GetExpiresEpoch()}
 		if !vi.Deleted {
 			vi.SHA256 = hex.EncodeToString(v.GetSha256())
 		}
@@ -410,6 +410,37 @@ func (c *Direct) Delete(ctx context.Context, path string, expectedVersion uint64
 	}
 	var resp chunkdv1.DeleteResponse
 	err := c.meta(ctx, wire.KindDelete, &chunkdv1.DeleteRequest{Path: path, ExpectedVersion: expectedVersion}, &resp)
+	return resp.GetVersion(), err
+}
+
+// Undelete restores a retained version. Both the version and the live
+// version it replaces are resolved first, so the call is conditional and a
+// retry finds its own result.
+func (c *Direct) Undelete(ctx context.Context, path string, version uint64) (uint64, error) {
+	if version == 0 {
+		log, err := c.Log(ctx, path)
+		if err != nil {
+			return 0, err
+		}
+		for _, v := range slices.Backward(log) {
+			if !v.Deleted {
+				version = v.Version
+				break
+			}
+		}
+		if version == 0 {
+			return 0, iface.Errorf(iface.CodeNotFound, "%s has no retained version to restore", path)
+		}
+	}
+	var expected uint64
+	switch m, err := c.Stat(ctx, path); {
+	case err == nil:
+		expected = m.Version
+	case iface.CodeOf(err) != iface.CodeNotFound:
+		return 0, err
+	}
+	var resp chunkdv1.UndeleteResponse
+	err := c.meta(ctx, wire.KindUndelete, &chunkdv1.UndeleteRequest{Path: path, Version: version, ExpectedVersion: expected}, &resp)
 	return resp.GetVersion(), err
 }
 

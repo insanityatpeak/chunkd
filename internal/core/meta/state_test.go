@@ -373,3 +373,118 @@ func TestVersionHistory(t *testing.T) {
 		t.Fatalf("log of a missing path: %v", err)
 	}
 }
+
+func undel(path string, version, expected uint64) *chunkdv1.Op {
+	return &chunkdv1.Op{Op: &chunkdv1.Op_Undelete{Undelete: &chunkdv1.UndeleteOp{Path: path, Version: version, ExpectedVersion: expected}}}
+}
+
+func advance(retain uint32) *chunkdv1.Op {
+	return &chunkdv1.Op{Op: &chunkdv1.Op_AdvanceEpoch{AdvanceEpoch: &chunkdv1.AdvanceEpochOp{RetainEpochs: retain}}}
+}
+
+func chunkOf(tag byte, i int) iface.ChunkID { return sha256.Sum256([]byte{tag, byte(i)}) }
+
+func TestRetention(t *testing.T) {
+	ok := iface.CodeUnknown
+	tests := []struct {
+		name      string
+		steps     []step
+		versions  []uint64 // retained versions of /a
+		refs      map[iface.ChunkID]uint64
+		wantEpoch uint64
+	}{
+		{"superseded version kept for the window, then dropped", []step{
+			{begin("/a", 0, 4), ok, Result{UploadID: 1}},
+			{commit(1, 1, 'a'), ok, Result{UploadID: 1, Version: 1}},
+			{begin("/a", 1, 4), ok, Result{UploadID: 2}},
+			{commit(2, 1, 'b'), ok, Result{UploadID: 2, Version: 2}}, // v1 retired at epoch 0
+			{advance(2), ok, Result{}},                               // epoch 1: 0+2 > 1, kept
+			{advance(2), ok, Result{Dropped: 1}},                     // epoch 2: dropped
+		}, []uint64{2}, map[iface.ChunkID]uint64{chunkOf('a', 0): 0, chunkOf('b', 0): 1}, 2},
+		{"undelete inside the window", []step{
+			{begin("/a", 0, 8), ok, Result{UploadID: 1}},
+			{commit(1, 2, 'a'), ok, Result{UploadID: 1, Version: 1}},
+			{del("/a", 1), ok, Result{Version: 2}},
+			{advance(2), ok, Result{}},
+			{undel("/a", 1, 1), iface.CodeConflict, Result{}}, // the path is deleted: expect 0
+			{undel("/a", 2, 0), iface.CodeNotFound, Result{}}, // a tombstone cannot be restored
+			{undel("/a", 1, 0), ok, Result{Version: 3}},
+			{advance(2), ok, Result{Dropped: 1}}, // v1 retired at 0 goes; v3 holds its chunks
+			{advance(2), ok, Result{Dropped: 1}}, // the tombstone, retired at 1 by v3
+		}, []uint64{3}, map[iface.ChunkID]uint64{chunkOf('a', 0): 1, chunkOf('a', 1): 1}, 3},
+		{"undelete after the window fails", []step{
+			{begin("/a", 0, 4), ok, Result{UploadID: 1}},
+			{commit(1, 1, 'a'), ok, Result{UploadID: 1, Version: 1}},
+			{del("/a", 1), ok, Result{Version: 2}},
+			{advance(1), ok, Result{Dropped: 1}},
+			{undel("/a", 1, 0), iface.CodeNotFound, Result{}},
+		}, []uint64{2}, map[iface.ChunkID]uint64{chunkOf('a', 0): 0}, 1},
+		{"version numbers are not reused after everything is dropped", []step{
+			{begin("/a", 0, 4), ok, Result{UploadID: 1}},
+			{commit(1, 1, 'a'), ok, Result{UploadID: 1, Version: 1}},
+			{del("/a", 1), ok, Result{Version: 2}},
+			{advance(1), ok, Result{Dropped: 1}},
+			{advance(1), ok, Result{}}, // the tombstone is newest: kept
+			{begin("/a", 0, 4), ok, Result{UploadID: 2}},
+			{commit(2, 1, 'b'), ok, Result{UploadID: 2, Version: 3}},
+		}, []uint64{2, 3}, nil, 2},
+		{"a chunk shared with another file outlives one reference", []step{
+			{begin("/a", 0, 4), ok, Result{UploadID: 1}},
+			{commit(1, 1, 'x'), ok, Result{UploadID: 1, Version: 1}},
+			{begin("/b", 0, 4), ok, Result{UploadID: 2}},
+			{commit(2, 1, 'x'), ok, Result{UploadID: 2, Version: 1}},
+			{del("/a", 1), ok, Result{Version: 2}},
+			{advance(1), ok, Result{Dropped: 1}},
+		}, []uint64{2}, map[iface.ChunkID]uint64{chunkOf('x', 0): 1}, 1},
+		{"retention of 0 epochs is rejected", []step{
+			{advance(0), iface.CodeInvalid, Result{}},
+		}, nil, nil, 0},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			s := New()
+			run(t, s, tt.steps)
+			var got []uint64
+			if log, err := s.Log("/a"); err == nil {
+				for _, v := range log {
+					got = append(got, v.V)
+				}
+			}
+			if !slices.Equal(got, tt.versions) {
+				t.Fatalf("retained versions %v, want %v", got, tt.versions)
+			}
+			for id, want := range tt.refs {
+				ci, _ := s.Chunk(id)
+				if ci.Refcount != want {
+					t.Errorf("chunk %s: refcount %d, want %d", id.String()[:8], ci.Refcount, want)
+				}
+				if _, ok := s.Chunk(id); ok != (want > 0) {
+					t.Errorf("chunk %s: record present %v, want %v", id.String()[:8], ok, want > 0)
+				}
+			}
+			if s.Epoch() != tt.wantEpoch {
+				t.Fatalf("epoch %d, want %d", s.Epoch(), tt.wantEpoch)
+			}
+			r, err := Restore(s.Snapshot())
+			if err != nil || !bytes.Equal(r.Snapshot(), s.Snapshot()) {
+				t.Fatalf("retention state did not survive a snapshot: %v", err)
+			}
+		})
+	}
+}
+
+func TestUndeleteRetryFindsItsResult(t *testing.T) {
+	s := New()
+	run(t, s, []step{
+		{begin("/a", 0, 4), iface.CodeUnknown, Result{UploadID: 1}},
+		{commit(1, 1, 'a'), iface.CodeUnknown, Result{UploadID: 1, Version: 1}},
+		{del("/a", 1), iface.CodeUnknown, Result{Version: 2}},
+		{undel("/a", 1, 0), iface.CodeUnknown, Result{Version: 3}},
+	})
+	if v, ok := s.Restored("/a", 1, 0); !ok || v != 3 {
+		t.Fatalf("Restored = v%d, %v; want v3, true", v, ok)
+	}
+	if _, ok := s.Restored("/a", 1, 1); ok {
+		t.Fatal("an undelete that expected v1 live matched a restore of a deleted path")
+	}
+}

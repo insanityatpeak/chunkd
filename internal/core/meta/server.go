@@ -37,12 +37,21 @@ type Config struct {
 	Detector      detector.Config
 	Repair        repair.Config
 	SnapshotEvery int
+	// EpochEvery is how often the server logs an AdvanceEpoch. Retired
+	// versions are dropped RetainEpochs epochs after retirement, so undelete
+	// works for between (RetainEpochs-1)×EpochEvery and RetainEpochs×EpochEvery.
+	EpochEvery   time.Duration
+	RetainEpochs int
 }
 
 // DefaultConfig is N=3, commit at 2 (ADR-0007), 4 MiB chunks (ADR-0005),
-// suspect after 3 s and dead after 10 s of silence (ADR-0010).
+// suspect after 3 s and dead after 10 s of silence (ADR-0010), 30 s epochs
+// with 3 of retention (ADR-0016).
+// SIMPLIFIED: demo-scale retention (60–90 s). S3 versioning keeps
+// noncurrent versions until a lifecycle rule expires them, typically days.
 func DefaultConfig(id iface.NodeID) Config {
-	return Config{ID: id, Replicas: 3, MinReplicas: 2, ChunkSize: chunk.DefaultSize, Detector: detector.DefaultConfig(), Repair: repair.DefaultConfig(), SnapshotEvery: 1000}
+	return Config{ID: id, Replicas: 3, MinReplicas: 2, ChunkSize: chunk.DefaultSize, Detector: detector.DefaultConfig(), Repair: repair.DefaultConfig(), SnapshotEvery: 1000,
+		EpochEvery: 30 * time.Second, RetainEpochs: 3}
 }
 
 // Server is the metadata server. Everything runs on its event loop.
@@ -67,6 +76,9 @@ type Server struct {
 func NewServer(ctx context.Context, d Deps, cfg Config) (*Server, error) {
 	if d.Clock == nil || d.Net == nil || d.Store == nil || d.Rand == nil || d.Log == nil {
 		panic("meta: missing dependency")
+	}
+	if cfg.EpochEvery <= 0 || cfg.RetainEpochs < 1 {
+		return nil, fmt.Errorf("meta: epoch every %v, retain %d epochs: both must be positive", cfg.EpochEvery, cfg.RetainEpochs)
 	}
 	at, snap, err := d.Store.LoadSnapshot(ctx)
 	if err != nil {
@@ -100,21 +112,37 @@ func NewServer(ctx context.Context, d Deps, cfg Config) (*Server, error) {
 func (s *Server) Start() {
 	s.d.Net.Listen(s.cfg.ID, s.handle)
 	for kind, h := range map[string]iface.RPCHandler{
-		wire.KindBegin:   s.begin,
-		wire.KindClaim:   s.claim,
-		wire.KindCommit:  s.commit,
-		wire.KindAbort:   s.abort,
-		wire.KindDelete:  s.delete,
-		wire.KindStat:    s.stat,
-		wire.KindList:    s.list,
-		wire.KindLog:     s.log,
-		wire.KindCluster: s.clusterInfo,
-		wire.KindSuspect: s.suspect,
+		wire.KindBegin:    s.begin,
+		wire.KindClaim:    s.claim,
+		wire.KindCommit:   s.commit,
+		wire.KindAbort:    s.abort,
+		wire.KindDelete:   s.delete,
+		wire.KindUndelete: s.undelete,
+		wire.KindStat:     s.stat,
+		wire.KindList:     s.list,
+		wire.KindLog:      s.log,
+		wire.KindCluster:  s.clusterInfo,
+		wire.KindSuspect:  s.suspect,
 	} {
 		s.d.Net.Serve(s.cfg.ID, kind, h, iface.ServeOpts{})
 	}
 	s.d.Clock.AfterFunc(s.cfg.Detector.TickEvery, s.tick)
+	s.d.Clock.AfterFunc(s.cfg.EpochEvery, s.advanceEpoch)
 	s.repair.Start()
+}
+
+// advanceEpoch logs the next epoch. The timer only proposes it; what the
+// epoch drops is decided by applying the logged op, identically everywhere.
+func (s *Server) advanceEpoch() {
+	s.d.Clock.AfterFunc(s.cfg.EpochEvery, s.advanceEpoch)
+	res, err := s.apply(&chunkdv1.Op{Op: &chunkdv1.Op_AdvanceEpoch{AdvanceEpoch: &chunkdv1.AdvanceEpochOp{RetainEpochs: uint32(s.cfg.RetainEpochs)}}})
+	if err != nil {
+		s.d.Log.Error("advance epoch", "err", err)
+		return
+	}
+	if res.Dropped > 0 {
+		s.event("gc", "", "epoch %d: %d versions past retention dropped", s.state.Epoch(), res.Dropped)
+	}
 }
 
 func (s *Server) tick() {
@@ -413,6 +441,26 @@ func (s *Server) delete(m iface.Message, respond iface.Responder) {
 	wire.Respond(respond, &chunkdv1.DeleteResponse{Version: res.Version}, err)
 }
 
+// undelete restores a retained version as the newest one. Like delete it is
+// conditional on the live version, and a retry finds its own result.
+func (s *Server) undelete(m iface.Message, respond iface.Responder) {
+	var req chunkdv1.UndeleteRequest
+	if err := wire.Decode(m.Body, &req); err != nil {
+		respond(nil, err)
+		return
+	}
+	if req.GetVersion() == 0 {
+		respond(nil, iface.Errorf(iface.CodeInvalid, "undelete needs a version"))
+		return
+	}
+	if v, ok := s.state.Restored(req.GetPath(), req.GetVersion(), req.GetExpectedVersion()); ok {
+		respond(wire.Marshal(&chunkdv1.UndeleteResponse{Version: v}), nil)
+		return
+	}
+	res, err := s.apply(&chunkdv1.Op{Op: &chunkdv1.Op_Undelete{Undelete: &chunkdv1.UndeleteOp{Path: req.GetPath(), Version: req.GetVersion(), ExpectedVersion: req.GetExpectedVersion()}}})
+	wire.Respond(respond, &chunkdv1.UndeleteResponse{Version: res.Version}, err)
+}
+
 func (s *Server) stat(m iface.Message, respond iface.Responder) {
 	var req chunkdv1.StatRequest
 	if err := wire.Decode(m.Body, &req); err != nil {
@@ -459,9 +507,12 @@ func (s *Server) log(m iface.Message, respond iface.Responder) {
 		respond(nil, err)
 		return
 	}
-	resp := &chunkdv1.LogResponse{}
+	resp := &chunkdv1.LogResponse{Epoch: s.state.Epoch()}
 	for _, v := range vs {
-		vi := &chunkdv1.VersionInfo{Version: v.V, Size: v.Size, ChunkCount: int32(len(v.Chunks)), Tombstone: v.Tombstone}
+		vi := &chunkdv1.VersionInfo{Version: v.V, Size: v.Size, ChunkCount: int32(len(v.Chunks)), Tombstone: v.Tombstone, Retired: v.Retired}
+		if v.Retired {
+			vi.ExpiresEpoch = v.RetiredAt + uint64(s.cfg.RetainEpochs)
+		}
 		if !v.Tombstone {
 			vi.Sha256 = v.SHA256[:]
 		}
