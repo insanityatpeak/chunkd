@@ -329,3 +329,67 @@ func TestChaosNodeReturnsWithDeletedChunks(t *testing.T) {
 	}
 	t.Logf("%d seeds: %d GC deletes refused by the fence", gcSeeds, kept)
 }
+
+// TestGCNoOrphanLeak: files are written, overwritten with small edits,
+// copied (sharing every chunk) and deleted. After retention and two more
+// sweeps the chunks on disk are exactly the chunks the live versions
+// reference: nothing leaked, and nothing shared with a deleted file lost.
+func TestGCNoOrphanLeak(t *testing.T) {
+	for seed := uint64(1); seed <= 5; seed++ {
+		c := gcCluster(seed)
+		for i := range 4 {
+			if _, _, err := c.UploadRandom(fmt.Sprintf("/keep-%d", i), 5*gcChunk+int64(i)); err != nil {
+				t.Fatal(err)
+			}
+		}
+		for i := range 3 {
+			p := fmt.Sprintf("/gone-%d", i)
+			_, data, err := c.UploadRandom(p, 4*gcChunk)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if i == 0 {
+				if _, _, err := c.Upload("/copy-of-gone-0", data); err != nil {
+					t.Fatal(err)
+				}
+			}
+			if err := c.Delete(p); err != nil {
+				t.Fatal(err)
+			}
+		}
+		data, _, err := c.Download("/keep-1")
+		if err != nil {
+			t.Fatal(err)
+		}
+		data[len(data)-1] ^= 0xff
+		if _, _, err := c.Upload("/keep-1", data); err != nil {
+			t.Fatal(err)
+		}
+		settleGC(t, c)
+
+		st := c.Meta().State()
+		live := map[iface.ChunkID]bool{}
+		for _, e := range st.List("/") {
+			for _, id := range e.Chunks {
+				live[id] = true
+			}
+		}
+		stored := c.Stored()
+		for id, nodes := range stored {
+			if !live[id] {
+				t.Errorf("seed %d: chunk %x on %v is referenced by no live version", seed, id[:6], nodes)
+			}
+		}
+		for id := range live {
+			if len(stored[id]) == 0 {
+				t.Errorf("seed %d: live chunk %x has no copy", seed, id[:6])
+			}
+		}
+		if d := st.Deleted("/"); len(d) != 0 {
+			t.Errorf("seed %d: deleted files still restorable after retention: %v", seed, d)
+		}
+		if st.PendingUploads() != 0 {
+			t.Errorf("seed %d: %d uploads pending", seed, st.PendingUploads())
+		}
+	}
+}
