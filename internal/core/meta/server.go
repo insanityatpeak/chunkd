@@ -312,6 +312,15 @@ func (s *Server) commit(m iface.Message, respond iface.Responder) {
 		}
 	}
 	res, err := s.apply(op)
+	if err == nil {
+		ids := make([]iface.ChunkID, 0, len(req.GetChunkIds()))
+		for _, raw := range req.GetChunkIds() {
+			if id, err := wire.ChunkID(raw); err == nil {
+				ids = append(ids, id)
+			}
+		}
+		s.repair.Fresh(ids)
+	}
 	wire.Respond(respond, &chunkdv1.CommitUploadResponse{Version: res.Version}, err)
 }
 

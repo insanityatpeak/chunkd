@@ -474,3 +474,33 @@ func TestTrimRetrySameVictim(t *testing.T) {
 		})
 	}
 }
+
+// TestUploadGrace: a freshly committed chunk short of RF is usually a replica
+// whose report is still in flight (commit needs only 2 of 3). Repair waits
+// one grace period before copying, except for a chunk on its last copy.
+func TestUploadGrace(t *testing.T) {
+	for _, tc := range []struct {
+		name    string
+		holders []int
+		at      time.Duration // when the scan runs, after the commit
+		copies  int
+	}{
+		{"2 of 3 inside the grace: wait", []int{1, 2}, 5 * time.Second, 0},
+		{"2 of 3 after the grace: copy", []int{1, 2}, 11 * time.Second, 1},
+		{"last copy: copy at once", []int{1}, time.Second, 1},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			w := newWorld(5)
+			w.add(chunk(1), 1, tc.holders...)
+			clock := sim.NewClock()
+			var copies []Copy
+			s := New(unthrottled(), clock, w, Sender{Copy: func(c Copy) { copies = append(copies, c) }, Trim: func(Trim) {}})
+			s.Fresh([]iface.ChunkID{chunk(1)})
+			clock.Advance(tc.at)
+			s.Scan()
+			if len(copies) != tc.copies {
+				t.Fatalf("%d copies %v after commit, want %d", len(copies), tc.at, tc.copies)
+			}
+		})
+	}
+}

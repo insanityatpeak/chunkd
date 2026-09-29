@@ -36,6 +36,10 @@ type Config struct {
 	// ScanEvery rescans every chunk, catching anything the event-driven
 	// path missed (a lost block report, a failed command).
 	ScanEvery time.Duration
+	// UploadGrace is how long a freshly committed chunk may sit below RF
+	// before repair copies it: commit needs 2 of 3 reports, and the third
+	// is usually still in flight.
+	UploadGrace time.Duration
 }
 
 // DefaultConfig: RF 3, 20 s delay, 8 copies in flight (2 per node as source
@@ -51,6 +55,7 @@ func DefaultConfig() Config {
 		Burst:       4 << 20,
 		CopyTimeout: 10 * time.Second,
 		ScanEvery:   30 * time.Second,
+		UploadGrace: 10 * time.Second,
 	}
 }
 
@@ -159,9 +164,12 @@ type Scheduler struct {
 	inflight map[iface.ChunkID]*Copy
 	trimming map[iface.ChunkID]Trim
 	src, dst map[iface.NodeID]int
-	nextID   uint64
-	seq      uint64
-	stats    Stats
+	// fresh holds commit times of chunks still inside UploadGrace; entries
+	// are dropped when an assessment finds the grace over.
+	fresh  map[iface.ChunkID]iface.Instant
+	nextID uint64
+	seq    uint64
+	stats  Stats
 
 	wake   iface.Timer
 	wakeAt iface.Instant
@@ -175,6 +183,7 @@ func New(cfg Config, clock iface.Clock, view View, send Sender) *Scheduler {
 		queued:   map[iface.ChunkID]*item{},
 		inflight: map[iface.ChunkID]*Copy{},
 		trimming: map[iface.ChunkID]Trim{},
+		fresh:    map[iface.ChunkID]iface.Instant{},
 		src:      map[iface.NodeID]int{},
 		dst:      map[iface.NodeID]int{},
 	}
@@ -233,7 +242,25 @@ func (s *Scheduler) assess(id iface.ChunkID, now iface.Instant) assessment {
 		// Ready once enough excuses expire that the gap is real.
 		a.readyAt = excused[a.live+len(excused)-s.cfg.Replicas]
 	}
+	// A just-committed chunk's missing report is usually in flight, not
+	// lost: wait out the grace (bugs-found #9).
+	if t, ok := s.fresh[id]; ok {
+		switch end := t.Add(s.cfg.UploadGrace); {
+		case now >= end:
+			delete(s.fresh, id)
+		case a.live > 1:
+			a.readyAt = max(a.readyAt, end)
+		}
+	}
 	return a
+}
+
+// Fresh records that chunks were just committed.
+func (s *Scheduler) Fresh(ids []iface.ChunkID) {
+	now := s.clock.Now()
+	for _, id := range ids {
+		s.fresh[id] = now
+	}
 }
 
 // Scan re-evaluates every wanted chunk, queues the ones that need a copy
