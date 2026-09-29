@@ -83,3 +83,9 @@ message DeleteReplica {
   uint64 trim_id = 1;
   bytes chunk_id = 2;
 }
+
+// VerifyChunk asks a node to re-read and re-hash one chunk; a mismatch is
+// quarantined and reported like a failed read.
+message VerifyChunk {
+  bytes chunk_id = 1;
+}

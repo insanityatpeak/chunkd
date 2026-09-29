@@ -188,6 +188,15 @@ message NodeInfo {
   int64 heartbeat_age_ms = 9;
 }
 
+// SuspectRequest: a client received bytes for chunk_id from node that did
+// not match the hash. A hint only: the node re-checks, and its check decides.
+message SuspectRequest {
+  bytes chunk_id = 1;
+  string node = 2;
+}
+
+message SuspectResponse {}
+
 message ClusterRequest {
   // Return timeline events with seq > events_after.
   uint64 events_after = 1;

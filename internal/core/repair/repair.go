@@ -275,6 +275,26 @@ func (s *Scheduler) Scan() {
 	s.dispatch()
 }
 
+// Recheck assesses chunks that lost a copy without a death (a replica
+// failed verification and was quarantined) and queues the short ones at
+// once: the repair delay only excuses holders that are dead and may return.
+func (s *Scheduler) Recheck(ids []iface.ChunkID) {
+	now := s.clock.Now()
+	for _, id := range ids {
+		if _, ok := s.view.Want(id); !ok || s.inflight[id] != nil {
+			continue
+		}
+		switch a := s.assess(id, now); {
+		case a.missing == 0, a.lost:
+		case a.readyAt > now:
+			s.wakeAtLeast(a.readyAt)
+		default:
+			s.enqueue(id, a.live)
+		}
+	}
+	s.dispatch()
+}
+
 func (s *Scheduler) enqueue(id iface.ChunkID, live int) {
 	if it := s.queued[id]; it != nil {
 		if it.live != live {

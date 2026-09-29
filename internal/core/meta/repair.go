@@ -71,6 +71,48 @@ func (s *Server) sendTrim(t repair.Trim) {
 		Body: wire.Marshal(&chunkdv1.DeleteReplica{TrimId: t.ID, ChunkId: t.Chunk[:]})})
 }
 
+// corrupted handles copies a node quarantined after they failed
+// verification: they no longer count, and their chunks are re-checked now,
+// not at the next scan and without the repair delay (nothing died).
+func (s *Server) corrupted(node iface.NodeID, corrupt, removed []iface.ChunkID) {
+	var lost []iface.ChunkID
+	for _, id := range corrupt {
+		if slices.Contains(removed, id) {
+			s.corruptReplicas++
+			s.event("corrupt", node, "chunk %s failed verification: copy quarantined", id.String()[:12])
+			lost = append(lost, id)
+		}
+	}
+	s.repair.Recheck(lost)
+}
+
+// suspect handles a client's report that node served bytes for a chunk
+// that did not match its hash. The client is not trusted to remove a
+// replica (a bad gateway or network path would condemn good copies), so
+// the node re-checks, and a mismatch comes back as an ordinary corrupt
+// report.
+// SIMPLIFIED: hints are not rate-limited; each costs the node one re-read.
+// HDFS DataNodes throttle client-reported bad blocks the same way scans
+// are throttled.
+func (s *Server) suspect(m iface.Message, respond iface.Responder) {
+	var req chunkdv1.SuspectRequest
+	if err := wire.Decode(m.Body, &req); err != nil {
+		respond(nil, err)
+		return
+	}
+	id, err := wire.ChunkID(req.GetChunkId())
+	if err != nil {
+		respond(nil, err)
+		return
+	}
+	node := iface.NodeID(req.GetNode())
+	if _, known := s.cluster.Node(node); known {
+		s.event("corrupt", node, "client saw bad bytes for chunk %s: node asked to re-check", id.String()[:12])
+		s.d.Net.Send(node, iface.Message{From: s.cfg.ID, Kind: wire.KindVerifyChunk, Body: wire.Marshal(&chunkdv1.VerifyChunk{ChunkId: id[:]})})
+	}
+	respond(wire.Marshal(&chunkdv1.SuspectResponse{}), nil)
+}
+
 // verifyReport is where Phase 3 checks a returning node's copies against
 // the scrubber's record (stale or corrupt replicas). Today a reported copy
 // is trusted until a reader rejects its hash.

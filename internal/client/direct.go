@@ -256,20 +256,23 @@ func (c *Direct) Get(ctx context.Context, path string, w io.Writer) (Manifest, e
 // returns data that does not match the chunk hash.
 func (c *Direct) fetch(ctx context.Context, loc *chunkdv1.ChunkLocation, ref *ChunkRef) ([]byte, error) {
 	var errs []error
+	gone := map[string]bool{} // replicas that answered not_found
 	// Two passes: a replica that timed out may answer the second time.
 	for pass := 0; pass < 2; pass++ {
-		if data, ok := c.fetchPass(ctx, loc, ref, &errs); ok {
+		if data, ok := c.fetchPass(ctx, loc, ref, &errs, gone); ok {
 			return data, nil
 		}
 	}
-	if len(ref.Replicas) > 0 && len(ref.Rejected) == len(ref.Replicas) {
-		// Every copy is bad: retrying cannot help, so say so plainly.
+	// Every copy failed verification, here or already on its node (a
+	// replica quarantined by another reader or a repair answers not_found):
+	// retrying cannot help, so say so plainly.
+	if len(ref.Rejected) > 0 && !slices.ContainsFunc(ref.Replicas, func(n string) bool { return !gone[n] && !slices.Contains(ref.Rejected, n) }) {
 		return nil, iface.Errorf(iface.CodeCorrupt, "chunk %d (%s): every replica %v failed verification; the data is lost: %v", ref.Index, ref.ID[:12], ref.Replicas, errors.Join(errs...))
 	}
 	return nil, iface.Errorf(iface.CodeUnavailable, "chunk %d (%s): no intact replica among %v: %v", ref.Index, ref.ID[:12], ref.Replicas, errors.Join(errs...))
 }
 
-func (c *Direct) fetchPass(ctx context.Context, loc *chunkdv1.ChunkLocation, ref *ChunkRef, errs *[]error) ([]byte, bool) {
+func (c *Direct) fetchPass(ctx context.Context, loc *chunkdv1.ChunkLocation, ref *ChunkRef, errs *[]error, gone map[string]bool) ([]byte, bool) {
 	reps := c.health.order(loc.GetReplicas())
 	if len(reps) == 0 {
 		return nil, false
@@ -284,6 +287,7 @@ func (c *Direct) fetchPass(ctx context.Context, loc *chunkdv1.ChunkLocation, ref
 		after = noHedge
 	}
 	var data []byte
+	var mismatch []string // nodes whose bytes failed this client's check
 	rejected := make([]bool, len(reps))
 	h := c.caller.Hedge(ctx, calls, after, func(i int, r iface.Result) bool {
 		var resp chunkdv1.GetChunkResponse
@@ -294,6 +298,7 @@ func (c *Direct) fetchPass(ctx context.Context, loc *chunkdv1.ChunkLocation, ref
 		}
 		if sum := sha256.Sum256(resp.GetData()); !bytes.Equal(sum[:], loc.GetId()) {
 			rejected[i] = true
+			mismatch = append(mismatch, reps[i].GetNode())
 			if !slices.Contains(ref.Rejected, reps[i].GetNode()) {
 				ref.Rejected = append(ref.Rejected, reps[i].GetNode())
 			}
@@ -308,10 +313,18 @@ func (c *Direct) fetchPass(ctx context.Context, loc *chunkdv1.ChunkLocation, ref
 		c.health.observe(reps[i].GetNode(), r, i == h.Winner)
 		if r.Err != nil && !r.Pending {
 			*errs = append(*errs, fmt.Errorf("%s: %w", reps[i].GetNode(), r.Err))
-			if iface.CodeOf(r.Err) == iface.CodeCorrupt && !slices.Contains(ref.Rejected, reps[i].GetNode()) {
-				ref.Rejected = append(ref.Rejected, reps[i].GetNode())
+			switch iface.CodeOf(r.Err) {
+			case iface.CodeCorrupt:
+				if !slices.Contains(ref.Rejected, reps[i].GetNode()) {
+					ref.Rejected = append(ref.Rejected, reps[i].GetNode())
+				}
+			case iface.CodeNotFound:
+				gone[reps[i].GetNode()] = true
 			}
 		}
+	}
+	for _, node := range mismatch {
+		c.suspect(ctx, loc.GetId(), node)
 	}
 	if h.Winner < 0 {
 		return nil, false
@@ -319,6 +332,15 @@ func (c *Direct) fetchPass(ctx context.Context, loc *chunkdv1.ChunkLocation, ref
 	ref.ServedBy = reps[h.Winner].GetNode()
 	ref.Hedged = h.Launched > 1
 	return data, true
+}
+
+// suspect tells the metadata server that node sent bytes failing the hash.
+// Best effort: the read has already moved on, and the node's own re-check,
+// not this client, decides whether the copy is bad.
+// One attempt, no retries, so a slow metadata server never delays reads.
+func (c *Direct) suspect(ctx context.Context, chunkID []byte, node string) {
+	body := wire.Marshal(&chunkdv1.SuspectRequest{ChunkId: chunkID, Node: node})
+	c.caller.Do(ctx, []iface.Call{{To: c.opts.Meta, Addr: c.opts.MetaAddr, Kind: wire.KindSuspect, Body: body}})
 }
 
 // noHedge is a hedge delay no read reaches.

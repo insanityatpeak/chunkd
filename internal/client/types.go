@@ -94,7 +94,7 @@ type RepairCopy struct {
 type Event struct {
 	Seq  uint64 `json:"seq"`
 	AtMs int64  `json:"atMs"`
-	Kind string `json:"kind"` // node, copy or trim
+	Kind string `json:"kind"` // node, copy, trim or corrupt
 	Node string `json:"node"`
 	Text string `json:"text"`
 }

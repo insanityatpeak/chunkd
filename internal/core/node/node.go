@@ -188,6 +188,26 @@ func (n *Node) getChunk(m iface.Message, respond iface.Responder) {
 	respond(wire.Marshal(&chunkdv1.GetChunkResponse{Data: data}), nil)
 }
 
+// verifyChunk re-reads one chunk on the metadata server's request (a
+// client saw bad bytes from here) and quarantines it if it fails.
+func (n *Node) verifyChunk(m iface.Message) {
+	var cmd chunkdv1.VerifyChunk
+	if err := wire.Decode(m.Body, &cmd); err != nil {
+		return
+	}
+	id, err := wire.ChunkID(cmd.GetChunkId())
+	if err != nil {
+		return
+	}
+	data, err := n.d.Store.Get(context.Background(), id)
+	if err != nil {
+		return // gone already, or unreadable: the next full report says so
+	}
+	if sha256.Sum256(data) != id {
+		n.quarantine(id)
+	}
+}
+
 // quarantine moves a chunk that failed verification aside and reports it,
 // so the metadata server stops counting it and repair replaces it. Safe
 // from concurrent handlers.
@@ -213,6 +233,8 @@ func (n *Node) handle(m iface.Message) {
 		n.replicate(m)
 	case wire.KindDeleteReplica:
 		n.deleteReplica(m)
+	case wire.KindVerifyChunk:
+		n.verifyChunk(m)
 	}
 }
 

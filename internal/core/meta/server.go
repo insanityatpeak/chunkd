@@ -55,6 +55,8 @@ type Server struct {
 	applied   iface.Index
 	sinceSnap int
 	events    events
+	// corruptReplicas counts copies removed after failing verification.
+	corruptReplicas uint64
 }
 
 // NewServer recovers durable state: the latest snapshot, then every WAL
@@ -102,6 +104,7 @@ func (s *Server) Start() {
 		wire.KindStat:    s.stat,
 		wire.KindList:    s.list,
 		wire.KindCluster: s.clusterInfo,
+		wire.KindSuspect: s.suspect,
 	} {
 		s.d.Net.Serve(s.cfg.ID, kind, h, iface.ServeOpts{})
 	}
@@ -174,12 +177,24 @@ func (s *Server) handle(m iface.Message) {
 				deleted = append(deleted, id)
 			}
 		}
+		var corrupt []iface.ChunkID
+		for _, raw := range r.GetCorruptIds() {
+			if id, err := wire.ChunkID(raw); err == nil {
+				corrupt = append(corrupt, id)
+			}
+		}
 		if r.GetFull() {
 			s.verifyReport(node, ids)
 		}
-		added, removed, ok := s.cluster.Report(node, Report{Incarnation: r.GetIncarnation(), Seq: r.GetSeq(), Full: r.GetFull(), Added: ids, Deleted: deleted})
+		// A quarantined copy is gone as far as locations go: same path as a
+		// delete, so report ordering applies to it too.
+		added, removed, ok := s.cluster.Report(node, Report{Incarnation: r.GetIncarnation(), Seq: r.GetSeq(), Full: r.GetFull(), Added: ids,
+			Deleted: append(deleted, corrupt...)})
 		if !ok {
 			return
+		}
+		if len(corrupt) > 0 {
+			s.corrupted(node, corrupt, removed)
 		}
 		// Only changes the report actually made: a reordered, older report
 		// must not complete a copy or a trim.

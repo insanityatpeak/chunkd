@@ -26,13 +26,13 @@ import (
 
 // Cluster is a running in-process real cluster.
 type Cluster struct {
-	cancel  context.CancelFunc
-	closers []func()
-	Meta    *meta.Server
+	cancel   context.CancelFunc
+	closers  []func()
+	Meta     *meta.Server
 	MetaLoop *runtime.Loop
 	MetaAddr string
-	caller  *grpcnet.Caller
-	Client  *client.Direct
+	caller   *grpcnet.Caller
+	Client   *client.Direct
 }
 
 type proc struct {

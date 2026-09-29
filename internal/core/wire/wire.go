@@ -18,6 +18,9 @@ const (
 	KindReplicate       = "node.replicate"
 	KindReplicateFailed = "node.replicate_failed"
 	KindDeleteReplica   = "node.delete_replica"
+
+	// Integrity: the metadata server asks a node to re-check one chunk.
+	KindVerifyChunk = "node.verify_chunk"
 )
 
 // RPCs. Kinds starting with "chunk." carry chunk data and are streamed in
@@ -30,6 +33,7 @@ const (
 	KindStat    = "meta.stat"
 	KindList    = "meta.list"
 	KindCluster = "meta.cluster"
+	KindSuspect = "meta.suspect"
 
 	KindPutChunk = "chunk.put"
 	KindGetChunk = "chunk.get"

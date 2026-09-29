@@ -17,7 +17,7 @@ const EventRing = 500
 type Event struct {
 	Seq  uint64
 	At   iface.Instant
-	Kind string // "node", "copy" or "trim"
+	Kind string // "node", "copy", "trim" or "corrupt"
 	Node iface.NodeID
 	Text string
 }

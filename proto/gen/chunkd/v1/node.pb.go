@@ -649,6 +649,52 @@ func (x *DeleteReplica) GetChunkId() []byte {
 	return nil
 }
 
+// VerifyChunk asks a node to re-read and re-hash one chunk; a mismatch is
+// quarantined and reported like a failed read.
+type VerifyChunk struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	ChunkId       []byte                 `protobuf:"bytes,1,opt,name=chunk_id,json=chunkId,proto3" json:"chunk_id,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *VerifyChunk) Reset() {
+	*x = VerifyChunk{}
+	mi := &file_chunkd_v1_node_proto_msgTypes[10]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *VerifyChunk) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*VerifyChunk) ProtoMessage() {}
+
+func (x *VerifyChunk) ProtoReflect() protoreflect.Message {
+	mi := &file_chunkd_v1_node_proto_msgTypes[10]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use VerifyChunk.ProtoReflect.Descriptor instead.
+func (*VerifyChunk) Descriptor() ([]byte, []int) {
+	return file_chunkd_v1_node_proto_rawDescGZIP(), []int{10}
+}
+
+func (x *VerifyChunk) GetChunkId() []byte {
+	if x != nil {
+		return x.ChunkId
+	}
+	return nil
+}
+
 var File_chunkd_v1_node_proto protoreflect.FileDescriptor
 
 const file_chunkd_v1_node_proto_rawDesc = "" +
@@ -699,7 +745,9 @@ const file_chunkd_v1_node_proto_rawDesc = "" +
 	"\x05error\x18\x04 \x01(\tR\x05error\"C\n" +
 	"\rDeleteReplica\x12\x17\n" +
 	"\atrim_id\x18\x01 \x01(\x04R\x06trimId\x12\x19\n" +
-	"\bchunk_id\x18\x02 \x01(\fR\achunkIdB?Z=github.com/insanityatpeak/chunkd/proto/gen/chunkd/v1;chunkdv1b\x06proto3"
+	"\bchunk_id\x18\x02 \x01(\fR\achunkId\"(\n" +
+	"\vVerifyChunk\x12\x19\n" +
+	"\bchunk_id\x18\x01 \x01(\fR\achunkIdB?Z=github.com/insanityatpeak/chunkd/proto/gen/chunkd/v1;chunkdv1b\x06proto3"
 
 var (
 	file_chunkd_v1_node_proto_rawDescOnce sync.Once
@@ -713,7 +761,7 @@ func file_chunkd_v1_node_proto_rawDescGZIP() []byte {
 	return file_chunkd_v1_node_proto_rawDescData
 }
 
-var file_chunkd_v1_node_proto_msgTypes = make([]protoimpl.MessageInfo, 10)
+var file_chunkd_v1_node_proto_msgTypes = make([]protoimpl.MessageInfo, 11)
 var file_chunkd_v1_node_proto_goTypes = []any{
 	(*Heartbeat)(nil),        // 0: chunkd.v1.Heartbeat
 	(*HeartbeatAck)(nil),     // 1: chunkd.v1.HeartbeatAck
@@ -725,6 +773,7 @@ var file_chunkd_v1_node_proto_goTypes = []any{
 	(*ReplicateChunk)(nil),   // 7: chunkd.v1.ReplicateChunk
 	(*ReplicateFailed)(nil),  // 8: chunkd.v1.ReplicateFailed
 	(*DeleteReplica)(nil),    // 9: chunkd.v1.DeleteReplica
+	(*VerifyChunk)(nil),      // 10: chunkd.v1.VerifyChunk
 }
 var file_chunkd_v1_node_proto_depIdxs = []int32{
 	0, // [0:0] is the sub-list for method output_type
@@ -745,7 +794,7 @@ func file_chunkd_v1_node_proto_init() {
 			GoPackagePath: reflect.TypeOf(x{}).PkgPath(),
 			RawDescriptor: unsafe.Slice(unsafe.StringData(file_chunkd_v1_node_proto_rawDesc), len(file_chunkd_v1_node_proto_rawDesc)),
 			NumEnums:      0,
-			NumMessages:   10,
+			NumMessages:   11,
 			NumExtensions: 0,
 			NumServices:   0,
 		},
