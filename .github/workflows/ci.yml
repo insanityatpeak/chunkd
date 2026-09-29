@@ -29,8 +29,8 @@ jobs:
         run: go run ./tools/task lint-imports
       - name: test (race)
         run: go run ./tools/task test
-      - name: chaos, 500 sim seeds (failures print a replay command)
-        run: go run ./tools/task chaos --seeds=500
+      - name: chaos, 1000 sim seeds (failures print a replay command)
+        run: go run ./tools/task chaos --seeds=1000
       - name: wasm size budget
         run: go run ./tools/task wasm
       - name: generated code is up to date

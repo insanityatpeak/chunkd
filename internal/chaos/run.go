@@ -9,6 +9,7 @@ import (
 	"io"
 	"time"
 
+	"github.com/insanityatpeak/chunkd/internal/core/meta"
 	"github.com/insanityatpeak/chunkd/internal/core/repair"
 	"github.com/insanityatpeak/chunkd/internal/core/scrub"
 	"github.com/insanityatpeak/chunkd/internal/iface"
@@ -32,6 +33,7 @@ type Report struct {
 	Ops      map[string]int `json:"ops"` // "put ok", "get failed", ...
 	Repair   repair.Stats   `json:"repair"`
 	Rotted   int            `json:"rotted"` // chunk copies corrupted by Corrupt faults
+	GC       meta.GCStats   `json:"gc"`
 	Err      error          `json:"-"`
 }
 
@@ -172,11 +174,24 @@ func Run(s Scenario, w io.Writer) Report {
 	if err := c.AssertInvariants(); err != nil {
 		errs = append(errs, err)
 	}
+	// Let retention, leases and two sweeps past the grace run out: every
+	// copy of deleted, overwritten or abandoned data must then be gone, and
+	// every file must still read back.
+	if len(errs) == 0 {
+		c.Tick(c.GCSettle())
+		if err := c.AssertCollected(); err != nil {
+			errs = append(errs, err)
+		}
+		if err := c.AssertInvariants(); err != nil {
+			errs = append(errs, fmt.Errorf("after GC: %w", err))
+		}
+	}
 	h := c.Meta().Health()
 	if h.Lost > 0 {
 		errs = append(errs, fmt.Errorf("%d chunks have no live copy", h.Lost))
 	}
 	r.Repair = h.Repair
+	r.GC = c.Meta().GC()
 	lim := cfg.Meta.Repair
 	if r.Repair.PeakInFlight > lim.MaxInFlight || r.Repair.PeakPerSource > lim.PerSource || r.Repair.PeakPerTarget > lim.PerTarget {
 		errs = append(errs, fmt.Errorf("repair limits exceeded: peaks %d/%d/%d, limits %d/%d/%d",

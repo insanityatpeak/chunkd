@@ -19,12 +19,20 @@ func TestChaosSeeds(t *testing.T) {
 	if testing.Short() {
 		n = min(n, 5)
 	}
+	var deleted uint64
 	for seed := uint64(1); seed <= uint64(n); seed++ {
 		r := Run(Generate(seed, DefaultShape()), io.Discard)
 		if r.Err != nil {
 			t.Fatal(r.Err)
 		}
+		deleted += r.GC.Deleted
 	}
+	// Overwrites and deletes in the workload leave garbage; a run where GC
+	// never deleted anything did not exercise the orphan check.
+	if n >= 5 && deleted == 0 {
+		t.Fatalf("%d seeds, no GC delete: the workload made no garbage", n)
+	}
+	t.Logf("%d seeds: GC deleted %d unreferenced copies", n, deleted)
 }
 
 func TestSameSeedSameTrace(t *testing.T) {
