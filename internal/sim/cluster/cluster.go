@@ -61,6 +61,10 @@ type Cluster struct {
 	nodes     []*Node
 	client    *client.Direct
 	acked     map[string]*acked
+	// written holds every content ever sent to a path, acknowledged or
+	// not; badReads are successful reads that returned anything else.
+	written  map[string][][32]byte
+	badReads []error
 }
 
 // Node is one simulated storage node.
@@ -73,7 +77,8 @@ type Node struct {
 // New builds and starts a cluster whose every choice derives from seed. Logs
 // go to w; pass io.Discard to silence them.
 func New(seed uint64, cfg Config, w io.Writer) *Cluster {
-	c := &Cluster{seed: seed, cfg: cfg, clock: sim.NewClock(), rng: sim.NewRand(seed), log: w, metaStore: sim.NewMetaStore(), acked: map[string]*acked{}}
+	c := &Cluster{seed: seed, cfg: cfg, clock: sim.NewClock(), rng: sim.NewRand(seed), log: w, metaStore: sim.NewMetaStore(), acked: map[string]*acked{},
+		written: map[string][][32]byte{}}
 	c.net = sim.NewNet(c.clock, c.rng, cfg.Faults)
 	if err := c.startMeta(); err != nil {
 		panic(err) // an empty in-memory log cannot fail to recover

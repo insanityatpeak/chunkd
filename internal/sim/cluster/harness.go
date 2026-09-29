@@ -57,6 +57,7 @@ func (c *Cluster) UploadRandom(path string, size int64) (client.Manifest, []byte
 	data := c.RandomData(path, size)
 	m, err := c.Client().Put(context.Background(), path, bytes.NewReader(data), size, client.PutOptions{Overwrite: true})
 	sum := sha256.Sum256(data)
+	c.written[path] = append(c.written[path], sum)
 	switch a := c.acked[path]; {
 	case err == nil:
 		c.acked[path] = &acked{hashes: [][32]byte{sum}}
@@ -66,11 +67,27 @@ func (c *Cluster) UploadRandom(path string, size int64) (client.Manifest, []byte
 	return m, data, err
 }
 
-// Download reads path through the client (which verifies every chunk).
+// Download reads path through the client (which verifies every chunk). A
+// successful read is also checked here, independently of the client: its
+// bytes must be something written to that path (AssertInvariants, 5).
 func (c *Cluster) Download(path string) ([]byte, client.Manifest, error) {
 	var buf bytes.Buffer
 	m, err := c.Client().Get(context.Background(), path, &buf)
+	if err == nil {
+		c.checkRead(path, buf.Bytes())
+	}
 	return buf.Bytes(), m, err
+}
+
+// checkRead records a read that returned bytes nobody wrote to path. Only
+// paths written through the harness are checked; a test that uploads
+// through its own client checks its own reads.
+func (c *Cluster) checkRead(path string, data []byte) {
+	written, tracked := c.written[path]
+	if sum := sha256.Sum256(data); tracked && !slices.Contains(written, sum) {
+		c.badReads = append(c.badReads, fmt.Errorf("a read of %s at t=%v returned %d bytes (sha256 %x) that were never written there",
+			path, c.clock.Now(), len(data), sum[:8]))
+	}
 }
 
 // Delete removes path and forgets it in the acknowledged set.
@@ -95,8 +112,10 @@ func (c *Cluster) Delete(path string) error {
 //  3. Every chunk of every committed file has at least MinReplicas reported
 //     locations on alive nodes.
 //  4. Every committed chunk has a durable record with refcount >= 1.
+//  5. No successful read, during the run or here, ever returned bytes that
+//     were not written to that path.
 func (c *Cluster) AssertInvariants() error {
-	var errs []error
+	errs := slices.Clone(c.badReads)
 	// Sorted: each download advances the clock, so map order would make the
 	// run nondeterministic.
 	for _, path := range slices.Sorted(maps.Keys(c.acked)) {

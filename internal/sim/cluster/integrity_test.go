@@ -5,6 +5,7 @@ import (
 	"encoding/hex"
 	"io"
 	"slices"
+	"strings"
 	"testing"
 	"time"
 
@@ -176,4 +177,22 @@ func TestScrubberFindsCorruption(t *testing.T) {
 		t.Fatalf("scrub stats %+v", sc)
 	}
 	t.Logf("found after %v (pass interval %v), RF 3 %v later", found, pass, took)
+}
+
+// The read check must not be vacuous: bytes never written to a path fail
+// AssertInvariants even when the client accepted them.
+func TestInvariantCatchesForeignBytes(t *testing.T) {
+	c := New(8, DefaultConfig(), io.Discard)
+	c.Tick(3 * time.Second)
+	if _, _, err := c.UploadRandom("/p", 1000); err != nil {
+		t.Fatal(err)
+	}
+	c.Settle(time.Minute)
+	if err := c.AssertInvariants(); err != nil {
+		t.Fatal(err)
+	}
+	c.checkRead("/p", []byte("forged"))
+	if err := c.AssertInvariants(); err == nil || !strings.Contains(err.Error(), "never written") {
+		t.Fatalf("forged read not reported: %v", err)
+	}
 }

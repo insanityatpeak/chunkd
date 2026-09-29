@@ -134,14 +134,17 @@ func RunTarget(s Scenario, t Target, bound time.Duration, logf func(string, ...a
 		gone   bool
 	}
 	acked := map[string]*ack{}
+	written := map[string][][32]byte{} // every content sent to a path
+	var errs []error
 	for _, op := range s.Ops {
 		time.Sleep(time.Until(start.Add(op.At)))
 		var err error
 		switch op.Kind {
 		case Put:
 			data := Data(s.Seed, op.Path, op.Size)
-			err = t.Put(op.Path, data)
 			sum := sha256.Sum256(data)
+			written[op.Path] = append(written[op.Path], sum)
+			err = t.Put(op.Path, data)
 			switch a := acked[op.Path]; {
 			case err == nil:
 				acked[op.Path] = &ack{hashes: [][32]byte{sum}}
@@ -149,7 +152,13 @@ func RunTarget(s Scenario, t Target, bound time.Duration, logf func(string, ...a
 				a.hashes = append(a.hashes, sum)
 			}
 		case Get:
-			_, err = t.Get(op.Path)
+			var data []byte
+			data, err = t.Get(op.Path)
+			// Invariant: a read never returns bytes nobody wrote there
+			// (paths from earlier scenarios are not tracked).
+			if w, tracked := written[op.Path]; err == nil && tracked && !slices.Contains(w, sha256.Sum256(data)) {
+				errs = append(errs, fmt.Errorf("a read of %s at %v returned %d bytes never written there", op.Path, op.At, len(data)))
+			}
 		case Delete:
 			err = t.Delete(op.Path)
 			switch a := acked[op.Path]; {
@@ -171,7 +180,6 @@ func RunTarget(s Scenario, t Target, bound time.Duration, logf func(string, ...a
 	}
 	<-faultsDone
 
-	var errs []error
 	quiet := time.Now()
 	for {
 		mu.Lock()
