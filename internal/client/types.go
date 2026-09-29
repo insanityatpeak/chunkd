@@ -24,6 +24,8 @@ type ChunkRef struct {
 	ID       string   `json:"id"` // hex SHA-256
 	Size     int64    `json:"size"`
 	Replicas []string `json:"replicas"`
+	// Deduped: the cluster already held this chunk, so Put did not send it.
+	Deduped bool `json:"deduped,omitempty"`
 	// ServedBy is the replica that returned intact data, set by Get.
 	ServedBy string `json:"servedBy,omitempty"`
 	// Rejected lists replicas whose data failed verification, set by Get.

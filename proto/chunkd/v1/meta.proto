@@ -18,6 +18,21 @@ message BeginUploadOp {
   int64 size = 3;
   int32 chunk_size = 4;
   repeated Replicas placement = 5;
+  // Set by servers that require every chunk to be claimed before commit.
+  // Unset in logs written before claims existed, so they replay unchanged.
+  bool claims = 6;
+}
+
+message ChunkClaim {
+  int32 index = 1;
+  bytes id = 2;
+}
+
+// ClaimChunksOp records that an upload is about to reference these chunks.
+// A claimed chunk is marked for GC from before any copy of it is written.
+message ClaimChunksOp {
+  uint64 upload_id = 1;
+  repeated ChunkClaim claims = 2;
 }
 
 message CommitUploadOp {
@@ -42,6 +57,7 @@ message Op {
     CommitUploadOp commit = 2;
     AbortUploadOp abort = 3;
     DeleteOp delete = 4;
+    ClaimChunksOp claim = 5;
   }
 }
 
@@ -78,6 +94,7 @@ message ChunkRecord {
 message UploadRecord {
   uint64 id = 1;
   BeginUploadOp begin = 2;
+  repeated ChunkClaim claims = 3;
 }
 
 message MetaSnapshot {
@@ -123,6 +140,19 @@ message CommitUploadRequest {
 
 message CommitUploadResponse {
   uint64 version = 1;
+}
+
+message ClaimChunksRequest {
+  uint64 upload_id = 1;
+  repeated ChunkClaim claims = 2;
+}
+
+message ClaimChunksResponse {
+  // present[i]: claims[i] already has enough replicas on alive nodes, so
+  // the client skips writing it (dedup). A hint: commit re-checks.
+  repeated bool present = 1;
+  // Where each present chunk is, for the client's manifest.
+  repeated ChunkPlacement locations = 2;
 }
 
 message AbortUploadRequest {

@@ -79,11 +79,12 @@ const metaAttempts = 6
 
 // Put uploads r (exactly size bytes) as a new version of path.
 //
-// Protocol: Begin (placement per chunk) → for each chunk, put to every
-// placed replica in parallel → Commit, retried while block reports are in
-// flight. Any failure aborts the upload so nothing becomes visible.
-// SIMPLIFIED: chunks go one at a time. HDFS keeps a window of packets in
-// flight so disk and network overlap.
+// Protocol: Begin (placement per chunk) → for each chunk, Claim it, then
+// put it to every placed replica in parallel unless the claim found it
+// present → Commit, retried while block reports are in flight. Any failure
+// aborts the upload so nothing becomes visible.
+// SIMPLIFIED: chunks go one at a time, with one claim round trip each. HDFS
+// keeps a window of packets in flight so disk and network overlap.
 func (c *Direct) Put(ctx context.Context, path string, r io.Reader, size int64, opts PutOptions) (Manifest, error) {
 	expected := opts.ExpectedVersion
 	if opts.Overwrite {
@@ -127,8 +128,18 @@ func (c *Direct) upload(ctx context.Context, path string, r io.Reader, size int6
 		if ch.Index >= len(begin.GetPlacement()) {
 			return Manifest{}, iface.Errorf(iface.CodeInvalid, "input longer than the declared %d bytes", size)
 		}
-		ref, err := c.putChunk(ctx, ch, begin.GetPlacement()[ch.Index], int(begin.GetMinReplicas()))
-		if err != nil {
+		var claim chunkdv1.ClaimChunksResponse
+		if err := c.meta(ctx, wire.KindClaim, &chunkdv1.ClaimChunksRequest{UploadId: begin.GetUploadId(),
+			Claims: []*chunkdv1.ChunkClaim{{Index: int32(ch.Index), Id: ch.ID[:]}}}, &claim); err != nil {
+			return Manifest{}, err
+		}
+		var ref ChunkRef
+		if len(claim.GetPresent()) == 1 && claim.GetPresent()[0] {
+			ref = ChunkRef{Index: ch.Index, ID: ch.ID.String(), Size: int64(len(ch.Data)), Deduped: true}
+			for _, r := range claim.GetLocations()[0].GetReplicas() {
+				ref.Replicas = append(ref.Replicas, r.GetNode())
+			}
+		} else if ref, err = c.putChunk(ctx, ch, begin.GetPlacement()[ch.Index], int(begin.GetMinReplicas())); err != nil {
 			return Manifest{}, err
 		}
 		m.Chunk = append(m.Chunk, ref)

@@ -40,66 +40,80 @@
     },
     {
       "seq": 6,
-      "atMs": 30416,
+      "atMs": 30410,
       "kind": "corrupt",
       "node": "node-2",
-      "text": "chunk 03097f628b88 failed verification: copy quarantined"
+      "text": "chunk 46467b005358 failed verification: copy quarantined"
     },
     {
       "seq": 7,
-      "atMs": 30416,
+      "atMs": 30410,
       "kind": "copy",
-      "node": "node-5",
-      "text": "copy 1 started: chunk 03097f628b88 from node-3, 4194304 bytes"
+      "node": "node-2",
+      "text": "copy 1 started: chunk 46467b005358 from node-3, 4194304 bytes"
     },
     {
       "seq": 8,
-      "atMs": 30512,
+      "atMs": 30507,
       "kind": "copy",
-      "node": "node-5",
-      "text": "copy 1 completed after 96ms"
+      "node": "node-2",
+      "text": "copy 1 completed after 98ms"
     },
     {
       "seq": 9,
-      "atMs": 30938,
+      "atMs": 30913,
       "kind": "corrupt",
       "node": "node-2",
-      "text": "chunk 2715a35cacab failed verification: copy quarantined"
+      "text": "chunk 5ac0bbdc1c6f failed verification: copy quarantined"
     },
     {
       "seq": 10,
-      "atMs": 30938,
+      "atMs": 30913,
       "kind": "copy",
-      "node": "node-4",
-      "text": "copy 2 started: chunk 2715a35cacab from node-1, 1048576 bytes"
+      "node": "node-2",
+      "text": "copy 2 started: chunk 5ac0bbdc1c6f from node-3, 1048576 bytes"
     },
     {
       "seq": 11,
-      "atMs": 31021,
+      "atMs": 30996,
       "kind": "copy",
-      "node": "node-4",
-      "text": "copy 2 completed after 83ms"
+      "node": "node-2",
+      "text": "copy 2 completed after 84ms"
     },
     {
       "seq": 12,
-      "atMs": 32526,
+      "atMs": 32180,
       "kind": "corrupt",
       "node": "node-2",
       "text": "chunk e4a24094e284 failed verification: copy quarantined"
     },
     {
       "seq": 13,
-      "atMs": 32526,
+      "atMs": 32180,
       "kind": "copy",
       "node": "node-2",
-      "text": "copy 3 started: chunk e4a24094e284 from node-1, 4194304 bytes"
+      "text": "copy 3 started: chunk e4a24094e284 from node-3, 4194304 bytes"
     },
     {
       "seq": 14,
-      "atMs": 32634,
+      "atMs": 42180,
       "kind": "copy",
       "node": "node-2",
-      "text": "copy 3 completed after 108ms"
+      "text": "copy 3 timed out after 10s"
+    },
+    {
+      "seq": 15,
+      "atMs": 42180,
+      "kind": "copy",
+      "node": "node-2",
+      "text": "copy 4 started: chunk e4a24094e284 from node-3, 4194304 bytes"
+    },
+    {
+      "seq": 16,
+      "atMs": 42314,
+      "kind": "copy",
+      "node": "node-2",
+      "text": "copy 4 completed after 134ms"
     }
   ],
   "reads": []

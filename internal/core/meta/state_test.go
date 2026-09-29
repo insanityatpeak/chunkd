@@ -204,3 +204,104 @@ func TestApplyInvalidPanics(t *testing.T) {
 	}()
 	New().Apply(abort(99))
 }
+
+func beginClaims(path string, expected uint64, size int64) *chunkdv1.Op {
+	op := begin(path, expected, size)
+	op.GetBegin().Claims = true
+	return op
+}
+
+// claimOp claims chunk i of the file commit(id, _, tag) will commit.
+func claimOp(id uint64, tag byte, idx ...int) *chunkdv1.Op {
+	c := &chunkdv1.ClaimChunksOp{UploadId: id}
+	for _, i := range idx {
+		h := sha256.Sum256([]byte{tag, byte(i)})
+		c.Claims = append(c.Claims, &chunkdv1.ChunkClaim{Index: int32(i), Id: h[:]})
+	}
+	return &chunkdv1.Op{Op: &chunkdv1.Op_Claim{Claim: c}}
+}
+
+func TestClaims(t *testing.T) {
+	ok := iface.CodeUnknown
+	tests := []struct {
+		name        string
+		steps       []step
+		wantClaimed int // chunks still claimed by pending uploads
+	}{
+		{"commit needs every chunk claimed", []step{
+			{beginClaims("/a", 0, 8), ok, Result{UploadID: 1}},
+			{claimOp(1, 'a', 0), ok, Result{UploadID: 1}},
+			{commit(1, 2, 'a'), iface.CodeInvalid, Result{}},
+			{claimOp(1, 'a', 1), ok, Result{UploadID: 1}},
+			{commit(1, 2, 'a'), ok, Result{UploadID: 1, Version: 1}},
+		}, 0},
+		{"a claim for other content does not cover the chunk", []step{
+			{beginClaims("/a", 0, 4), ok, Result{UploadID: 1}},
+			{claimOp(1, 'x', 0), ok, Result{UploadID: 1}},
+			{commit(1, 1, 'a'), iface.CodeInvalid, Result{}},
+		}, 1},
+		{"re-claim is a retry, a different id is rejected", []step{
+			{beginClaims("/a", 0, 4), ok, Result{UploadID: 1}},
+			{claimOp(1, 'a', 0), ok, Result{UploadID: 1}},
+			{claimOp(1, 'a', 0), ok, Result{UploadID: 1}},
+			{claimOp(1, 'b', 0), iface.CodeInvalid, Result{}},
+		}, 1},
+		{"claims outside the upload are rejected", []step{
+			{beginClaims("/a", 0, 4), ok, Result{UploadID: 1}},
+			{claimOp(1, 'a', 1), iface.CodeInvalid, Result{}},
+			{claimOp(9, 'a', 0), iface.CodeNotFound, Result{}},
+		}, 0},
+		{"abort releases claims", []step{
+			{beginClaims("/a", 0, 8), ok, Result{UploadID: 1}},
+			{claimOp(1, 'a', 0, 1), ok, Result{UploadID: 1}},
+			{abort(1), ok, Result{UploadID: 1}},
+		}, 0},
+		{"two uploads claiming one chunk both hold it", []step{
+			{beginClaims("/a", 0, 4), ok, Result{UploadID: 1}},
+			{beginClaims("/b", 0, 4), ok, Result{UploadID: 2}},
+			{claimOp(1, 'a', 0), ok, Result{UploadID: 1}},
+			{claimOp(2, 'a', 0), ok, Result{UploadID: 2}},
+			{abort(1), ok, Result{UploadID: 1}},
+		}, 1},
+		{"uploads from before claims commit without them", []step{
+			{begin("/a", 0, 4), ok, Result{UploadID: 1}},
+			{commit(1, 1, 'a'), ok, Result{UploadID: 1, Version: 1}},
+		}, 0},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			s := New()
+			run(t, s, tt.steps)
+			if len(s.claimed) != tt.wantClaimed {
+				t.Fatalf("%d chunks claimed, want %d", len(s.claimed), tt.wantClaimed)
+			}
+			r, err := Restore(s.Snapshot())
+			if err != nil {
+				t.Fatal(err)
+			}
+			if !bytes.Equal(r.Snapshot(), s.Snapshot()) || len(r.claimed) != len(s.claimed) {
+				t.Fatal("claims did not survive a snapshot")
+			}
+		})
+	}
+}
+
+func TestDedupAccounting(t *testing.T) {
+	s := New()
+	// Two files with identical content (tag 'a', 2 chunks of 4 bytes) and
+	// one with its own: 3 files × 8 bytes referenced, 16 distinct.
+	run(t, s, []step{
+		{beginClaims("/a", 0, 8), iface.CodeUnknown, Result{UploadID: 1}},
+		{claimOp(1, 'a', 0, 1), iface.CodeUnknown, Result{UploadID: 1}},
+		{commit(1, 2, 'a'), iface.CodeUnknown, Result{UploadID: 1, Version: 1}},
+		{beginClaims("/b", 0, 8), iface.CodeUnknown, Result{UploadID: 2}},
+		{claimOp(2, 'a', 0, 1), iface.CodeUnknown, Result{UploadID: 2}},
+		{commit(2, 2, 'a'), iface.CodeUnknown, Result{UploadID: 2, Version: 1}},
+		{beginClaims("/c", 0, 8), iface.CodeUnknown, Result{UploadID: 3}},
+		{claimOp(3, 'c', 0, 1), iface.CodeUnknown, Result{UploadID: 3}},
+		{commit(3, 2, 'c'), iface.CodeUnknown, Result{UploadID: 3, Version: 1}},
+	})
+	if ref, uniq := s.Dedup(); ref != 24 || uniq != 16 {
+		t.Fatalf("referenced %d, unique %d; want 24, 16", ref, uniq)
+	}
+}

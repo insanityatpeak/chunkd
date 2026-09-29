@@ -47,10 +47,14 @@ type Upload struct {
 	Size      int64
 	ChunkSize int
 	Placement [][]iface.NodeID
+	// Claims: every chunk must be claimed before commit (ADR-0015). False
+	// only for uploads begun before claims existed.
+	Claims  bool
+	Claimed map[int]iface.ChunkID
 }
 
-// ChunkInfo is the durable record of a chunk. Refcount counts committed
-// versions that reference it; Phase 4 GC decrements it.
+// ChunkInfo is the durable record of a chunk. Refcount counts references
+// from committed versions; hard delete decrements it.
 type ChunkInfo struct {
 	Refcount uint64
 	Size     int64
@@ -62,6 +66,9 @@ type State struct {
 	chunks       map[iface.ChunkID]*ChunkInfo
 	uploads      map[uint64]*Upload
 	lastUploadID uint64
+	// claimed counts pending-upload claims per chunk: the GC mark set beyond
+	// refcounts. Derived from uploads, so not stored separately.
+	claimed map[iface.ChunkID]int
 	// committed indexes versions by the upload that created them; rebuilt
 	// from files on restore, so it is not stored separately.
 	committed map[uint64]Committed
@@ -81,7 +88,7 @@ type Result struct {
 
 // New returns empty state.
 func New() *State {
-	return &State{files: map[string]*File{}, chunks: map[iface.ChunkID]*ChunkInfo{}, uploads: map[uint64]*Upload{}, committed: map[uint64]Committed{}}
+	return &State{files: map[string]*File{}, chunks: map[iface.ChunkID]*ChunkInfo{}, uploads: map[uint64]*Upload{}, committed: map[uint64]Committed{}, claimed: map[iface.ChunkID]int{}}
 }
 
 // ValidPath reports whether p is an absolute, clean path to a file.
@@ -146,9 +153,35 @@ func (s *State) Validate(op *chunkdv1.Op) error {
 		if len(c.GetSha256()) != 32 {
 			return iface.Errorf(iface.CodeInvalid, "file sha256 of %d bytes", len(c.GetSha256()))
 		}
+		if u.Claims {
+			for i, raw := range c.GetChunkIds() {
+				if id, ok := u.Claimed[i]; !ok || !bytes.Equal(id[:], raw) {
+					return iface.Errorf(iface.CodeInvalid, "chunk %d was not claimed by upload %d", i, u.ID)
+				}
+			}
+		}
 		// Rechecked here: another writer may have committed since Begin.
 		if live := s.liveVersion(u.Path); live != u.Expected {
 			return iface.Errorf(iface.CodeConflict, "%s moved to version %d since upload began at %d", u.Path, live, u.Expected)
+		}
+	case *chunkdv1.Op_Claim:
+		c := o.Claim
+		u := s.uploads[c.GetUploadId()]
+		if u == nil {
+			return iface.Errorf(iface.CodeNotFound, "upload %d", c.GetUploadId())
+		}
+		for _, cl := range c.GetClaims() {
+			i := int(cl.GetIndex())
+			if i < 0 || i >= len(u.Placement) {
+				return iface.Errorf(iface.CodeInvalid, "claim for chunk %d, upload has %d chunks", i, len(u.Placement))
+			}
+			if len(cl.GetId()) != len(iface.ChunkID{}) {
+				return iface.Errorf(iface.CodeInvalid, "chunk id of %d bytes", len(cl.GetId()))
+			}
+			// Re-claiming the same chunk is a retry; a different one is a bug.
+			if id, ok := u.Claimed[i]; ok && !bytes.Equal(id[:], cl.GetId()) {
+				return iface.Errorf(iface.CodeInvalid, "chunk %d of upload %d already claimed as %s", i, u.ID, id)
+			}
 		}
 	case *chunkdv1.Op_Abort:
 		if s.uploads[o.Abort.GetUploadId()] == nil {
@@ -179,7 +212,7 @@ func (s *State) Apply(op *chunkdv1.Op) Result {
 	case *chunkdv1.Op_Begin:
 		b := o.Begin
 		s.lastUploadID++
-		u := &Upload{ID: s.lastUploadID, Path: b.GetPath(), Expected: b.GetExpectedVersion(), Size: b.GetSize(), ChunkSize: int(b.GetChunkSize())}
+		u := &Upload{ID: s.lastUploadID, Path: b.GetPath(), Expected: b.GetExpectedVersion(), Size: b.GetSize(), ChunkSize: int(b.GetChunkSize()), Claims: b.GetClaims(), Claimed: map[int]iface.ChunkID{}}
 		for _, r := range b.GetPlacement() {
 			nodes := make([]iface.NodeID, len(r.GetNodes()))
 			for i, n := range r.GetNodes() {
@@ -207,10 +240,16 @@ func (s *State) Apply(op *chunkdv1.Op) Result {
 		}
 		s.appendVersion(u.Path, v)
 		s.committed[u.ID] = Committed{Path: u.Path, Version: v.V}
-		delete(s.uploads, u.ID)
+		s.dropUpload(u)
 		return Result{UploadID: u.ID, Version: v.V}
+	case *chunkdv1.Op_Claim:
+		u := s.uploads[o.Claim.GetUploadId()]
+		for _, cl := range o.Claim.GetClaims() {
+			s.claim(u, int(cl.GetIndex()), cl.GetId())
+		}
+		return Result{UploadID: u.ID}
 	case *chunkdv1.Op_Abort:
-		delete(s.uploads, o.Abort.GetUploadId())
+		s.dropUpload(s.uploads[o.Abort.GetUploadId()])
 		return Result{UploadID: o.Abort.GetUploadId()}
 	case *chunkdv1.Op_Delete:
 		p := o.Delete.GetPath()
@@ -219,6 +258,43 @@ func (s *State) Apply(op *chunkdv1.Op) Result {
 		return Result{Version: v.V}
 	}
 	panic("unreachable")
+}
+
+func (s *State) claim(u *Upload, i int, raw []byte) {
+	if _, ok := u.Claimed[i]; ok {
+		return
+	}
+	var id iface.ChunkID
+	copy(id[:], raw)
+	u.Claimed[i] = id
+	s.claimed[id]++
+}
+
+// dropUpload ends a pending upload and releases its claims. On commit the
+// refcounts taken just before keep the chunks marked.
+func (s *State) dropUpload(u *Upload) {
+	for _, id := range u.Claimed {
+		if s.claimed[id]--; s.claimed[id] == 0 {
+			delete(s.claimed, id)
+		}
+	}
+	delete(s.uploads, u.ID)
+}
+
+// Claimed reports whether a pending upload has claimed chunk id.
+func (s *State) Claimed(id iface.ChunkID) bool { return s.claimed[id] > 0 }
+
+// Dedup returns the bytes committed versions reference (each reference
+// counted) and the bytes of distinct referenced chunks: what one copy of
+// each costs. The difference is what dedup saves per replica.
+func (s *State) Dedup() (referenced, unique int64) {
+	for _, c := range s.chunks {
+		if c.Refcount > 0 {
+			referenced += c.Size * int64(c.Refcount)
+			unique += c.Size
+		}
+	}
+	return referenced, unique
 }
 
 func (s *State) appendVersion(p string, v Version) {
@@ -333,7 +409,7 @@ func (s *State) Snapshot() []byte {
 	}
 	for _, id := range slices.Sorted(maps.Keys(s.uploads)) {
 		u := s.uploads[id]
-		b := &chunkdv1.BeginUploadOp{Path: u.Path, ExpectedVersion: u.Expected, Size: u.Size, ChunkSize: int32(u.ChunkSize)}
+		b := &chunkdv1.BeginUploadOp{Path: u.Path, ExpectedVersion: u.Expected, Size: u.Size, ChunkSize: int32(u.ChunkSize), Claims: u.Claims}
 		for _, r := range u.Placement {
 			rep := &chunkdv1.Replicas{}
 			for _, n := range r {
@@ -341,7 +417,12 @@ func (s *State) Snapshot() []byte {
 			}
 			b.Placement = append(b.Placement, rep)
 		}
-		snap.Uploads = append(snap.Uploads, &chunkdv1.UploadRecord{Id: id, Begin: b})
+		rec := &chunkdv1.UploadRecord{Id: id, Begin: b}
+		for _, i := range slices.Sorted(maps.Keys(u.Claimed)) {
+			cid := u.Claimed[i]
+			rec.Claims = append(rec.Claims, &chunkdv1.ChunkClaim{Index: int32(i), Id: cid[:]})
+		}
+		snap.Uploads = append(snap.Uploads, rec)
 	}
 	out, err := proto.MarshalOptions{Deterministic: true}.Marshal(snap)
 	if err != nil {
@@ -385,7 +466,7 @@ func Restore(data []byte) (*State, error) {
 	}
 	for _, u := range snap.GetUploads() {
 		b := u.GetBegin()
-		up := &Upload{ID: u.GetId(), Path: b.GetPath(), Expected: b.GetExpectedVersion(), Size: b.GetSize(), ChunkSize: int(b.GetChunkSize())}
+		up := &Upload{ID: u.GetId(), Path: b.GetPath(), Expected: b.GetExpectedVersion(), Size: b.GetSize(), ChunkSize: int(b.GetChunkSize()), Claims: b.GetClaims(), Claimed: map[int]iface.ChunkID{}}
 		for _, r := range b.GetPlacement() {
 			var nodes []iface.NodeID
 			for _, n := range r.GetNodes() {
@@ -394,6 +475,9 @@ func Restore(data []byte) (*State, error) {
 			up.Placement = append(up.Placement, nodes)
 		}
 		s.uploads[up.ID] = up
+		for _, cl := range u.GetClaims() {
+			s.claim(up, int(cl.GetIndex()), cl.GetId())
+		}
 	}
 	return s, nil
 }

@@ -61,21 +61,40 @@ func (e *env) rpc(t *testing.T, to iface.NodeID, kind string, body []byte) ([]by
 	return r[0].Body, r[0].Err
 }
 
-// upload runs the protocol by hand: begin, put every chunk to its placement,
-// commit with retries.
+// upload runs the protocol by hand: begin, claim and put every chunk the
+// cluster lacks, commit with retries.
 func (e *env) upload(t *testing.T, path string, data []byte) (uint64, error) {
+	v, _, err := e.uploadCounting(t, path, data)
+	return v, err
+}
+
+// uploadCounting is upload that also returns how many chunks were skipped
+// because a claim found them present.
+func (e *env) uploadCounting(t *testing.T, path string, data []byte) (uint64, int, error) {
 	t.Helper()
 	body, err := e.rpc(t, "meta", wire.KindBegin, wire.Marshal(&chunkdv1.BeginUploadRequest{Path: path, Size: int64(len(data))}))
 	if err != nil {
-		return 0, err
+		return 0, 0, err
 	}
 	var begin chunkdv1.BeginUploadResponse
 	wire.Decode(body, &begin)
 	var ids [][]byte
+	skipped := 0
 	for i, pl := range begin.GetPlacement() {
 		part := data[i*4 : min((i+1)*4, len(data))]
 		id := sha256.Sum256(part)
 		ids = append(ids, id[:])
+		body, err := e.rpc(t, "meta", wire.KindClaim, wire.Marshal(&chunkdv1.ClaimChunksRequest{UploadId: begin.GetUploadId(),
+			Claims: []*chunkdv1.ChunkClaim{{Index: int32(i), Id: id[:]}}}))
+		if err != nil {
+			return 0, 0, err
+		}
+		var claim chunkdv1.ClaimChunksResponse
+		wire.Decode(body, &claim)
+		if claim.GetPresent()[0] {
+			skipped++
+			continue
+		}
 		var calls []iface.Call
 		for _, r := range pl.GetReplicas() {
 			calls = append(calls, iface.Call{To: iface.NodeID(r.GetNode()), Kind: wire.KindPutChunk, Body: wire.Marshal(&chunkdv1.PutChunkRequest{Id: id[:], Data: part})})
@@ -92,11 +111,20 @@ func (e *env) upload(t *testing.T, path string, data []byte) (uint64, error) {
 		e.clock.Advance(100 * time.Millisecond)
 	}
 	if err != nil {
-		return 0, err
+		return 0, skipped, err
 	}
 	var resp chunkdv1.CommitUploadResponse
 	wire.Decode(body, &resp)
-	return resp.GetVersion(), nil
+	return resp.GetVersion(), skipped, nil
+}
+
+// claim claims chunk i of an upload as id.
+func (e *env) claim(t *testing.T, upload uint64, i int, id []byte) {
+	t.Helper()
+	if _, err := e.rpc(t, "meta", wire.KindClaim, wire.Marshal(&chunkdv1.ClaimChunksRequest{UploadId: upload,
+		Claims: []*chunkdv1.ChunkClaim{{Index: int32(i), Id: id}}})); err != nil {
+		t.Fatal(err)
+	}
 }
 
 func (e *env) stat(t *testing.T, path string) (*chunkdv1.StatResponse, error) {
@@ -143,6 +171,7 @@ func TestCommitRequiresMinReplicas(t *testing.T) {
 	e.net.Crash("n3")
 	data := []byte("abcd")
 	id := sha256.Sum256(data)
+	e.claim(t, begin.GetUploadId(), 0, id[:])
 	var calls []iface.Call
 	for _, r := range begin.GetPlacement()[0].GetReplicas() {
 		calls = append(calls, iface.Call{To: iface.NodeID(r.GetNode()), Kind: wire.KindPutChunk, Body: wire.Marshal(&chunkdv1.PutChunkRequest{Id: id[:], Data: data})})
@@ -197,7 +226,7 @@ func TestRestartRecoversStateAndLocations(t *testing.T) {
 func TestSnapshotDuringOperationRecovers(t *testing.T) {
 	e := newEnv(t, 3)
 	cfg := meta.DefaultConfig("meta")
-	cfg.ChunkSize, cfg.SnapshotEvery = 4, 3
+	cfg.ChunkSize, cfg.SnapshotEvery = 4, 5
 	srv, err := meta.NewServer(context.Background(), meta.Deps{Clock: e.clock, Net: e.net, Store: e.store, Rand: e.rng, Log: e.log}, cfg)
 	if err != nil {
 		t.Fatal(err)
@@ -205,13 +234,13 @@ func TestSnapshotDuringOperationRecovers(t *testing.T) {
 	srv.Start()
 	e.srv = srv
 	e.clock.Advance(3 * time.Second) // a new server knows no nodes until they heartbeat
-	for i := range 4 {               // 8 ops: snapshots at 3 and 6, two entries after
+	for i := range 4 {               // 12 ops (begin, claim, commit): snapshots at 5 and 10, two entries after
 		if _, err := e.upload(t, fmt.Sprintf("/s%d", i), []byte("data")); err != nil {
 			t.Fatal(err)
 		}
 	}
-	if at, _, _ := e.store.LoadSnapshot(context.Background()); at != 6 {
-		t.Fatalf("snapshot at %d, want 6", at)
+	if at, _, _ := e.store.LoadSnapshot(context.Background()); at != 10 {
+		t.Fatalf("snapshot at %d, want 10", at)
 	}
 	before := e.srv.State().Snapshot()
 	e.startMeta(t)
@@ -230,6 +259,7 @@ func TestCommitAndDeleteAreIdempotent(t *testing.T) {
 	wire.Decode(body, &begin)
 	data := []byte("abcd")
 	id := sha256.Sum256(data)
+	e.claim(t, begin.GetUploadId(), 0, id[:])
 	var calls []iface.Call
 	for _, r := range begin.GetPlacement()[0].GetReplicas() {
 		calls = append(calls, iface.Call{To: iface.NodeID(r.GetNode()), Kind: wire.KindPutChunk, Body: wire.Marshal(&chunkdv1.PutChunkRequest{Id: id[:], Data: data})})
@@ -258,5 +288,40 @@ func TestCommitAndDeleteAreIdempotent(t *testing.T) {
 	e.startMeta(t)
 	if _, err := e.rpc(t, "meta", wire.KindCommit, commit); err != nil {
 		t.Fatalf("commit retry after restart: %v", err)
+	}
+}
+
+func TestDedupSkipsPresentChunks(t *testing.T) {
+	e := newEnv(t, 3)
+	data := []byte("same bytes, twice")
+	if _, n, err := e.uploadCounting(t, "/a", data); err != nil || n != 0 {
+		t.Fatalf("first upload: skipped %d, err %v; want 0, nil", n, err)
+	}
+	e.clock.Advance(time.Second) // reports for /a arrive
+	v, n, err := e.uploadCounting(t, "/b", data)
+	if want := (len(data) + 3) / 4; err != nil || n != want || v != 1 {
+		t.Fatalf("second upload: v%d, skipped %d, err %v; want v1, %d, nil", v, n, err, want)
+	}
+	if got := e.srv.DedupSkipped(); got != uint64(len(data)) {
+		t.Fatalf("skipped %d bytes, want %d", got, len(data))
+	}
+	if ref, uniq := e.srv.State().Dedup(); ref != 2*int64(len(data)) || uniq != int64(len(data)) {
+		t.Fatalf("referenced %d, unique %d; want %d, %d", ref, uniq, 2*len(data), len(data))
+	}
+}
+
+func TestCommitWithoutClaimRejected(t *testing.T) {
+	e := newEnv(t, 3)
+	body, err := e.rpc(t, "meta", wire.KindBegin, wire.Marshal(&chunkdv1.BeginUploadRequest{Path: "/a", Size: 4}))
+	if err != nil {
+		t.Fatal(err)
+	}
+	var begin chunkdv1.BeginUploadResponse
+	wire.Decode(body, &begin)
+	id := sha256.Sum256([]byte("abcd"))
+	sum := sha256.Sum256([]byte("abcd"))
+	_, err = e.rpc(t, "meta", wire.KindCommit, wire.Marshal(&chunkdv1.CommitUploadRequest{UploadId: begin.GetUploadId(), ChunkIds: [][]byte{id[:]}, Sha256: sum[:]}))
+	if iface.CodeOf(err) != iface.CodeInvalid {
+		t.Fatalf("commit of an unclaimed chunk: err = %v, want invalid", err)
 	}
 }

@@ -59,6 +59,8 @@ func main() {
 		repairBytes := p.Metrics.Counter("chunkd_repair_bytes_total", "Bytes copied by repair; rate() gives repair bytes/sec.")
 		repairCopies := p.Metrics.Counter("chunkd_repair_copies_total", "Repair copies completed.")
 		trimmed := p.Metrics.Counter("chunkd_repair_trimmed_total", "Over-replicated copies removed.")
+		dedupSaved := p.Metrics.Gauge("chunkd_meta_dedup_bytes_saved", "Bytes committed versions reference minus bytes of distinct chunks: storage dedup saves per replica.")
+		dedupSkipped := p.Metrics.Counter("chunkd_meta_dedup_skipped_bytes_total", "Chunk bytes clients did not send because the cluster already held them.")
 		var refresh func()
 		refresh = func() {
 			n := 0
@@ -86,6 +88,9 @@ func main() {
 			repairBytes.Mirror(h.Repair.Bytes)
 			repairCopies.Mirror(h.Repair.Completed)
 			trimmed.Mirror(h.Repair.Trimmed)
+			ref, uniq := srv.State().Dedup()
+			dedupSaved.Set(float64(ref - uniq))
+			dedupSkipped.Mirror(srv.DedupSkipped())
 			files.Set(float64(len(srv.State().List("/"))))
 			applied.Set(float64(srv.Applied()))
 			p.Clock.AfterFunc(time.Second, refresh)

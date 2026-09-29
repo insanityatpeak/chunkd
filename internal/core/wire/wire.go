@@ -27,6 +27,7 @@ const (
 // real mode.
 const (
 	KindBegin   = "meta.begin"
+	KindClaim   = "meta.claim"
 	KindCommit  = "meta.commit"
 	KindAbort   = "meta.abort"
 	KindDelete  = "meta.delete"

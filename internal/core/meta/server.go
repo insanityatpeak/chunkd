@@ -57,6 +57,9 @@ type Server struct {
 	events    events
 	// corruptReplicas counts copies removed after failing verification.
 	corruptReplicas uint64
+	// dedupSkipped counts chunk bytes clients did not send because a claim
+	// found them present. Not durable: it restarts at 0.
+	dedupSkipped uint64
 }
 
 // NewServer recovers durable state: the latest snapshot, then every WAL
@@ -98,6 +101,7 @@ func (s *Server) Start() {
 	s.d.Net.Listen(s.cfg.ID, s.handle)
 	for kind, h := range map[string]iface.RPCHandler{
 		wire.KindBegin:   s.begin,
+		wire.KindClaim:   s.claim,
 		wire.KindCommit:  s.commit,
 		wire.KindAbort:   s.abort,
 		wire.KindDelete:  s.delete,
@@ -131,6 +135,9 @@ func (s *Server) transition(tr detector.Transition) {
 	}
 	s.d.Log.Info("node state", "node", tr.Node, "from", tr.From.String(), "to", tr.To.String(), "restarted", tr.Restarted)
 }
+
+// DedupSkipped returns the chunk bytes clients skipped sending since start.
+func (s *Server) DedupSkipped() uint64 { return s.dedupSkipped }
 
 // State exposes the state machine for tests and invariants. Loop-owned.
 func (s *Server) State() *State { return s.state }
@@ -265,7 +272,7 @@ func (s *Server) begin(m iface.Message, respond iface.Responder) {
 		respond(nil, iface.Errorf(iface.CodeUnavailable, "%v (need %d)", err, s.cfg.MinReplicas))
 		return
 	}
-	op := &chunkdv1.BeginUploadOp{Path: req.GetPath(), ExpectedVersion: req.GetExpectedVersion(), Size: req.GetSize(), ChunkSize: int32(s.cfg.ChunkSize)}
+	op := &chunkdv1.BeginUploadOp{Path: req.GetPath(), ExpectedVersion: req.GetExpectedVersion(), Size: req.GetSize(), ChunkSize: int32(s.cfg.ChunkSize), Claims: true}
 	resp := &chunkdv1.BeginUploadResponse{ChunkSize: int32(s.cfg.ChunkSize), MinReplicas: int32(s.cfg.MinReplicas)}
 	for _, nodes := range pl {
 		r := &chunkdv1.Replicas{}
@@ -280,6 +287,42 @@ func (s *Server) begin(m iface.Message, respond iface.Responder) {
 	res, err := s.apply(&chunkdv1.Op{Op: &chunkdv1.Op_Begin{Begin: op}})
 	resp.UploadId = res.UploadID
 	wire.Respond(respond, resp, err)
+}
+
+// claim logs that an upload will reference these chunks, then tells the
+// client which already have MinReplicas copies on alive nodes so it can skip
+// sending them. The claim is logged before any copy is written, so GC marks
+// the chunk for the whole life of the upload (ADR-0015).
+// SIMPLIFIED: dedup is global. Cross-user dedup lets an uploader probe
+// whether content exists; Dropbox moved to per-user dedup after that was
+// shown in 2011, and a multi-tenant chunkd would salt chunk IDs per tenant.
+func (s *Server) claim(m iface.Message, respond iface.Responder) {
+	var req chunkdv1.ClaimChunksRequest
+	if err := wire.Decode(m.Body, &req); err != nil {
+		respond(nil, err)
+		return
+	}
+	if _, err := s.apply(&chunkdv1.Op{Op: &chunkdv1.Op_Claim{Claim: &chunkdv1.ClaimChunksOp{UploadId: req.GetUploadId(), Claims: req.GetClaims()}}}); err != nil {
+		respond(nil, err)
+		return
+	}
+	u, _ := s.state.Upload(req.GetUploadId())
+	resp := &chunkdv1.ClaimChunksResponse{}
+	for _, cl := range req.GetClaims() {
+		id, _ := wire.ChunkID(cl.GetId())
+		live := s.liveLocations(id)
+		present := len(live) >= s.cfg.MinReplicas
+		loc := &chunkdv1.ChunkPlacement{}
+		if present {
+			for _, n := range live {
+				loc.Replicas = append(loc.Replicas, s.replica(n))
+			}
+			s.dedupSkipped += uint64(chunk.SizeOf(u.Size, u.ChunkSize, int(cl.GetIndex())))
+		}
+		resp.Present = append(resp.Present, present)
+		resp.Locations = append(resp.Locations, loc)
+	}
+	wire.Respond(respond, resp, nil)
 }
 
 // commit publishes a version once every chunk has at least MinReplicas
