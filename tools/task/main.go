@@ -32,6 +32,7 @@ var commands = map[string]command{
 	"up":           {"start the compose cluster (--small for 1 meta + 3 nodes)", up},
 	"down":         {"stop the compose cluster (-v also deletes its volumes)", down},
 	"demo":         {"start the compose cluster, kill a node, narrate the repair, verify the download", demo},
+	"gif":          {"render docs/assets/demo.gif from deploy/demo.tape with vhs in Docker", gif},
 	"chaos":        {"randomized fault scenarios with invariant checks (--seed=N replays one; --seeds=N)", chaos},
 	"e2e":          {"put and get 20 MiB via the compose gateway (--up to start, --down to clean up)", e2e},
 	"trace-check":  {"fail if tracked files or outgoing commits carry attribution text", func([]string) error { return traceCheck() }},
@@ -80,6 +81,35 @@ func demo(args []string) error {
 		return err
 	}
 	return goCmd(nil, append([]string{"run", "./cmd/chunkd-demo"}, args...)...)
+}
+
+// gif renders the README GIF: the demo against a live compose cluster,
+// recorded by vhs in Docker.
+func gif([]string) error {
+	if err := run(nil, "", "docker", "compose", "up", "-d", "--build", "--wait", "--wait-timeout", "300"); err != nil {
+		return err
+	}
+	env := []string{"GOOS=linux", "GOARCH=amd64", "CGO_ENABLED=0"}
+	if err := goCmd(env, "build", "-trimpath", "-o", "bin/chunkd-demo", "./cmd/chunkd-demo"); err != nil {
+		return err
+	}
+	wd, err := os.Getwd()
+	if err != nil {
+		return err
+	}
+	if err := run(nil, "", "docker", "run", "--rm", "-v", wd+":/vhs", "-v", "/var/run/docker.sock:/var/run/docker.sock",
+		"--add-host", "host.docker.internal:host-gateway", "ghcr.io/charmbracelet/vhs:v0.10.0", "deploy/demo.tape"); err != nil {
+		return err
+	}
+	fi, err := os.Stat("docs/assets/demo.gif")
+	if err != nil {
+		return err
+	}
+	fmt.Printf("docs/assets/demo.gif: %.1f MiB (limit 5 MiB)\n", float64(fi.Size())/(1<<20))
+	if fi.Size() > 5<<20 {
+		return fmt.Errorf("demo.gif is over 5 MiB")
+	}
+	return nil
 }
 
 // chaosReal builds and starts the compose cluster, runs the real-mode

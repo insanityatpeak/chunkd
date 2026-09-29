@@ -129,6 +129,9 @@ func (d *demo) run(size int64) error {
 		for _, e := range c.Events {
 			if e.Kind == "node" && e.Node == victim {
 				d.at("%s %s", e.Node, e.Text)
+				if strings.HasSuffix(e.Text, "→ dead") {
+					d.at("repair waits 20 s in case %s is only rebooting", victim)
+				}
 			}
 		}
 		h := c.Health
