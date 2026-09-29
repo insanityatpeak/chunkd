@@ -73,15 +73,21 @@ type Op struct {
 
 // Scenario is a fault schedule plus a workload over a fixed cluster shape.
 type Scenario struct {
+	Name   string // set for hand-written scenarios
 	Seed   uint64
 	Nodes  int
 	Length time.Duration
 	Faults []Fault
 	Ops    []Op
+	// NoRepair asserts the faults are transient: zero repair copies.
+	NoRepair bool
 }
 
 func (s Scenario) String() string {
 	var b strings.Builder
+	if s.Name != "" {
+		b.WriteString(s.Name + ", ")
+	}
 	fmt.Fprintf(&b, "seed %d: %d nodes, %v, %d ops\n", s.Seed, s.Nodes, s.Length, len(s.Ops))
 	for _, f := range s.Faults {
 		b.WriteString("  " + f.String() + "\n")

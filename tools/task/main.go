@@ -74,7 +74,28 @@ func chaos(args []string) error {
 	return goCmd(nil, append([]string{"run", "./cmd/chunkd-chaos"}, fwd...)...)
 }
 
-func chaosReal([]string) error { return fmt.Errorf("chaos --mode=real: not implemented yet") }
+// chaosReal builds and starts the compose cluster, runs the real-mode
+// suite, and with --down removes the cluster afterwards.
+func chaosReal(args []string) error {
+	down := false
+	fwd := []string{"run", "./cmd/chunkd-chaos", "-mode=real"}
+	for _, a := range args {
+		switch a {
+		case "--mode=real", "-mode=real":
+		case "--down":
+			down = true
+		default:
+			fwd = append(fwd, a)
+		}
+	}
+	if err := run(nil, "", "docker", "compose", "up", "-d", "--build", "--wait", "--wait-timeout", "180"); err != nil {
+		return err
+	}
+	if down {
+		defer func() { _ = run(nil, "", "docker", "compose", "down", "-v", "--remove-orphans") }()
+	}
+	return goCmd(nil, fwd...)
+}
 
 func usage() {
 	names := make([]string, 0, len(commands))

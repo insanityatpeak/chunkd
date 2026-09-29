@@ -3,6 +3,7 @@
 //
 //	chunkd-chaos -seeds 500            seeds 1..500 in parallel (sim)
 //	chunkd-chaos -seed 63 -v           one seed, with its schedule and logs
+//	chunkd-chaos -mode real -short     the real-mode suite against docker compose
 //
 // Every failure prints the command that replays it.
 package main
@@ -17,7 +18,33 @@ import (
 	"time"
 
 	"github.com/insanityatpeak/chunkd/internal/chaos"
+	"github.com/insanityatpeak/chunkd/internal/chaos/compose"
 )
+
+// runReal runs the short suite against the compose cluster, one scenario at a
+// time, and returns the exit code.
+func runReal(gateway, project string, bound time.Duration) int {
+	t := compose.New(gateway, project)
+	logf := func(format string, args ...any) {
+		fmt.Printf("%s  %s\n", time.Now().Format("15:04:05"), fmt.Sprintf(format, args...))
+	}
+	code := 0
+	for _, s := range chaos.ShortSuite() {
+		logf("start %s", s.Name)
+		r := chaos.RunTarget(s, t, bound, logf)
+		for _, f := range r.Skipped {
+			logf("%s: skipped %v (sim only)", s.Name, f)
+		}
+		if r.Err != nil {
+			fmt.Fprintln(os.Stderr, "FAIL", r.Err)
+			code = 1
+			continue
+		}
+		logf("ok %s: longest under-replication %v (bound %v), %d repair copies, ops %v",
+			s.Name, r.LongestUnder.Round(time.Second), r.Bound, r.RepairCopies, r.Ops)
+	}
+	return code
+}
 
 func main() {
 	seed := flag.Uint64("seed", 0, "run this one seed (0: run -seeds seeds)")
@@ -25,7 +52,20 @@ func main() {
 	from := flag.Uint64("from", 1, "first seed")
 	parallel := flag.Int("parallel", runtime.NumCPU(), "scenarios run at once")
 	verbose := flag.Bool("v", false, "print each schedule and, for -seed, the cluster logs")
+	mode := flag.String("mode", "sim", "sim, or real (the compose cluster must be up)")
+	short := flag.Bool("short", false, "real mode: the short suite CI runs on every push")
+	gateway := flag.String("gateway", "http://localhost:8080", "real mode: gateway URL")
+	project := flag.String("project", "chunkd", "real mode: compose project name")
+	bound := flag.Duration("bound", 90*time.Second, "real mode: longest allowed under-replication, and settle time after quiet")
 	flag.Parse()
+
+	if *mode == "real" {
+		if !*short {
+			fmt.Fprintln(os.Stderr, "chunkd-chaos: real mode runs the -short suite only")
+			os.Exit(2)
+		}
+		os.Exit(runReal(*gateway, *project, *bound))
+	}
 
 	if *seed != 0 {
 		s := chaos.Generate(*seed, chaos.DefaultShape())
