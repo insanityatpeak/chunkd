@@ -55,7 +55,7 @@ type Cluster struct {
 	meta      *meta.Server
 	nodes     []*Node
 	client    *client.Direct
-	acked     map[string][32]byte // path -> SHA-256 of the last successful upload
+	acked     map[string]*acked
 }
 
 // Node is one simulated storage node.
@@ -68,7 +68,7 @@ type Node struct {
 // New builds and starts a cluster whose every choice derives from seed. Logs
 // go to w; pass io.Discard to silence them.
 func New(seed uint64, cfg Config, w io.Writer) *Cluster {
-	c := &Cluster{seed: seed, cfg: cfg, clock: sim.NewClock(), rng: sim.NewRand(seed), log: w, metaStore: sim.NewMetaStore(), acked: map[string][32]byte{}}
+	c := &Cluster{seed: seed, cfg: cfg, clock: sim.NewClock(), rng: sim.NewRand(seed), log: w, metaStore: sim.NewMetaStore(), acked: map[string]*acked{}}
 	c.net = sim.NewNet(c.clock, c.rng, cfg.Faults)
 	if err := c.startMeta(); err != nil {
 		panic(err) // an empty in-memory log cannot fail to recover
@@ -134,6 +134,11 @@ func (c *Cluster) startMeta() error {
 // the same log, as after a process crash. Locations come back through block
 // reports.
 func (c *Cluster) RestartMeta() error { return c.startMeta() }
+
+// AfterFunc runs f at Now()+d on the simulation's clock, including while
+// a client call is advancing it. Chaos schedules faults this way so they
+// fire on time even in the middle of a blocking operation.
+func (c *Cluster) AfterFunc(d time.Duration, f func()) { c.clock.AfterFunc(d, f) }
 
 // Tick advances simulated time by d, running every event due in that window.
 func (c *Cluster) Tick(d time.Duration) { c.clock.Advance(d) }

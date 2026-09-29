@@ -40,14 +40,28 @@ func (c *Cluster) RandomData(path string, size int64) []byte {
 	return b
 }
 
+// acked is what a path may legitimately hold, given every acknowledged and
+// ambiguous operation on it. A failed put or delete may still have been
+// applied (its response was lost), so it widens the set instead of being
+// ignored; a success narrows it.
+type acked struct {
+	hashes [][32]byte
+	// gone: the path may legitimately not exist (an ambiguous delete).
+	gone bool
+}
+
 // UploadRandom writes size random bytes to path (overwriting). On success
 // the harness remembers the content: AssertInvariants checks it stays
 // readable.
 func (c *Cluster) UploadRandom(path string, size int64) (client.Manifest, []byte, error) {
 	data := c.RandomData(path, size)
 	m, err := c.Client().Put(context.Background(), path, bytes.NewReader(data), size, client.PutOptions{Overwrite: true})
-	if err == nil {
-		c.acked[path] = sha256.Sum256(data)
+	sum := sha256.Sum256(data)
+	switch a := c.acked[path]; {
+	case err == nil:
+		c.acked[path] = &acked{hashes: [][32]byte{sum}}
+	case a != nil:
+		a.hashes = append(a.hashes, sum)
 	}
 	return m, data, err
 }
@@ -62,34 +76,41 @@ func (c *Cluster) Download(path string) ([]byte, client.Manifest, error) {
 // Delete removes path and forgets it in the acknowledged set.
 func (c *Cluster) Delete(path string) error {
 	_, err := c.Client().Delete(context.Background(), path, 0)
-	if err == nil {
+	switch a := c.acked[path]; {
+	case err == nil:
 		delete(c.acked, path)
+	case a != nil:
+		a.gone = true
 	}
 	return err
 }
 
-// AssertInvariants checks the Phase 1 invariants:
+// AssertInvariants checks:
 //
-//  1. No acknowledged data lost: every upload that returned success (and was
-//     not deleted since) reads back with the SHA-256 it was written with.
+//  1. No acknowledged data lost: every path with an acknowledged upload
+//     reads back with one of the hashes it may legitimately hold, or is
+//     absent only if an ambiguous delete may have removed it.
 //  2. Every committed file downloads, and its content matches the recorded
 //     file hash (the client checks this on every Get).
 //  3. Every chunk of every committed file has at least MinReplicas reported
-//     locations on live nodes.
+//     locations on alive nodes.
 //  4. Every committed chunk has a durable record with refcount >= 1.
 func (c *Cluster) AssertInvariants() error {
 	var errs []error
 	// Sorted: each download advances the clock, so map order would make the
 	// run nondeterministic.
 	for _, path := range slices.Sorted(maps.Keys(c.acked)) {
-		want := c.acked[path]
+		a := c.acked[path]
 		data, _, err := c.Download(path)
 		if err != nil {
+			if a.gone && iface.CodeOf(err) == iface.CodeNotFound {
+				continue
+			}
 			errs = append(errs, fmt.Errorf("acknowledged %s unreadable: %w", path, err))
 			continue
 		}
-		if got := sha256.Sum256(data); got != want {
-			errs = append(errs, fmt.Errorf("acknowledged %s reads back %x, wrote %x", path, got[:8], want[:8]))
+		if got := sha256.Sum256(data); !slices.Contains(a.hashes, got) {
+			errs = append(errs, fmt.Errorf("acknowledged %s reads back %x, not any of %d acknowledged or ambiguous versions", path, got[:8], len(a.hashes)))
 		}
 	}
 	st := c.meta.State()

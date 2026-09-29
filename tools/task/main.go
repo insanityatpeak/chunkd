@@ -32,6 +32,7 @@ var commands = map[string]command{
 	"up":           {"start the compose cluster (--small for 1 meta + 3 nodes)", up},
 	"down":         {"stop the compose cluster (-v also deletes its volumes)", down},
 	"demo":         {"scripted failure demo (not implemented yet)", func([]string) error { fmt.Println("demo: not implemented yet"); return nil }},
+	"chaos":        {"randomized fault scenarios with invariant checks (--seed=N replays one; --seeds=N)", chaos},
 	"e2e":          {"put and get 20 MiB via the compose gateway (--up to start, --down to clean up)", e2e},
 	"trace-check":  {"fail if tracked files or outgoing commits carry attribution text", func([]string) error { return traceCheck() }},
 	"ci":           {"run every check CI runs, in CI order", ci},
@@ -55,6 +56,25 @@ func main() {
 		fatal(err)
 	}
 }
+
+// chaos forwards flags to cmd/chunkd-chaos. --mode=real runs the compose
+// runner instead of the sim.
+func chaos(args []string) error {
+	for _, a := range args {
+		if a == "--mode=real" || a == "-mode=real" {
+			return chaosReal(args)
+		}
+	}
+	var fwd []string
+	for _, a := range args {
+		if a != "--mode=sim" && a != "-mode=sim" {
+			fwd = append(fwd, a)
+		}
+	}
+	return goCmd(nil, append([]string{"run", "./cmd/chunkd-chaos"}, fwd...)...)
+}
+
+func chaosReal([]string) error { return fmt.Errorf("chaos --mode=real: not implemented yet") }
 
 func usage() {
 	names := make([]string, 0, len(commands))

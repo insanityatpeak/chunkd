@@ -374,7 +374,10 @@ func (s *Scheduler) trim(id iface.ChunkID, sure []Holder) {
 	s.trimming[id] = t
 	s.clock.AfterFunc(s.cfg.CopyTimeout, func() {
 		if cur, ok := s.trimming[id]; ok && cur.ID == t.ID {
+			// Command or confirmation lost: look again now, not at the
+			// next periodic scan.
 			delete(s.trimming, id)
+			s.checkExcess(id)
 		}
 	})
 	s.send.Trim(t)
@@ -394,6 +397,16 @@ func Victim(holders []Holder) iface.NodeID {
 		}
 	}
 	return best.Node
+}
+
+// checkExcess trims id if it has more confirmed copies than Replicas.
+func (s *Scheduler) checkExcess(id iface.ChunkID) {
+	if _, ok := s.view.Want(id); !ok {
+		return
+	}
+	if a := s.assess(id, s.clock.Now()); a.missing == 0 && len(a.sure) > s.cfg.Replicas {
+		s.trim(id, a.sure)
+	}
 }
 
 // Removed tells the scheduler node deleted chunks, completing their trims.
@@ -463,7 +476,12 @@ func (s *Scheduler) Reported(node iface.NodeID, chunks []iface.ChunkID) {
 			s.stats.Completed++
 			s.stats.Bytes += uint64(c.Size)
 			s.finish(c)
+			continue
 		}
+		// A client write that dedups against an existing chunk, or a late
+		// report, can push a chunk over RF: trim now rather than at the
+		// next scan.
+		s.checkExcess(id)
 	}
 }
 
