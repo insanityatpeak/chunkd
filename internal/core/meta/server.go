@@ -75,6 +75,8 @@ type Server struct {
 	// found them present. Not durable: it restarts at 0.
 	dedupSkipped uint64
 	gc           gcState
+	// drift is the latest reconciliation's result.
+	drift Drift
 }
 
 // NewServer recovers durable state: the latest snapshot, then every WAL
@@ -154,7 +156,24 @@ func (s *Server) advanceEpoch() {
 		s.event("gc", "", "epoch %d: %d idle uploads expired, their claims released", s.state.Epoch(), res.Expired)
 	}
 	s.collect()
+	s.reconcile()
 }
+
+// reconcile recounts refcounts and claims each epoch. Drift is alarmed on
+// (metric, error log, timeline) and never auto-corrected: it means an op
+// applied wrongly, and rewriting counts would hide the bug and could let GC
+// delete a referenced chunk.
+func (s *Server) reconcile() {
+	s.drift = s.state.Reconcile()
+	if s.drift.Empty() {
+		return
+	}
+	s.d.Log.Error("refcount drift", "chunks", len(s.drift.Refcounts), "claims", len(s.drift.Claims))
+	s.event("gc", "", "refcount drift on %d chunks, claim drift on %d: GC should be stopped and the log inspected", len(s.drift.Refcounts), len(s.drift.Claims))
+}
+
+// Drift returns the latest reconciliation result.
+func (s *Server) Drift() Drift { return s.drift }
 
 func (s *Server) tick() {
 	trs := s.cluster.Tick(s.d.Clock.Now())

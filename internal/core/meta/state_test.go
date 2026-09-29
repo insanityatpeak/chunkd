@@ -488,3 +488,41 @@ func TestUndeleteRetryFindsItsResult(t *testing.T) {
 		t.Fatal("an undelete that expected v1 live matched a restore of a deleted path")
 	}
 }
+
+func TestReconcile(t *testing.T) {
+	ok := iface.CodeUnknown
+	build := func() *State {
+		s := New()
+		run(t, s, []step{
+			{beginClaims("/a", 0, 8), ok, Result{UploadID: 1}},
+			{claimOp(1, 'a', 0, 1), ok, Result{UploadID: 1}},
+			{commit(1, 2, 'a'), ok, Result{UploadID: 1, Version: 1}},
+			{beginClaims("/b", 0, 4), ok, Result{UploadID: 2}},
+			{claimOp(2, 'b', 0), ok, Result{UploadID: 2}},
+			{del("/a", 1), ok, Result{Version: 2}},
+			{advance(5), ok, Result{}},
+		})
+		return s
+	}
+	tests := []struct {
+		name       string
+		corrupt    func(s *State)
+		refs, clms int
+	}{
+		{"consistent after every op", func(*State) {}, 0, 0},
+		{"refcount too high", func(s *State) { s.chunks[chunkOf('a', 0)].Refcount++ }, 1, 0},
+		{"record lost", func(s *State) { delete(s.chunks, chunkOf('a', 1)) }, 1, 0},
+		{"record for nothing", func(s *State) { s.chunks[chunkOf('z', 0)] = &ChunkInfo{Refcount: 1, Size: 4} }, 1, 0},
+		{"claim index out of step", func(s *State) { delete(s.claimed, chunkOf('b', 0)) }, 0, 1},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			s := build()
+			tt.corrupt(s)
+			d := s.Reconcile()
+			if len(d.Refcounts) != tt.refs || len(d.Claims) != tt.clms {
+				t.Fatalf("drift %+v, want %d refcount and %d claim entries", d, tt.refs, tt.clms)
+			}
+		})
+	}
+}
