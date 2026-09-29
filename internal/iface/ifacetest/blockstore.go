@@ -105,6 +105,37 @@ func BlockStore(t *testing.T, open func(t *testing.T) iface.BlockStore) {
 		}
 	})
 
+	t.Run("quarantine", func(t *testing.T) {
+		s := open(t)
+		data, id := chunkOf(70, 5)
+		other, oid := chunkOf(30, 6)
+		_ = s.Put(ctx, id, data)
+		_ = s.Put(ctx, oid, other)
+		for range 2 { // a second quarantine, of a now missing chunk, also succeeds
+			if err := s.Quarantine(ctx, id); err != nil {
+				t.Fatal(err)
+			}
+		}
+		if _, err := s.Get(ctx, id); !errors.Is(err, iface.ErrNotFound) {
+			t.Fatalf("Get after Quarantine: %v", err)
+		}
+		var listed []iface.ChunkID
+		_ = s.List(ctx, func(id iface.ChunkID) error { listed = append(listed, id); return nil })
+		if !slices.Equal(listed, []iface.ChunkID{oid}) {
+			t.Fatalf("List after Quarantine = %v, want only the other chunk", listed)
+		}
+		if u, _ := s.Usage(ctx); u != (iface.Usage{Chunks: 1, Bytes: 30}) {
+			t.Fatalf("usage after quarantine = %+v", u)
+		}
+		// Repair can bring an intact copy back to the same store.
+		if err := s.Put(ctx, id, data); err != nil {
+			t.Fatal(err)
+		}
+		if got, err := s.Get(ctx, id); err != nil || !bytes.Equal(got, data) {
+			t.Fatalf("Get after re-Put: %v", err)
+		}
+	})
+
 	t.Run("list sorted and complete", func(t *testing.T) {
 		s := open(t)
 		var want []iface.ChunkID

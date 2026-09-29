@@ -149,6 +149,10 @@ type BlockStore interface {
 	Delete(ctx context.Context, id ChunkID) error
 	// List calls fn for every stored chunk; iteration order is unspecified.
 	List(ctx context.Context, fn func(ChunkID) error) error
+	// Quarantine moves a chunk whose bytes failed verification out of Get,
+	// List and Usage, keeping the bytes for inspection. A later Put of the
+	// intact chunk stores it again. Quarantining a missing chunk succeeds.
+	Quarantine(ctx context.Context, id ChunkID) error
 	Usage(ctx context.Context) (Usage, error)
 }
 

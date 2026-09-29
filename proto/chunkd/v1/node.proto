@@ -39,6 +39,9 @@ message BlockReport {
   // the metadata server can order reports the network reordered.
   uint64 incarnation = 5;
   uint64 seq = 6;
+  // Chunks that failed verification and were quarantined (incremental
+  // reports only); like deleted_ids, they no longer count as replicas.
+  repeated bytes corrupt_ids = 7;
 }
 
 message PutChunkRequest {

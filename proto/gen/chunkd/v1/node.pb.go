@@ -191,8 +191,11 @@ type BlockReport struct {
 	// sequence number, increasing within the incarnation. A full report with
 	// seq S lists exactly the store changes whose reports carry seq < S, so
 	// the metadata server can order reports the network reordered.
-	Incarnation   uint64 `protobuf:"varint,5,opt,name=incarnation,proto3" json:"incarnation,omitempty"`
-	Seq           uint64 `protobuf:"varint,6,opt,name=seq,proto3" json:"seq,omitempty"`
+	Incarnation uint64 `protobuf:"varint,5,opt,name=incarnation,proto3" json:"incarnation,omitempty"`
+	Seq         uint64 `protobuf:"varint,6,opt,name=seq,proto3" json:"seq,omitempty"`
+	// Chunks that failed verification and were quarantined (incremental
+	// reports only); like deleted_ids, they no longer count as replicas.
+	CorruptIds    [][]byte `protobuf:"bytes,7,rep,name=corrupt_ids,json=corruptIds,proto3" json:"corrupt_ids,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -267,6 +270,13 @@ func (x *BlockReport) GetSeq() uint64 {
 		return x.Seq
 	}
 	return 0
+}
+
+func (x *BlockReport) GetCorruptIds() [][]byte {
+	if x != nil {
+		return x.CorruptIds
+	}
+	return nil
 }
 
 type PutChunkRequest struct {
@@ -657,7 +667,7 @@ const file_chunkd_v1_node_proto_rawDesc = "" +
 	"\vincarnation\x18\b \x01(\x04R\vincarnation\"J\n" +
 	"\fHeartbeatAck\x12\x10\n" +
 	"\x03seq\x18\x01 \x01(\x04R\x03seq\x12(\n" +
-	"\x10need_full_report\x18\x02 \x01(\bR\x0eneedFullReport\"\xa7\x01\n" +
+	"\x10need_full_report\x18\x02 \x01(\bR\x0eneedFullReport\"\xc8\x01\n" +
 	"\vBlockReport\x12\x12\n" +
 	"\x04node\x18\x01 \x01(\tR\x04node\x12\x12\n" +
 	"\x04full\x18\x02 \x01(\bR\x04full\x12\x1b\n" +
@@ -665,7 +675,9 @@ const file_chunkd_v1_node_proto_rawDesc = "" +
 	"\vdeleted_ids\x18\x04 \x03(\fR\n" +
 	"deletedIds\x12 \n" +
 	"\vincarnation\x18\x05 \x01(\x04R\vincarnation\x12\x10\n" +
-	"\x03seq\x18\x06 \x01(\x04R\x03seq\"5\n" +
+	"\x03seq\x18\x06 \x01(\x04R\x03seq\x12\x1f\n" +
+	"\vcorrupt_ids\x18\a \x03(\fR\n" +
+	"corruptIds\"5\n" +
 	"\x0fPutChunkRequest\x12\x0e\n" +
 	"\x02id\x18\x01 \x01(\fR\x02id\x12\x12\n" +
 	"\x04data\x18\x02 \x01(\fR\x04data\"\x12\n" +

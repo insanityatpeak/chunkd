@@ -16,7 +16,10 @@ import (
 	"github.com/insanityatpeak/chunkd/internal/real/fsutil"
 )
 
-const tmpDir = "tmp"
+const (
+	tmpDir        = "tmp"
+	quarantineDir = "quarantine"
+)
 
 // Store implements iface.BlockStore on a local directory. Safe for
 // concurrent use.
@@ -38,8 +41,10 @@ func Open(root string) (*Store, error) {
 	if err := os.RemoveAll(filepath.Join(root, tmpDir)); err != nil {
 		return nil, err
 	}
-	if err := os.MkdirAll(filepath.Join(root, tmpDir), 0o755); err != nil {
-		return nil, err
+	for _, d := range []string{tmpDir, quarantineDir} {
+		if err := os.MkdirAll(filepath.Join(root, d), 0o755); err != nil {
+			return nil, err
+		}
 	}
 	s := &Store{root: filepath.Clean(root)}
 	err := s.walk(func(_ iface.ChunkID, path string) error {
@@ -141,6 +146,36 @@ func (s *Store) Get(_ context.Context, id iface.ChunkID) ([]byte, error) {
 	return b, err
 }
 
+// Quarantine renames a chunk into quarantine/<hash>, replacing an older
+// quarantined copy of the same chunk.
+// SIMPLIFIED: quarantined files are never removed. HDFS deletes corrupt
+// replicas once the NameNode has a good copy elsewhere; GC (Phase 4) will
+// age them out here.
+func (s *Store) Quarantine(_ context.Context, id iface.ChunkID) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	p := s.path(id)
+	fi, err := os.Stat(p)
+	if errors.Is(err, fs.ErrNotExist) {
+		return nil
+	}
+	if err != nil {
+		return err
+	}
+	if err := os.Rename(p, filepath.Join(s.root, quarantineDir, id.String())); err != nil {
+		return err
+	}
+	if err := fsutil.SyncDir(filepath.Dir(p)); err != nil {
+		return err
+	}
+	if err := fsutil.SyncDir(filepath.Join(s.root, quarantineDir)); err != nil {
+		return err
+	}
+	s.usage.Chunks--
+	s.usage.Bytes -= fi.Size()
+	return nil
+}
+
 // Delete removes a chunk; deleting a missing chunk succeeds.
 func (s *Store) Delete(_ context.Context, id iface.ChunkID) error {
 	s.mu.Lock()
@@ -173,7 +208,7 @@ func (s *Store) walk(fn func(iface.ChunkID, string) error) error {
 			return err
 		}
 		if d.IsDir() {
-			if d.Name() == tmpDir && filepath.Dir(path) == s.root {
+			if (d.Name() == tmpDir || d.Name() == quarantineDir) && filepath.Dir(path) == s.root {
 				return filepath.SkipDir
 			}
 			return nil

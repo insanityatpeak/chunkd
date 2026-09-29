@@ -162,7 +162,9 @@ func (c *Cluster) Seed() uint64 { return c.seed }
 func (c *Cluster) Config() Config { return c.cfg }
 
 // NewCaller returns a client endpoint on the sim network.
-func (c *Cluster) NewCaller(id iface.NodeID) *sim.Caller { return c.net.NewCaller(id, c.cfg.CallTimeout) }
+func (c *Cluster) NewCaller(id iface.NodeID) *sim.Caller {
+	return c.net.NewCaller(id, c.cfg.CallTimeout)
+}
 
 // ScriptKillNode is the dashboard's scripted failure: load 8 files of 5 MiB
 // if the cluster holds none, kill id now and restart it after down, all on

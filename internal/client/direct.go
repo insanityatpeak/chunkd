@@ -262,6 +262,10 @@ func (c *Direct) fetch(ctx context.Context, loc *chunkdv1.ChunkLocation, ref *Ch
 			return data, nil
 		}
 	}
+	if len(ref.Replicas) > 0 && len(ref.Rejected) == len(ref.Replicas) {
+		// Every copy is bad: retrying cannot help, so say so plainly.
+		return nil, iface.Errorf(iface.CodeCorrupt, "chunk %d (%s): every replica %v failed verification; the data is lost: %v", ref.Index, ref.ID[:12], ref.Replicas, errors.Join(errs...))
+	}
 	return nil, iface.Errorf(iface.CodeUnavailable, "chunk %d (%s): no intact replica among %v: %v", ref.Index, ref.ID[:12], ref.Replicas, errors.Join(errs...))
 }
 
@@ -304,6 +308,9 @@ func (c *Direct) fetchPass(ctx context.Context, loc *chunkdv1.ChunkLocation, ref
 		c.health.observe(reps[i].GetNode(), r, i == h.Winner)
 		if r.Err != nil && !r.Pending {
 			*errs = append(*errs, fmt.Errorf("%s: %w", reps[i].GetNode(), r.Err))
+			if iface.CodeOf(r.Err) == iface.CodeCorrupt && !slices.Contains(ref.Rejected, reps[i].GetNode()) {
+				ref.Rejected = append(ref.Rejected, reps[i].GetNode())
+			}
 		}
 	}
 	if h.Winner < 0 {

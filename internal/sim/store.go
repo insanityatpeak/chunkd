@@ -13,14 +13,17 @@ import (
 // BlockStore is an in-memory iface.BlockStore. It copies on Put and Get so
 // callers cannot alias stored bytes.
 type BlockStore struct {
-	mu     sync.Mutex
-	chunks map[iface.ChunkID][]byte
+	mu          sync.Mutex
+	chunks      map[iface.ChunkID][]byte
+	quarantined map[iface.ChunkID][]byte
 }
 
 var _ iface.BlockStore = (*BlockStore)(nil)
 
 // NewBlockStore returns an empty store.
-func NewBlockStore() *BlockStore { return &BlockStore{chunks: map[iface.ChunkID][]byte{}} }
+func NewBlockStore() *BlockStore {
+	return &BlockStore{chunks: map[iface.ChunkID][]byte{}, quarantined: map[iface.ChunkID][]byte{}}
+}
 
 func (s *BlockStore) Put(_ context.Context, id iface.ChunkID, data []byte) error {
 	if sha256.Sum256(data) != id {
@@ -65,6 +68,28 @@ func (s *BlockStore) Get(_ context.Context, id iface.ChunkID) ([]byte, error) {
 		return nil, iface.ErrNotFound
 	}
 	return bytes.Clone(b), nil
+}
+
+func (s *BlockStore) Quarantine(_ context.Context, id iface.ChunkID) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if b, ok := s.chunks[id]; ok {
+		s.quarantined[id] = b
+		delete(s.chunks, id)
+	}
+	return nil
+}
+
+// Quarantined returns the IDs of quarantined chunks in ascending order.
+func (s *BlockStore) Quarantined() []iface.ChunkID {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	ids := make([]iface.ChunkID, 0, len(s.quarantined))
+	for id := range s.quarantined {
+		ids = append(ids, id)
+	}
+	slices.SortFunc(ids, func(a, b iface.ChunkID) int { return bytes.Compare(a[:], b[:]) })
+	return ids
 }
 
 func (s *BlockStore) Delete(_ context.Context, id iface.ChunkID) error {

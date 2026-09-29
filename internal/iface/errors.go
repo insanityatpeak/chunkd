@@ -17,9 +17,10 @@ const (
 	CodeUnavailable      // not enough nodes, peer down, or timed out; retry may help
 	CodeRetry            // state not ready yet (replicas not reported); retry shortly
 	CodeInternal         // a bug
+	CodeCorrupt          // stored data does not match its hash; no intact copy was served
 )
 
-var codeNames = [...]string{"unknown", "not_found", "conflict", "invalid", "unavailable", "retry", "internal"}
+var codeNames = [...]string{"unknown", "not_found", "conflict", "invalid", "unavailable", "retry", "internal", "corrupt"}
 
 func (c Code) String() string {
 	if int(c) < len(codeNames) {

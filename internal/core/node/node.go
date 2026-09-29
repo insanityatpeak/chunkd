@@ -5,6 +5,7 @@ package node
 
 import (
 	"context"
+	"crypto/sha256"
 	"errors"
 	"log/slog"
 	"sync"
@@ -51,6 +52,8 @@ type Stats struct {
 	RepairCopies uint64 `json:"repairCopies"`
 	RepairFailed uint64 `json:"repairFailed"`
 	Trimmed      uint64 `json:"trimmed"`
+	// Corrupt counts chunks that failed verification and were quarantined.
+	Corrupt uint64 `json:"corrupt"`
 }
 
 // Node is one storage node.
@@ -71,6 +74,8 @@ type Node struct {
 	// reorders (meta.Cluster.Report).
 	reportMu  sync.RWMutex
 	reportSeq atomic.Uint64
+	// corrupt is counted by concurrent read handlers, so not in stats.
+	corrupt atomic.Uint64
 }
 
 // change runs a store mutation and returns the seq for its report.
@@ -84,13 +89,16 @@ func (n *Node) change(f func() error) (uint64, error) {
 }
 
 // report sends an incremental block report.
-func (n *Node) report(seq uint64, added, deleted []iface.ChunkID) {
+func (n *Node) report(seq uint64, added, deleted, corrupt []iface.ChunkID) {
 	r := &chunkdv1.BlockReport{Node: string(n.cfg.ID), Incarnation: n.incarnation, Seq: seq}
 	for _, id := range added {
 		r.ChunkIds = append(r.ChunkIds, id[:])
 	}
 	for _, id := range deleted {
 		r.DeletedIds = append(r.DeletedIds, id[:])
+	}
+	for _, id := range corrupt {
+		r.CorruptIds = append(r.CorruptIds, id[:])
 	}
 	n.d.Net.Send(n.cfg.Meta, iface.Message{From: n.cfg.ID, Kind: wire.KindBlockReport, Body: wire.Marshal(r)})
 }
@@ -118,7 +126,11 @@ func (n *Node) Start() {
 }
 
 // Stats returns control-traffic counters.
-func (n *Node) Stats() Stats { return n.stats }
+func (n *Node) Stats() Stats {
+	s := n.stats
+	s.Corrupt = n.corrupt.Load()
+	return s
+}
 
 // ID returns the node's ID.
 func (n *Node) ID() iface.NodeID { return n.cfg.ID }
@@ -145,7 +157,7 @@ func (n *Node) putChunk(m iface.Message, respond iface.Responder) {
 	}
 	// Incremental block report before the ack: by the time the client
 	// commits, the report is usually already in (if not, commit retries).
-	n.report(seq, []iface.ChunkID{id}, nil)
+	n.report(seq, []iface.ChunkID{id}, nil, nil)
 	respond(wire.Marshal(&chunkdv1.PutChunkResponse{}), nil)
 }
 
@@ -165,8 +177,29 @@ func (n *Node) getChunk(m iface.Message, respond iface.Responder) {
 		respond(nil, iface.AsError(err, iface.CodeInternal))
 		return
 	}
-	// Served unverified: readers check the hash and try another replica.
+	// Verified here as well as by the reader: the node is the one place
+	// that can quarantine the file and tell the metadata server, and a
+	// reader (or a gateway in between) is not trusted to report replicas.
+	if sha256.Sum256(data) != id {
+		n.quarantine(id)
+		respond(nil, iface.Errorf(iface.CodeCorrupt, "%s: chunk %s failed verification and was quarantined", n.cfg.ID, id.String()[:12]))
+		return
+	}
 	respond(wire.Marshal(&chunkdv1.GetChunkResponse{Data: data}), nil)
+}
+
+// quarantine moves a chunk that failed verification aside and reports it,
+// so the metadata server stops counting it and repair replaces it. Safe
+// from concurrent handlers.
+func (n *Node) quarantine(id iface.ChunkID) {
+	seq, err := n.change(func() error { return n.d.Store.Quarantine(context.Background(), id) })
+	if err != nil {
+		n.d.Log.Error("quarantine", "chunk", id.String()[:12], "err", err)
+		return
+	}
+	n.corrupt.Add(1)
+	n.d.Log.Warn("corrupt chunk quarantined", "chunk", id.String()[:12])
+	n.report(seq, nil, nil, []iface.ChunkID{id})
 }
 
 func (n *Node) handle(m iface.Message) {
@@ -206,7 +239,7 @@ func (n *Node) deleteReplica(m iface.Message) {
 		return
 	}
 	n.stats.Trimmed++
-	n.report(seq, nil, []iface.ChunkID{id})
+	n.report(seq, nil, []iface.ChunkID{id}, nil)
 }
 
 // replicate pulls one chunk from a peer and stores it. Put verifies the
@@ -251,7 +284,7 @@ func (n *Node) replicate(m iface.Message) {
 			return
 		}
 		n.stats.RepairCopies++
-		n.report(seq, []iface.ChunkID{id}, nil)
+		n.report(seq, []iface.ChunkID{id}, nil, nil)
 	})
 }
 

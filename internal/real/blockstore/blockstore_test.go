@@ -79,3 +79,25 @@ func TestReopenRecountsAndCleansTemp(t *testing.T) {
 		t.Fatalf("temp files survived reopen: %v", entries)
 	}
 }
+
+func TestQuarantineKeepsBytesOutOfCounts(t *testing.T) {
+	root := t.TempDir()
+	s := open(t, root)
+	ctx := context.Background()
+	data := []byte("soon rotten")
+	id := iface.ChunkID(sha256.Sum256(data))
+	_ = s.Put(ctx, id, data)
+	h := id.String()
+	os.WriteFile(filepath.Join(root, h[:2], h[2:4], h), []byte("rotten bytes"), 0o644)
+	if err := s.Quarantine(ctx, id); err != nil {
+		t.Fatal(err)
+	}
+	// Kept for inspection, exactly as found.
+	if got, err := os.ReadFile(filepath.Join(root, quarantineDir, h)); err != nil || string(got) != "rotten bytes" {
+		t.Fatalf("quarantined file = %q, %v", got, err)
+	}
+	s = open(t, root)
+	if u, _ := s.Usage(ctx); u != (iface.Usage{}) {
+		t.Fatalf("usage after reopen counts quarantine: %+v", u)
+	}
+}
