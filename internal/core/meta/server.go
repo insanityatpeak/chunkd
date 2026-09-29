@@ -599,6 +599,15 @@ func (s *Server) ClusterView(eventsAfter uint64) *chunkdv1.ClusterResponse {
 		}
 		resp.FileHealth = append(resp.FileHealth, fh)
 	}
+	for _, e := range s.state.Deleted("/") {
+		resp.Deleted = append(resp.Deleted, &chunkdv1.DeletedFile{Path: e.Path, Version: e.V, Size: e.Size,
+			ExpiresEpoch: e.RetiredAt + uint64(s.cfg.RetainEpochs)})
+	}
+	resp.ReferencedBytes, resp.DistinctBytes = s.state.Dedup()
+	resp.Epoch = s.state.Epoch()
+	resp.Gc = &chunkdv1.GCStats{Orphans: s.gc.stats.Orphans, Sent: s.gc.stats.Sent, Deleted: s.gc.stats.Deleted, Kept: s.gc.stats.Kept,
+		Drift: uint64(len(s.drift.Refcounts) + len(s.drift.Claims)), RetainEpochs: uint32(s.cfg.RetainEpochs),
+		EpochEveryMs: int64(s.cfg.EpochEvery / time.Millisecond)}
 	h := s.Health()
 	resp.Health = &chunkdv1.ClusterHealth{Chunks: int64(h.Chunks), UnderReplicated: int64(h.UnderReplicated), OverReplicated: int64(h.OverReplicated),
 		Lost: int64(h.Lost), RepairQueued: int64(h.Repair.Queued), RepairInFlight: int64(h.Repair.InFlight), RepairWaiting: int64(h.Repair.Waiting),

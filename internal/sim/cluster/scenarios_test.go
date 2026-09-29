@@ -77,3 +77,36 @@ func TestScenarios(t *testing.T) {
 		})
 	}
 }
+
+// TestScenarioGC plays the gc scenario: the edit sends only the changed
+// chunk, the deleted file is restorable until its version expires, and
+// then the sweep leaves exactly the referenced chunks on disk.
+func TestScenarioGC(t *testing.T) {
+	c := play(t, 7, "gc", 60*time.Second)
+	s := c.State()
+	if len(s.Deleted) != 1 || s.Deleted[0].Path != "/demo/file-7.bin" || s.Deleted[0].ExpiresEpoch != 4 {
+		t.Fatalf("deleted at 60 s = %+v, want /demo/file-7.bin expiring at epoch 4", s.Deleted)
+	}
+	if s.ReferencedBytes <= s.DistinctBytes {
+		t.Fatalf("referenced %d, distinct %d: the edit shares a chunk with the retained version", s.ReferencedBytes, s.DistinctBytes)
+	}
+	for end := c.Now().Add(120 * time.Second); c.Now() < end; {
+		c.Tick(50 * time.Millisecond)
+	}
+	s = c.State()
+	text := eventsText(s)
+	for _, w := range []string{"1 of 2 chunks already stored, 1 sent", "delete /demo/file-7.bin", "epoch 4: 2 versions past retention dropped", "deleting 9 unreferenced copies"} {
+		if !strings.Contains(text, w) {
+			t.Fatalf("timeline lacks %q:\n%s", w, text)
+		}
+	}
+	if len(s.Deleted) != 0 || s.GC.Deleted != 9 || s.ReferencedBytes != s.DistinctBytes {
+		t.Fatalf("after GC: deleted %+v, %d copies collected (want 9), referenced %d, distinct %d", s.Deleted, s.GC.Deleted, s.ReferencedBytes, s.DistinctBytes)
+	}
+	if err := c.AssertCollected(); err != nil {
+		t.Fatal(err)
+	}
+	if err := c.AssertInvariants(); err != nil {
+		t.Fatal(err)
+	}
+}

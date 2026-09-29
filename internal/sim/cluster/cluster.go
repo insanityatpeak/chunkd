@@ -66,8 +66,8 @@ type Cluster struct {
 	written  map[string][][32]byte
 	badReads []error
 	rotPick  uint64
-	reads    []scriptedRead // due scripted reads, in time order
-	readLog  []client.Event // results of scripted reads, newest last
+	script   []scriptedStep // due scripted client calls, in time order
+	readLog  []client.Event // results of scripted client calls, newest last
 	readSeq  uint64
 }
 
@@ -222,13 +222,13 @@ func (c *Cluster) AfterFunc(d time.Duration, f func()) { c.clock.AfterFunc(d, f)
 // a timer: a client call advances the clock itself.
 func (c *Cluster) Tick(d time.Duration) {
 	end := c.clock.Now().Add(d)
-	for len(c.reads) > 0 && c.reads[0].at <= end {
-		r := c.reads[0]
-		c.reads = c.reads[1:]
+	for len(c.script) > 0 && c.script[0].at <= end {
+		r := c.script[0]
+		c.script = c.script[1:]
 		if now := c.clock.Now(); r.at > now {
 			c.clock.Advance(r.at.Sub(now))
 		}
-		c.scriptRead(r.path)
+		r.run()
 	}
 	if now := c.clock.Now(); end > now {
 		c.clock.Advance(end.Sub(now))

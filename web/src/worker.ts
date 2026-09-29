@@ -19,6 +19,8 @@ interface ChunkdGlobal {
   download(path: string): { manifest: string; data?: Uint8Array };
   stat(path: string): string;
   remove(path: string): string;
+  log(path: string): string;
+  undelete(path: string, version: number): string;
   crash(node: string): void;
   restart(node: string): void;
   freeze(node: string, on: boolean): void;
@@ -109,6 +111,10 @@ function call(method: Method, args: unknown[]): { value: unknown; transfer: Tran
       return { value: parse(api.stat(a)), transfer: [] };
     case 'remove':
       return { value: parse(api.remove(a)), transfer: [] };
+    case 'log':
+      return { value: parse(api.log(a)), transfer: [] };
+    case 'undelete':
+      return { value: parse(api.undelete(a, b as number)), transfer: [] };
     case 'crash':
       api.crash(a);
       return none;

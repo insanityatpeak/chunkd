@@ -23,9 +23,16 @@ type State struct {
 	Copies   []client.RepairCopy `json:"copies"`
 	Events   []client.Event      `json:"events"`
 	EventSeq uint64              `json:"eventSeq"`
-	// Reads are the scripted reads' results (kind "read"), newest last,
-	// at most 100; their seq is separate from the metadata server's.
+	// Reads are the scripted client calls' results (kind "read" or
+	// "write"), newest last, at most 100; their seq is separate from the
+	// metadata server's.
 	Reads []client.Event `json:"reads"`
+	// Dedup, GC and deleted files, as in the gateway's /cluster.
+	ReferencedBytes int64                `json:"referencedBytes"`
+	DistinctBytes   int64                `json:"distinctBytes"`
+	Epoch           uint64               `json:"epoch"`
+	GC              client.GCStats       `json:"gc"`
+	Deleted         []client.DeletedFile `json:"deleted"`
 }
 
 // MetaView is the metadata server's summary.
@@ -67,7 +74,8 @@ func (c *Cluster) StateSince(seq uint64) State {
 	view := client.ClusterFromProto(c.meta.ClusterView(seq))
 	s := State{Seed: c.seed, NowMs: int64(now) / int64(time.Millisecond), Net: c.net.Stats(), Files: []FileView{},
 		Meta:   MetaView{ID: MetaID, Applied: uint64(c.meta.Applied()), Pending: c.meta.State().PendingUploads()},
-		Health: view.Health, Copies: view.Copies, Events: view.Events, EventSeq: view.EventSeq, Reads: slices.Clone(c.readLog)}
+		Health: view.Health, Copies: view.Copies, Events: view.Events, EventSeq: view.EventSeq, Reads: slices.Clone(c.readLog),
+		ReferencedBytes: view.ReferencedBytes, DistinctBytes: view.DistinctBytes, Epoch: view.Epoch, GC: view.GC, Deleted: view.Deleted}
 	if s.Reads == nil {
 		s.Reads = []client.Event{}
 	}

@@ -14,9 +14,13 @@ import (
 
 var update = flag.Bool("update", false, "rewrite web/e2e/golden files")
 
-// goldenUntil is how much simulated time a golden timeline covers. The
-// Playwright replay test waits for the page to pass it, then compares.
-const goldenUntil = 120 * time.Second
+// goldens are the shareable scenarios and how much simulated time each
+// golden timeline covers. The Playwright replay test waits for the page to
+// pass it, then compares.
+var goldens = []struct {
+	name  string
+	until time.Duration
+}{{"kill-node", 120 * time.Second}, {"corrupt-chunk", 120 * time.Second}, {"gc", 200 * time.Second}}
 
 // Golden is a scenario's timeline as the dashboard must show it.
 type Golden struct {
@@ -33,11 +37,12 @@ type Golden struct {
 // if the two ever differ, a shared link no longer replays. Regenerate with
 // go test ./internal/sim/cluster -run TestScenarioGolden -update.
 func TestScenarioGolden(t *testing.T) {
-	for _, name := range []string{"kill-node", "corrupt-chunk"} {
+	for _, gd := range goldens {
+		name := gd.name
 		t.Run(name, func(t *testing.T) {
-			c := play(t, 7, name, goldenUntil)
+			c := play(t, 7, name, gd.until)
 			s := c.State()
-			until := int64(goldenUntil / time.Millisecond)
+			until := int64(gd.until / time.Millisecond)
 			keep := func(es []client.Event) []client.Event {
 				return slices.DeleteFunc(slices.Clone(es), func(e client.Event) bool { return e.AtMs > until })
 			}

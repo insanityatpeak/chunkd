@@ -763,8 +763,13 @@ button.primary {
   text-decoration: line-through;
 }
 
-.ev.read .ev-text {
+.ev.read .ev-text,
+.ev.write .ev-text {
   color: var(--meta);
+}
+
+.ev.gc .ev-text {
+  color: var(--accent);
 }
 
 .clickable {
@@ -816,4 +821,29 @@ button.primary {
   .controls .speeds {
     display: none;
   }
+}
+
+.versions {
+  margin: 12px 0 0;
+}
+
+.versions ol {
+  list-style: none;
+  margin: 6px 0 0;
+  padding: 0;
+}
+
+.versions li {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 4px 10px;
+  padding: 4px 0;
+  border-bottom: 1px solid var(--line);
+}
+
+.versions .v {
+  min-width: 36px;
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
 }

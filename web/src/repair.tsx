@@ -76,7 +76,37 @@ export function Replication({ view }: { view: ClusterView }) {
       ) : (
         <p class="muted">No copies in flight.</p>
       )}
+      <Collection view={view} />
     </section>
+  );
+}
+
+// Collection is dedup and garbage collection: what committed versions
+// reference against what one copy of each distinct chunk costs, and the
+// sweep's counters. Absent against a pre-Phase-4 gateway.
+function Collection({ view }: { view: ClusterView }) {
+  const gc = view.gc;
+  if (!gc || view.referencedBytes === undefined || view.distinctBytes === undefined) return null;
+  const ref = view.referencedBytes;
+  const saved = ref > 0 ? Math.round((100 * (ref - view.distinctBytes)) / ref) : 0;
+  return (
+    <>
+      <h3>Dedup and GC</h3>
+      <dl class="stats">
+        <Stat label="referenced" value={formatBytes(ref)} />
+        <Stat label="distinct" value={formatBytes(view.distinctBytes)} />
+        <Stat label="dedup saves" value={`${saved}%`} />
+        <Stat label="GC epoch" value={view.epoch ?? 0} />
+        <Stat label="orphan chunks" value={gc.orphans} />
+        <Stat label="copies collected" value={gc.deleted} />
+        <Stat label="deletes refused" value={gc.kept} />
+        <Stat label="refcount drift" value={gc.drift} bad={gc.drift > 0} />
+      </dl>
+      <p class="muted small">
+        Deleted and overwritten versions stay restorable for {gc.retainEpochs} epochs of {(gc.epochEveryMs / 1000).toFixed(0)} s, then
+        their chunks lose the reference. A chunk nothing references or claims is deleted from nodes after a grace period.
+      </p>
+    </>
   );
 }
 

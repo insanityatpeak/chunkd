@@ -1,0 +1,72 @@
+{
+  "seed": 7,
+  "scenario": "gc",
+  "untilMs": 200000,
+  "events": [
+    {
+      "seq": 1,
+      "atMs": 268,
+      "kind": "node",
+      "node": "node-1",
+      "text": "joined as alive"
+    },
+    {
+      "seq": 2,
+      "atMs": 654,
+      "kind": "node",
+      "node": "node-3",
+      "text": "joined as alive"
+    },
+    {
+      "seq": 3,
+      "atMs": 818,
+      "kind": "node",
+      "node": "node-5",
+      "text": "joined as alive"
+    },
+    {
+      "seq": 4,
+      "atMs": 836,
+      "kind": "node",
+      "node": "node-2",
+      "text": "joined as alive"
+    },
+    {
+      "seq": 5,
+      "atMs": 905,
+      "kind": "node",
+      "node": "node-4",
+      "text": "joined as alive"
+    },
+    {
+      "seq": 6,
+      "atMs": 120000,
+      "kind": "gc",
+      "node": "",
+      "text": "epoch 4: 2 versions past retention dropped"
+    },
+    {
+      "seq": 7,
+      "atMs": 180000,
+      "kind": "gc",
+      "node": "",
+      "text": "deleting 9 unreferenced copies"
+    }
+  ],
+  "reads": [
+    {
+      "seq": 1,
+      "atMs": 39528,
+      "kind": "write",
+      "node": "client",
+      "text": "write /demo/file-0.bin v2, last byte changed: 1 of 2 chunks already stored, 1 sent"
+    },
+    {
+      "seq": 2,
+      "atMs": 39631,
+      "kind": "write",
+      "node": "client",
+      "text": "delete /demo/file-7.bin: a delete marker; the old version can be undeleted until it expires"
+    }
+  ]
+}

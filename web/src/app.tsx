@@ -207,6 +207,8 @@ export function App() {
           <Files
             api={api}
             files={view.files}
+            deleted={view.deleted}
+            epoch={view.epoch}
             nodes={view.nodes}
             refresh={`${view.health?.corruptReplicas ?? 0}/${view.health?.repairCompleted ?? 0}`}
             onError={setError}

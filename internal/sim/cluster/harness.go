@@ -54,8 +54,12 @@ type acked struct {
 // the harness remembers the content: AssertInvariants checks it stays
 // readable.
 func (c *Cluster) UploadRandom(path string, size int64) (client.Manifest, []byte, error) {
-	data := c.RandomData(path, size)
-	m, err := c.Client().Put(context.Background(), path, bytes.NewReader(data), size, client.PutOptions{Overwrite: true})
+	return c.Upload(path, c.RandomData(path, size))
+}
+
+// Upload writes data to path, overwriting, and records it as UploadRandom does.
+func (c *Cluster) Upload(path string, data []byte) (client.Manifest, []byte, error) {
+	m, err := c.Client().Put(context.Background(), path, bytes.NewReader(data), int64(len(data)), client.PutOptions{Overwrite: true})
 	sum := sha256.Sum256(data)
 	c.written[path] = append(c.written[path], sum)
 	switch a := c.acked[path]; {

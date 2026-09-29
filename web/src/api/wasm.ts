@@ -1,4 +1,4 @@
-import { ChunkdError, type ClusterAPI, type ClusterView, type Download, type Manifest, type ScenarioInfo } from './cluster';
+import { ChunkdError, type ClusterAPI, type ClusterView, type Download, type Manifest, type ScenarioInfo, type VersionInfo } from './cluster';
 import type { FromWorker, Method, ToWorker } from './protocol';
 
 // WasmClusterAPI runs the simulated cluster in a Web Worker so ticking and
@@ -69,6 +69,14 @@ export class WasmClusterAPI implements ClusterAPI {
 
   async remove(path: string): Promise<void> {
     await this.call('remove', [path]);
+  }
+
+  log(path: string): Promise<VersionInfo[]> {
+    return this.call('log', [path]) as Promise<VersionInfo[]>;
+  }
+
+  async undelete(path: string, version: number): Promise<number> {
+    return ((await this.call('undelete', [path, version])) as { version: number }).version;
   }
 
   pause() {

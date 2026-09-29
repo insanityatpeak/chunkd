@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'preact/hooks';
-import type { ClusterAPI, FileInfo, Manifest, NodeView } from './api/cluster';
+import type { ClusterAPI, DeletedFile, FileInfo, Manifest, NodeView, VersionInfo } from './api/cluster';
 import { formatBytes, sha256Hex } from './verify';
 
 const MAX_UPLOAD = 50 << 20;
@@ -7,6 +7,9 @@ const MAX_UPLOAD = 50 << 20;
 interface Props {
   api: ClusterAPI;
   files: FileInfo[];
+  // Deleted paths undelete can still restore, and the current GC epoch.
+  deleted?: DeletedFile[];
+  epoch?: number;
   nodes: NodeView[];
   // Changes when copies are found corrupt or repaired: re-read placement.
   refresh?: string;
@@ -21,12 +24,13 @@ interface Verified {
   name: string;
 }
 
-export function Files({ api, files, nodes, refresh }: Props) {
+export function Files({ api, files, deleted = [], epoch = 0, nodes, refresh }: Props) {
   const [selected, setSelected] = useState<string | null>(null);
   const [manifest, setManifest] = useState<Manifest | null>(null);
   const [verified, setVerified] = useState<Verified | null>(null);
   const [busy, setBusy] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const [versions, setVersions] = useState<VersionInfo[] | null>(null);
 
   // Replicas this page corrupted ("node/chunk"), red until the cluster
   // quarantines them and they leave the placement.
@@ -37,6 +41,14 @@ export function Files({ api, files, nodes, refresh }: Props) {
     if (!selected) return;
     api.stat(selected).then(setManifest, (e: Error) => setError(e.message));
   }, [api, selected, selectedVersion, refresh]);
+
+  // Re-read the log when the path changes version or an epoch expires some.
+  const deletedVersion = deleted.find((d) => d.path === selected)?.version;
+  useEffect(() => {
+    setVersions(null);
+    if (!selected) return;
+    api.log(selected).then(setVersions, () => setVersions(null));
+  }, [api, selected, selectedVersion, deletedVersion, epoch]);
 
   const corrupt = (node: string, chunk: string) =>
     run(`Corrupting ${node}'s copy of chunk ${chunk.slice(0, 8)}`, async () => {
@@ -93,10 +105,16 @@ export function Files({ api, files, nodes, refresh }: Props) {
     run(`Deleting ${path}`, async () => {
       await api.remove(path);
       if (selected === path) {
-        setSelected(null);
         setManifest(null);
         setVerified(null);
       }
+    });
+
+  const onUndelete = (path: string, version: number) =>
+    run(`Restoring ${path} v${version}`, async () => {
+      await api.undelete(path, version);
+      setSelected(path);
+      setVerified(null);
     });
 
   return (
@@ -151,6 +169,46 @@ export function Files({ api, files, nodes, refresh }: Props) {
           </tbody>
         </table>
       )}
+      {deleted.length > 0 && (
+        <>
+          <h3>Deleted, still restorable</h3>
+          <table>
+            <thead>
+              <tr>
+                <th>Path</th>
+                <th>Version</th>
+                <th>Size</th>
+                <th>Expires</th>
+                <th />
+              </tr>
+            </thead>
+            <tbody>
+              {deleted.map((d) => (
+                <tr key={d.path} class={d.path === selected ? 'selected' : ''}>
+                  <td>
+                    <button type="button" class="link-button" onClick={() => { setSelected(d.path); setVerified(null); }}>
+                      {d.path}
+                    </button>
+                  </td>
+                  <td>v{d.version}</td>
+                  <td>{formatBytes(d.size)}</td>
+                  <td title={`dropped when the GC epoch reaches ${d.expiresEpoch}; now ${epoch}`}>
+                    epoch {d.expiresEpoch} ({Math.max(d.expiresEpoch - epoch, 0)} to go)
+                  </td>
+                  <td class="actions">
+                    <button type="button" onClick={() => onUndelete(d.path, d.version)} disabled={!!busy}>
+                      Undelete
+                    </button>
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </>
+      )}
+      {selected && versions && versions.length > 0 && (
+        <Versions path={selected} versions={versions} epoch={epoch} busy={!!busy} onRestore={(v) => onUndelete(selected, v)} />
+      )}
       {manifest && manifest.path === selected && (
         <ChunkGrid manifest={manifest} nodes={nodes} rotted={rotted} onCorrupt={api.canInject ? corrupt : undefined} />
       )}
@@ -168,6 +226,53 @@ export function Files({ api, files, nodes, refresh }: Props) {
 }
 
 const RF = 3;
+
+interface VersionsProps {
+  path: string;
+  versions: VersionInfo[];
+  epoch: number;
+  busy: boolean;
+  onRestore(version: number): void;
+}
+
+// Versions is a path's retained history, newest first. Any retired real
+// version can be restored: undelete copies it as a new version.
+function Versions({ path, versions, epoch, busy, onRestore }: VersionsProps) {
+  const newest = versions.at(-1)?.version;
+  return (
+    <figure class="versions">
+      <figcaption>
+        {path}: {versions.length} retained version{versions.length === 1 ? '' : 's'}. Commits are compare-and-swap on the version.
+      </figcaption>
+      <ol>
+        {[...versions].reverse().map((v) => (
+          <li key={v.version}>
+            <span class="v">v{v.version}</span>
+            {v.deleted ? (
+              <span class="muted">delete marker</span>
+            ) : (
+              <span>
+                {formatBytes(v.size)}, {v.chunks} chunk{v.chunks === 1 ? '' : 's'}
+                {v.sha256 && <code> {v.sha256.slice(0, 12)}</code>}
+              </span>
+            )}
+            {v.version === newest && !v.deleted && <span class="rep ok">live</span>}
+            {v.retired && !v.deleted && (
+              <>
+                <span class="muted">
+                  kept until epoch {v.expiresEpoch} ({Math.max((v.expiresEpoch ?? 0) - epoch, 0)} to go)
+                </span>
+                <button type="button" onClick={() => onRestore(v.version)} disabled={busy}>
+                  Restore
+                </button>
+              </>
+            )}
+          </li>
+        ))}
+      </ol>
+    </figure>
+  );
+}
 
 // Replicas is the file's weakest chunk: RF copies is healthy, fewer is
 // under-replicated (repair pending), none alive means reads use suspect

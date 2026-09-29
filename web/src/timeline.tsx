@@ -2,11 +2,11 @@ import { useState } from 'preact/hooks';
 import type { ClusterView, TimelineEvent } from './api/cluster';
 
 const SHOWN = 200;
-const KINDS: TimelineEvent['kind'][] = ['node', 'copy', 'trim', 'corrupt', 'read'];
+const KINDS: TimelineEvent['kind'][] = ['node', 'copy', 'trim', 'corrupt', 'gc', 'read', 'write'];
 
 // EventTimeline lists recent events, newest first: the metadata server's
-// detector transitions, repair copies, trims and corrupt copies, plus the
-// scripted reads of a scenario. Sim times are absolute simulated seconds;
+// detector transitions, repair copies, trims, corrupt copies and GC, plus the
+// scripted reads and writes of a scenario. Sim times are absolute simulated seconds;
 // against a real cluster they are relative to now.
 export function EventTimeline({ view, sim }: { view: ClusterView; sim: boolean }) {
   const [hidden, setHidden] = useState<Set<string>>(new Set());
@@ -56,7 +56,7 @@ export function EventTimeline({ view, sim }: { view: ClusterView; sim: boolean }
 }
 
 function tone(text: string): string {
-  if (/→ dead|timed out|failed/.test(text)) return 'bad';
+  if (/→ dead|timed out|failed|drift/.test(text)) return 'bad';
   if (/→ suspect|re-check|hedged/.test(text)) return 'warn';
   if (/→ alive|completed|joined/.test(text)) return 'good';
   return '';

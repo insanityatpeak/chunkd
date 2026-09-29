@@ -81,9 +81,39 @@ export interface RepairCopy {
 export interface TimelineEvent {
   seq: number;
   atMs: number;
-  kind: 'node' | 'copy' | 'trim' | 'corrupt' | 'read';
+  kind: 'node' | 'copy' | 'trim' | 'corrupt' | 'read' | 'write' | 'gc';
   node: string;
   text: string;
+}
+
+// VersionInfo is one retained version of a path, oldest first in a log.
+export interface VersionInfo {
+  version: number;
+  size: number;
+  sha256?: string;
+  chunks: number;
+  deleted?: boolean; // a delete marker
+  retired?: boolean; // superseded; undelete can restore it until expiresEpoch
+  expiresEpoch?: number;
+}
+
+// DeletedFile is a deleted path with a version undelete can still restore.
+export interface DeletedFile {
+  path: string;
+  version: number;
+  size: number;
+  expiresEpoch: number;
+}
+
+// GCStats are the metadata server's sweep counters and retention settings.
+export interface GCStats {
+  orphans: number;
+  sent: number;
+  deleted: number;
+  kept: number;
+  drift: number;
+  retainEpochs: number;
+  epochEveryMs: number;
 }
 
 export interface NetStats {
@@ -104,10 +134,16 @@ export interface ClusterView {
   copies: RepairCopy[];
   // The newest events, oldest first, at most TIMELINE_MAX.
   timeline: TimelineEvent[];
-  // Scripted reads (sim only), newest last; their seq is separate.
+  // Scripted client reads and writes (sim only), newest last; their seq is separate.
   reads?: TimelineEvent[];
   net?: NetStats; // sim only
   meta?: { id: string; applied: number; pendingUploads: number };
+  // Dedup: bytes committed versions reference vs bytes of distinct chunks.
+  referencedBytes?: number;
+  distinctBytes?: number;
+  epoch?: number; // logical GC epoch
+  gc?: GCStats;
+  deleted?: DeletedFile[];
 }
 
 export const TIMELINE_MAX = 500;
@@ -157,6 +193,10 @@ export interface ClusterAPI {
   download(path: string): Promise<Download>;
   stat(path: string): Promise<Manifest>;
   remove(path: string): Promise<void>;
+  // Every retained version, oldest first; tombstones included.
+  log(path: string): Promise<VersionInfo[]>;
+  // Restores a retained version (0: the newest) as a new version.
+  undelete(path: string, version: number): Promise<number>;
   // Sim controls; no-ops against a real cluster.
   pause(): void;
   resume(): void;

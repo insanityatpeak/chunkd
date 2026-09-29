@@ -11,6 +11,9 @@ import {
   type RepairCopy,
   type ScenarioInfo,
   type TimelineEvent,
+  type VersionInfo,
+  type GCStats,
+  type DeletedFile,
 } from './cluster';
 import { sha256Hex } from '../verify';
 
@@ -25,6 +28,11 @@ interface GatewayCluster {
   copies: RepairCopy[] | null;
   events: TimelineEvent[] | null;
   eventSeq: number;
+  referencedBytes?: number;
+  distinctBytes?: number;
+  epoch?: number;
+  gc?: GCStats;
+  deleted?: DeletedFile[] | null;
 }
 
 // HttpClusterAPI talks to a real gateway. It does not trust the gateway: a
@@ -66,6 +74,11 @@ export class HttpClusterAPI implements ClusterAPI {
       health: cluster.health,
       copies: cluster.copies ?? [],
       timeline: this.timeline.merge(cluster.events, cluster.eventSeq),
+      referencedBytes: cluster.referencedBytes,
+      distinctBytes: cluster.distinctBytes,
+      epoch: cluster.epoch,
+      gc: cluster.gc,
+      deleted: cluster.deleted ?? [],
     };
     this.subs.forEach((fn) => fn(view));
   }
@@ -109,6 +122,15 @@ export class HttpClusterAPI implements ClusterAPI {
 
   async remove(path: string): Promise<void> {
     await this.json(`/files${encodePath(path)}`, { method: 'DELETE' });
+  }
+
+  async log(path: string): Promise<VersionInfo[]> {
+    return (await this.json<VersionInfo[] | null>(`/files${encodePath(path)}?log=1`)) ?? [];
+  }
+
+  async undelete(path: string, version: number): Promise<number> {
+    const q = version > 0 ? `?version=${version}` : '';
+    return (await this.json<{ version: number }>(`/undelete${encodePath(path)}${q}`, { method: 'POST' })).version;
   }
 
   scenarios(): Promise<ScenarioInfo[]> {

@@ -107,6 +107,11 @@ func main() {
 			v, err := c.Client().Delete(ctx, args[0].String(), 0)
 			return jsonValue(map[string]uint64{"version": v}, err)
 		}),
+		"log": needCluster(func(args []js.Value) any { return jsonValue(c.Client().Log(ctx, args[0].String())) }),
+		"undelete": needCluster(func(args []js.Value) any {
+			v, err := c.Client().Undelete(ctx, args[0].String(), uint64(args[1].Int()))
+			return jsonValue(map[string]uint64{"version": v}, err)
+		}),
 		"crash": needCluster(func(args []js.Value) any {
 			c.KillNode(iface.NodeID(args[0].String()))
 			return nil

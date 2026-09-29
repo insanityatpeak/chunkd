@@ -639,8 +639,9 @@ func (x *ReplicateFailed) GetError() string {
 	return ""
 }
 
-// DeleteReplica tells a node to drop its copy of an over-replicated chunk.
-// The node confirms with deleted_ids in a block report.
+// DeleteReplica tells a node to drop its copy of an over-replicated chunk
+// (a trim) or of an unreferenced one (GC). The node confirms with
+// deleted_ids, or kept_ids for a refused GC delete, in a block report.
 type DeleteReplica struct {
 	state   protoimpl.MessageState `protogen:"open.v1"`
 	TrimId  uint64                 `protobuf:"varint,1,opt,name=trim_id,json=trimId,proto3" json:"trim_id,omitempty"`

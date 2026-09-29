@@ -122,6 +122,31 @@ type Cluster struct {
 	// metadata server restarted and its timeline began again.
 	Events   []Event `json:"events"`
 	EventSeq uint64  `json:"eventSeq"`
+	// Dedup saves ReferencedBytes-DistinctBytes per replica.
+	ReferencedBytes int64         `json:"referencedBytes"`
+	DistinctBytes   int64         `json:"distinctBytes"`
+	Epoch           uint64        `json:"epoch"`
+	GC              GCStats       `json:"gc"`
+	Deleted         []DeletedFile `json:"deleted"`
+}
+
+// GCStats are the sweep's counters and the retention settings.
+type GCStats struct {
+	Orphans      uint64 `json:"orphans"`
+	Sent         uint64 `json:"sent"`
+	Deleted      uint64 `json:"deleted"`
+	Kept         uint64 `json:"kept"`
+	Drift        uint64 `json:"drift"`
+	RetainEpochs uint32 `json:"retainEpochs"`
+	EpochEveryMs int64  `json:"epochEveryMs"`
+}
+
+// DeletedFile is a deleted path and the version undelete would restore.
+type DeletedFile struct {
+	Path         string `json:"path"`
+	Version      uint64 `json:"version"`
+	Size         int64  `json:"size"`
+	ExpiresEpoch uint64 `json:"expiresEpoch"`
 }
 
 // PutOptions controls version checks on upload.

@@ -26,6 +26,7 @@ var Scenarios = []Scenario{
 	{"corrupt-chunk", "Silent bit rot", "Bytes flip in 3 chunks on node-2's disk and nobody is told. The scrubber (or the first reader) finds them, quarantines the copies and repair replaces them."},
 	{"rack-loss", "Lose a rack", "Rack r1 (node-1 and node-4) goes down at once. Rack-aware placement kept at most one copy per rack, so every chunk survives with 2 copies; repair rebuilds the third."},
 	{"slow-node", "Slow node", "node-4 answers 2 s late for a minute but keeps heartbeating, so the detector keeps it alive. Reads every 5 s show hedging: the client asks a second replica and learns to avoid node-4."},
+	{"gc", "Delete and collect", "5 s after the demo files load, one is overwritten with its last chunk changed: the first chunk is already stored, so only the new one is sent. 5 s later another file is deleted. Both old versions stay restorable for 3 epochs of 30 s; then their chunks lose the last reference, and after a 60 s grace the sweep deletes the copies."},
 }
 
 // RunScenario starts a named script.
@@ -54,16 +55,74 @@ func (c *Cluster) RunScenario(name string) error {
 		c.clock.AfterFunc(60*time.Second, func() { c.net.SetSlow("node-4", 0) })
 		files := c.meta.State().List("/demo/")
 		for i := range 14 {
-			c.reads = append(c.reads, scriptedRead{at: c.clock.Now().Add(time.Duration(i+1) * 5 * time.Second), path: files[i%len(files)].Path})
+			p := files[i%len(files)].Path
+			c.after(time.Duration(i+1)*5*time.Second, func() { c.scriptRead(p) })
 		}
+		return nil
+	case "gc":
+		if err := c.demoFiles(); err != nil {
+			return err
+		}
+		c.after(5*time.Second, func() { c.scriptEdit("/demo/file-0.bin") })
+		c.after(10*time.Second, func() { c.scriptDelete("/demo/file-7.bin") })
 		return nil
 	}
 	return iface.Errorf(iface.CodeInvalid, "unknown scenario %q", name)
 }
 
-type scriptedRead struct {
-	at   iface.Instant
-	path string
+type scriptedStep struct {
+	at  iface.Instant
+	run func()
+}
+
+// after schedules a client call d from now. It runs from Tick, never from a
+// timer: a client call drives the simulation and must not nest in it.
+func (c *Cluster) after(d time.Duration, run func()) {
+	c.script = append(c.script, scriptedStep{at: c.clock.Now().Add(d), run: run})
+}
+
+// logClient records a scripted client call's result in the reads log.
+func (c *Cluster) logClient(kind, text string) {
+	c.readSeq++
+	c.readLog = append(c.readLog, client.Event{Seq: c.readSeq, AtMs: int64(c.clock.Now()) / int64(time.Millisecond), Kind: kind, Node: "client", Text: text})
+	if len(c.readLog) > 100 {
+		c.readLog = c.readLog[1:]
+	}
+}
+
+// scriptEdit rewrites path with its last byte changed: every chunk but the
+// last is already stored, so the client sends only that one.
+func (c *Cluster) scriptEdit(path string) {
+	data, _, err := c.Download(path)
+	if err == nil && len(data) == 0 {
+		err = iface.Errorf(iface.CodeInvalid, "%s is empty", path)
+	}
+	if err != nil {
+		c.logClient("write", fmt.Sprintf("edit %s failed: %v", path, err))
+		return
+	}
+	data[len(data)-1] ^= 0xff
+	m, _, err := c.Upload(path, data)
+	if err != nil {
+		c.logClient("write", fmt.Sprintf("write %s failed: %v", path, err))
+		return
+	}
+	deduped := 0
+	for _, ch := range m.Chunk {
+		if ch.Deduped {
+			deduped++
+		}
+	}
+	c.logClient("write", fmt.Sprintf("write %s v%d, last byte changed: %d of %d chunks already stored, %d sent", path, m.Version, deduped, len(m.Chunk), len(m.Chunk)-deduped))
+}
+
+// scriptDelete deletes path; its last version stays restorable.
+func (c *Cluster) scriptDelete(path string) {
+	if err := c.Delete(path); err != nil {
+		c.logClient("write", fmt.Sprintf("delete %s failed: %v", path, err))
+		return
+	}
+	c.logClient("write", fmt.Sprintf("delete %s: a delete marker; the old version can be undeleted until it expires", path))
 }
 
 // scriptRead downloads path and records how it went as a "read" event.
@@ -71,11 +130,10 @@ func (c *Cluster) scriptRead(path string) {
 	start := c.clock.Now()
 	data, m, err := c.Download(path)
 	took := c.clock.Now().Sub(start).Round(time.Millisecond)
-	c.readSeq++
-	e := client.Event{Seq: c.readSeq, AtMs: int64(c.clock.Now()) / int64(time.Millisecond), Kind: "read", Node: "client"}
+	var text string
 	switch {
 	case err != nil:
-		e.Text = fmt.Sprintf("read %s failed after %v: %v", path, took, err)
+		text = fmt.Sprintf("read %s failed after %v: %v", path, took, err)
 	default:
 		var hedged, served []string
 		for _, ch := range m.Chunk {
@@ -85,15 +143,12 @@ func (c *Cluster) scriptRead(path string) {
 			}
 		}
 		slices.Sort(served)
-		e.Text = fmt.Sprintf("read %s (%d KiB) in %v from %s", path, len(data)>>10, took, strings.Join(slices.Compact(served), ", "))
+		text = fmt.Sprintf("read %s (%d KiB) in %v from %s", path, len(data)>>10, took, strings.Join(slices.Compact(served), ", "))
 		if len(hedged) > 0 {
-			e.Text += fmt.Sprintf("; hedged chunk %s", strings.Join(hedged, ", "))
+			text += fmt.Sprintf("; hedged chunk %s", strings.Join(hedged, ", "))
 		}
 	}
-	c.readLog = append(c.readLog, e)
-	if len(c.readLog) > 100 {
-		c.readLog = c.readLog[1:]
-	}
+	c.logClient("read", text)
 }
 
 // Freeze pauses a node (messages held until Thaw); Thaw releases it.

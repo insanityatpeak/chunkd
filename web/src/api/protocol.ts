@@ -9,6 +9,8 @@ export type Method =
   | 'download'
   | 'stat'
   | 'remove'
+  | 'log'
+  | 'undelete'
   | 'crash'
   | 'restart'
   | 'freeze'

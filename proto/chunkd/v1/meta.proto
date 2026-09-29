@@ -319,6 +319,40 @@ message ClusterResponse {
   uint64 event_seq = 8;
   // The metadata server's clock, the reference for every *_ms instant.
   int64 now_ms = 9;
+  // Bytes committed versions reference, each reference counted, and bytes
+  // of the distinct chunks they reference: dedup saves the difference.
+  int64 referenced_bytes = 10;
+  int64 distinct_bytes = 11;
+  // Logical GC epoch; retired versions expire by it.
+  uint64 epoch = 12;
+  GCStats gc = 13;
+  // Deleted paths with a version undelete can still restore.
+  repeated DeletedFile deleted = 14;
+}
+
+// GCStats are the sweep's counters since the metadata server started.
+message GCStats {
+  // Located chunks unmarked at the last sweep.
+  uint64 orphans = 1;
+  // Deletes sent, re-sends included.
+  uint64 sent = 2;
+  // Copies nodes confirmed deleted.
+  uint64 deleted = 3;
+  // Deletes refused because the chunk was written again.
+  uint64 kept = 4;
+  // Chunks whose refcount or claims disagreed at the last reconciliation.
+  uint64 drift = 5;
+  uint32 retain_epochs = 6;
+  int64 epoch_every_ms = 7;
+}
+
+// DeletedFile is a tombstoned path whose newest real version is retained.
+message DeletedFile {
+  string path = 1;
+  // The version undelete restores by default.
+  uint64 version = 2;
+  int64 size = 3;
+  uint64 expires_epoch = 4;
 }
 
 // FileHealth is one committed file's replication state.

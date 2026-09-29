@@ -493,6 +493,25 @@ func (s *State) List(prefix string) []Entry {
 	return out
 }
 
+// Deleted lists paths under prefix whose newest version is a tombstone,
+// each with the newest real version it retains: what undelete restores.
+func (s *State) Deleted(prefix string) []Entry {
+	var out []Entry
+	for p, f := range s.files {
+		if !strings.HasPrefix(p, prefix) || len(f.Versions) == 0 || !f.Versions[len(f.Versions)-1].Tombstone {
+			continue
+		}
+		for _, v := range slices.Backward(f.Versions) {
+			if !v.Tombstone {
+				out = append(out, Entry{Path: p, Version: v})
+				break
+			}
+		}
+	}
+	slices.SortFunc(out, func(a, b Entry) int { return cmp.Compare(a.Path, b.Path) })
+	return out
+}
+
 // CommittedUpload reports the version an already-committed upload created.
 func (s *State) CommittedUpload(id uint64) (Committed, bool) {
 	c, ok := s.committed[id]

@@ -457,7 +457,15 @@ func (c *Direct) Cluster(ctx context.Context, eventsAfter uint64) (Cluster, erro
 // never nil, so JSON carries [] rather than null.
 func ClusterFromProto(resp *chunkdv1.ClusterResponse) Cluster {
 	out := Cluster{NowMs: resp.GetNowMs(), Files: resp.GetFiles(), LogicalBytes: resp.GetLogicalBytes(), EventSeq: resp.GetEventSeq(),
-		Nodes: []NodeInfo{}, FileHealth: []FileHealth{}, Copies: []RepairCopy{}, Events: []Event{}}
+		Nodes: []NodeInfo{}, FileHealth: []FileHealth{}, Copies: []RepairCopy{}, Events: []Event{}, Deleted: []DeletedFile{},
+		ReferencedBytes: resp.GetReferencedBytes(), DistinctBytes: resp.GetDistinctBytes(), Epoch: resp.GetEpoch()}
+	if g := resp.GetGc(); g != nil {
+		out.GC = GCStats{Orphans: g.GetOrphans(), Sent: g.GetSent(), Deleted: g.GetDeleted(), Kept: g.GetKept(), Drift: g.GetDrift(),
+			RetainEpochs: g.GetRetainEpochs(), EpochEveryMs: g.GetEpochEveryMs()}
+	}
+	for _, d := range resp.GetDeleted() {
+		out.Deleted = append(out.Deleted, DeletedFile{Path: d.GetPath(), Version: d.GetVersion(), Size: d.GetSize(), ExpiresEpoch: d.GetExpiresEpoch()})
+	}
 	for _, n := range resp.GetNodes() {
 		out.Nodes = append(out.Nodes, NodeInfo{ID: n.GetId(), Rack: n.GetRack(), Alive: n.GetAlive(), State: n.GetState(), Draining: n.GetDraining(),
 			UsedBytes: n.GetUsedBytes(), Chunks: n.GetChunkCount(), HeartbeatAgeMs: n.GetHeartbeatAgeMs(),
