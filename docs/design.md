@@ -73,7 +73,52 @@ Client               Meta                  node-A      node-B
 - Every node heartbeats each second: rack, address, bytes and chunks stored, draining flag.
 - The heartbeat ack asks for a full block report when the metadata server has none for the node (first contact, or after a metadata restart).
 - Nodes send an incremental report after storing each chunk, and a full report every 30 s, which repairs any lost incremental report.
-- A node is alive if heard from within 5 s. Placement and reads only use live nodes.
+- Heartbeats carry `(incarnation, seq)`; the incarnation changes on every process start.
+
+## Failure detection (ADR-0010)
+
+```
+          3 s silent            10 s silent
+ alive ─────────────► suspect ─────────────► dead
+   ▲                    │  ▲                   │
+   └── 3 on-time beats ─┘  └─ beat (new incarnation: "restarted") ─┘
+```
+
+| State | Reads | New replicas | Counts for commit | Counts toward RF for repair |
+|---|---|---|---|---|
+| alive | first | yes | yes | yes |
+| suspect | after alive replicas | no | no | yes |
+| dead | no | no | no | only inside the 20 s repair delay |
+
+- `core/detector` ticks every 500 ms. A gap over 1 s between ticks means the metadata server itself stalled; every node's last-seen moves forward by the gap.
+- A dead or restarted node keeps its chunk locations until its next full block report.
+
+## Repair (ADR-0011)
+
+```
+Meta (repair.Scheduler)            target node                 source node
+  │ node dead + 20 s, chunk at 2/3 │                             │
+  │── replicate(chunk, source) ───►│                             │
+  │                                │── chunk.get (AsyncCaller) ─►│
+  │                                │◄── bytes ───────────────────┤
+  │                                │ Put: SHA-256 must equal id  │
+  │◄── block report (chunk) ───────┤  → copy complete            │
+  │ no report in 10 s → timed out, slots freed, re-assessed      │
+```
+
+- Queue: fewest live copies first, then FIFO. A chunk with one live copy skips the delay.
+- Limits: 8 copies in flight, 2 per source node, 2 per target node, 40 MiB/s token bucket.
+- Periodic scan every 30 s catches anything the event-driven path missed.
+- Trim: when more than 3 confirmed copies exist (alive, full report since returning) and no copy is in flight, drop the copy on the rack with the most copies, then the most used node. A trim with no confirmation in 10 s is retried against the same node.
+- RF restore bound: `10 s (dead) + 20 s (delay) + bytes ÷ 40 MiB/s + 10 s (one copy timeout) + 5 s`.
+
+## Reads under slow replicas (ADR-0012)
+
+The client orders replicas alive first, then suspect, each by its own latency score (EWMA, failures penalised), and reads with `Caller.Hedge`: if no verified answer arrives within the p95 of recent reads (clamped to 20–500 ms), the next replica is asked too. The first answer whose SHA-256 matches the chunk ID wins.
+
+## Dashboard view
+
+`meta.Server.ClusterView(eventsAfter)` builds everything the dashboard shows in one pass: nodes with detector state and heartbeat age, per-file replication (chunks below RF, fewest alive copies), repair counters and copies in flight, and the recent-event ring (500 events: detector transitions, copy start and end, trims). The sim's `cluster.StateSince` calls it directly; the gateway serves it at `GET /cluster?events_after=N`. Events carry a sequence number, so the UI fetches only new ones; a sequence below the last seen means the metadata server restarted.
 
 ## Invariants checked by the sim harness
 
@@ -83,3 +128,12 @@ After each scenario, `cluster.AssertInvariants` checks:
 2. Every committed file downloads and matches its recorded file hash.
 3. Every chunk of every committed file has at least `min_replicas` live reported locations.
 4. Every committed chunk has a durable record with refcount ≥ 1.
+
+The chaos runner (`internal/chaos`, `go run ./tools/task chaos`) adds, per seed:
+
+5. After faults and the workload end, replication settles (no chunk under or over RF) within the bound.
+6. At the end, no chunk is without a live copy. (The checker looks at the settled state, not every step: a transient dip below RF that heals itself passes, which is how bug #6 in `docs/bugs-found.md` got past it.)
+7. Repair never exceeds its limits (peak in flight, per source, per target).
+8. The same seed produces the same trace hash.
+
+Real mode (`--mode=real --short`) runs three scenarios against the compose cluster: kill a node past the repair delay (RF restored, extras trimmed on return), a 15 s blip (zero copies), and a paused container (reads continue, no data loss).

@@ -21,3 +21,45 @@ Real defects caught by tests, gates or the chaos harness.
 | Root cause | The network delivered `CommitUpload` twice. The first copy committed and removed the pending upload; the second found no upload and answered `not_found`. Response delays are random, so the error could reach the client first. A lost commit response had the same effect. The client could not tell "not committed" from "committed, answer lost". |
 | Fix | Each version records the `upload_id` that created it, and a commit for an upload that already committed returns that version. Delete is conditional (the client resolves the live version first) and a repeated delete of the same version returns the existing tombstone. The client retries metadata calls on `unavailable` and failed replica puts once. Commit `c56233f`. |
 | Regression test | `meta.TestCommitAndDeleteAreIdempotent` (duplicate commit and delete, and commit retry after a metadata restart); `e2e.TestUploadsUnderMessageLoss` over 20 seeds. |
+
+## 3. A copy finishing inside the repair delay dropped its chunk until the next scan
+
+| | |
+|---|---|
+| Symptom | A chunk down to its last copy was repaired to 2 copies at once (the last-copy rule skips the delay), then sat at 2 of 3 for up to 30 s after the delay ended. |
+| Repro | `repair.TestRepairDelay`, subtest "last copy is repaired without waiting": two of three holders dead, the first copy finishes inside the 20 s delay. |
+| Root cause | `Scheduler.finish` re-assessed the chunk, saw the remaining copy was still inside the delay, and returned. Nothing scheduled a wake-up for the delay's end, so only the periodic 30 s scan picked the chunk up again. |
+| Fix | `finish` calls `wakeAtLeast(readyAt)` when the rest of the chunk is waiting out the delay. Commit `17a2616`. |
+| Regression test | `repair.TestRepairDelay` ("last copy is repaired without waiting": all third copies complete by the end of the delay, not at the next scan). |
+
+## 4. A restarted node's chunks looked missing for one round trip
+
+| | |
+|---|---|
+| Symptom | A node that restarted inside the repair delay still cost 3 copies per blip, all trimmed again seconds later. |
+| Repro | `TestTransientBlipNoRepair` (node down 2 s, 15 s and 25 s). |
+| Root cause | On a new incarnation the metadata server dropped the node's locations, expecting its full block report. The report arrives one heartbeat round trip later; in that window a scan triggered by the detector's transition saw the node's chunks with too few holders, and chunks already past the delay were copied. |
+| Fix | A dead or restarted node keeps its locations until its next full report replaces them. Suspect and dead holders still count toward RF during the delay, so nothing is copied for a node that comes back. Commit `17a2616`. |
+| Regression test | `TestTransientBlipNoRepair` (zero copies), `meta.TestClusterRestartKeepsLocationsUntilReport`; real mode `transient-blip-no-repair`. |
+
+## 5. Over-replication lingered for a full scan interval
+
+| | |
+|---|---|
+| Symptom | Chaos seed 63 ended with chunks at 4 copies after the settle window. |
+| Repro | `go run ./tools/task chaos --seed=63` before the fix. |
+| Root cause | Two paths created extra copies that only the 30 s periodic scan removed: a client write that dedups against an existing chunk places it on nodes that may already hold enough copies, and a trim whose command or confirmation was lost was forgotten. |
+| Fix | Every block report runs `checkExcess` on the chunks it adds, and a trim timeout re-checks the chunk at once. Commit `e292f7d`. |
+| Regression test | Chaos seed 63 and the 500-seed CI run (settled with zero over-replicated chunks); `repair.TestTrimSafety`. |
+
+Related: with 1% message loss a copy command or its completion report can be lost, and the copy then holds its slots until the copy timeout. The timeout was cut from 30 s to 10 s and the RF restore bound includes one copy timeout.
+
+## 6. A retried trim could remove the wrong replica
+
+| | |
+|---|---|
+| Symptom | In the dashboard's kill-node-3 script, chunk `4bbb1e8e…` was trimmed on node-5 after its first trim on node-2 timed out, then re-replicated 18 s later: it had been at 2 real copies in between. |
+| Repro | `TestDashboardTimeline` (seed 5, 1% loss) before the fix; `repair.TestTrimRetrySameVictim`. |
+| Root cause | node-2 deleted its copy but the confirmation was lost. On the trim timeout the scheduler chose a victim again from the holders it believed confirmed, still counting node-2. node-2's heartbeat now reported less used space, so the victim rule picked node-5, whose copy was real. The chunk was one below RF until node-2's next full report exposed the gap. Chaos did not catch it: it checks the settled end state, and the gap healed itself. |
+| Fix | A timed-out trim is re-sent to the same node, which confirms absent chunks as removed. A new victim is chosen only once the old one no longer counts as a confirmed holder. Commit `3c20807`. |
+| Regression test | `repair.TestTrimRetrySameVictim` (victim's used space drops after the lost confirmation; the retry must go to the same node), `TestDashboardTimeline`. |
