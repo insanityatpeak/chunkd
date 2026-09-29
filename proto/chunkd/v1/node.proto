@@ -33,6 +33,12 @@ message BlockReport {
   repeated bytes chunk_ids = 3;
   // Chunks deleted since the last report (incremental reports only).
   repeated bytes deleted_ids = 4;
+  // The sending process's incarnation (as in its heartbeats) and a report
+  // sequence number, increasing within the incarnation. A full report with
+  // seq S lists exactly the store changes whose reports carry seq < S, so
+  // the metadata server can order reports the network reordered.
+  uint64 incarnation = 5;
+  uint64 seq = 6;
 }
 
 message PutChunkRequest {

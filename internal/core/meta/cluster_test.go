@@ -14,6 +14,19 @@ func beat(c *Cluster, id iface.NodeID, seq uint64, now iface.Instant) (needFull 
 	return needFull
 }
 
+// rfull, radd and rdel send incarnation-1 reports with the given seq.
+func rfull(c *Cluster, id iface.NodeID, seq uint64, chunks ...iface.ChunkID) {
+	c.Report(id, Report{Incarnation: 1, Seq: seq, Full: true, Added: chunks})
+}
+
+func radd(c *Cluster, id iface.NodeID, seq uint64, chunks ...iface.ChunkID) {
+	c.Report(id, Report{Incarnation: 1, Seq: seq, Added: chunks})
+}
+
+func rdel(c *Cluster, id iface.NodeID, seq uint64, chunks ...iface.ChunkID) {
+	c.Report(id, Report{Incarnation: 1, Seq: seq, Deleted: chunks})
+}
+
 func TestClusterLocations(t *testing.T) {
 	c := NewCluster(detector.DefaultConfig())
 	a, b := iface.ChunkID{1}, iface.ChunkID{2}
@@ -21,18 +34,18 @@ func TestClusterLocations(t *testing.T) {
 	if !beat(c, "n1", 1, 0) {
 		t.Fatal("new node not asked for a full report")
 	}
-	c.FullReport("n1", []iface.ChunkID{a})
+	rfull(c, "n1", 1, a)
 	if beat(c, "n1", 2, 1) {
 		t.Fatal("full report requested again after one arrived")
 	}
 	beat(c, "n2", 1, 1)
-	c.Received("n2", []iface.ChunkID{a, b})
+	radd(c, "n2", 1, a, b)
 
 	if got := c.Locations(a); !slices.Equal(got, []iface.NodeID{"n1", "n2"}) {
 		t.Fatalf("Locations(a) = %v", got)
 	}
 	// A full report replaces: n2 lost chunk a (disk replaced, say).
-	c.FullReport("n2", []iface.ChunkID{b})
+	rfull(c, "n2", 2, b)
 	if got := c.Locations(a); !slices.Equal(got, []iface.NodeID{"n1"}) {
 		t.Fatalf("after full report Locations(a) = %v, want [n1]", got)
 	}
@@ -45,7 +58,7 @@ func TestClusterLiveness(t *testing.T) {
 	c := NewCluster(detector.DefaultConfig())
 	a := iface.ChunkID{1}
 	beat(c, "n1", 1, 0)
-	c.FullReport("n1", []iface.ChunkID{a})
+	rfull(c, "n1", 1, a)
 	sec := func(s float64) iface.Instant { return iface.Instant(s * float64(time.Second)) }
 	// Tick at the owner's cadence: a jump would read as a stall of the owner.
 	next := sec(0)
@@ -97,7 +110,7 @@ func TestClusterLiveness(t *testing.T) {
 func TestClusterRestartKeepsLocationsUntilReport(t *testing.T) {
 	c := NewCluster(detector.DefaultConfig())
 	beat(c, "n1", 1, 0)
-	c.FullReport("n1", []iface.ChunkID{{1}, {2}})
+	rfull(c, "n1", 7, iface.ChunkID{1}, iface.ChunkID{2})
 	// Restarted within the suspect window: new incarnation, seq back at 1.
 	_, _, need := c.Heartbeat(NodeState{ID: "n1"}, detector.Beat{Incarnation: 2, Seq: 1}, iface.Instant(time.Second))
 	if !need {
@@ -106,9 +119,50 @@ func TestClusterRestartKeepsLocationsUntilReport(t *testing.T) {
 	if c.Alive("n1") || len(c.Locations(iface.ChunkID{1})) != 1 {
 		t.Fatal("restarted node should be suspect with its locations kept")
 	}
-	// Its disk lost chunk 2: the report, not the restart, removes it.
-	c.FullReport("n1", []iface.ChunkID{{1}})
+	// A late report from the killed process is ignored.
+	if _, _, ok := c.Report("n1", Report{Incarnation: 1, Seq: 8, Deleted: []iface.ChunkID{{1}}}); ok || len(c.Locations(iface.ChunkID{1})) != 1 {
+		t.Fatal("report from the old incarnation applied")
+	}
+	// Its disk lost chunk 2: the report, not the restart, removes it. The
+	// new incarnation's seq starts again at 1, below the old 7.
+	c.Report("n1", Report{Incarnation: 2, Seq: 1, Full: true, Added: []iface.ChunkID{{1}}})
 	if len(c.Locations(iface.ChunkID{2})) != 0 || len(c.Locations(iface.ChunkID{1})) != 1 {
 		t.Fatal("full report did not replace locations")
+	}
+}
+
+// TestClusterReportOrdering: the network reorders a node's reports. A full
+// report with seq S reflects exactly the changes numbered below S; newer
+// incremental changes win over it, and older ones are already in it.
+func TestClusterReportOrdering(t *testing.T) {
+	x, y := iface.ChunkID{1}, iface.ChunkID{2}
+	for _, tc := range []struct {
+		name    string
+		reports func(c *Cluster) // in arrival order
+		want    bool             // n1 holds x afterwards
+	}{
+		{"put finished after the listing; its report overtakes the full report",
+			func(c *Cluster) { radd(c, "n1", 5, x); rfull(c, "n1", 4, y) }, true},
+		{"trim deleted after the listing; its report overtakes the full report",
+			func(c *Cluster) { rfull(c, "n1", 3, x); rdel(c, "n1", 5, x); rfull(c, "n1", 4, x, y) }, false},
+		{"in order: a newer full report drops a chunk deleted before it",
+			func(c *Cluster) { radd(c, "n1", 5, x); rfull(c, "n1", 6, y) }, false},
+		{"a late add older than the full report is ignored",
+			func(c *Cluster) { rfull(c, "n1", 6, y); radd(c, "n1", 5, x) }, false},
+		{"a late delete older than the full report is ignored",
+			func(c *Cluster) { rfull(c, "n1", 6, x); rdel(c, "n1", 5, x) }, true},
+		{"an older full report after a newer one is ignored",
+			func(c *Cluster) { rfull(c, "n1", 6, x); rfull(c, "n1", 4, y) }, true},
+		{"re-added after a delete, both newer than the full report",
+			func(c *Cluster) { rdel(c, "n1", 5, x); radd(c, "n1", 7, x); rfull(c, "n1", 6, y) }, true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			c := NewCluster(detector.DefaultConfig())
+			beat(c, "n1", 1, 0)
+			tc.reports(c)
+			if got := slices.Contains(c.Locations(x), "n1"); got != tc.want {
+				t.Fatalf("n1 holds x: %v, want %v", got, tc.want)
+			}
+		})
 	}
 }

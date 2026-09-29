@@ -186,7 +186,13 @@ type BlockReport struct {
 	Full     bool                   `protobuf:"varint,2,opt,name=full,proto3" json:"full,omitempty"`
 	ChunkIds [][]byte               `protobuf:"bytes,3,rep,name=chunk_ids,json=chunkIds,proto3" json:"chunk_ids,omitempty"`
 	// Chunks deleted since the last report (incremental reports only).
-	DeletedIds    [][]byte `protobuf:"bytes,4,rep,name=deleted_ids,json=deletedIds,proto3" json:"deleted_ids,omitempty"`
+	DeletedIds [][]byte `protobuf:"bytes,4,rep,name=deleted_ids,json=deletedIds,proto3" json:"deleted_ids,omitempty"`
+	// The sending process's incarnation (as in its heartbeats) and a report
+	// sequence number, increasing within the incarnation. A full report with
+	// seq S lists exactly the store changes whose reports carry seq < S, so
+	// the metadata server can order reports the network reordered.
+	Incarnation   uint64 `protobuf:"varint,5,opt,name=incarnation,proto3" json:"incarnation,omitempty"`
+	Seq           uint64 `protobuf:"varint,6,opt,name=seq,proto3" json:"seq,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -247,6 +253,20 @@ func (x *BlockReport) GetDeletedIds() [][]byte {
 		return x.DeletedIds
 	}
 	return nil
+}
+
+func (x *BlockReport) GetIncarnation() uint64 {
+	if x != nil {
+		return x.Incarnation
+	}
+	return 0
+}
+
+func (x *BlockReport) GetSeq() uint64 {
+	if x != nil {
+		return x.Seq
+	}
+	return 0
 }
 
 type PutChunkRequest struct {
@@ -637,13 +657,15 @@ const file_chunkd_v1_node_proto_rawDesc = "" +
 	"\vincarnation\x18\b \x01(\x04R\vincarnation\"J\n" +
 	"\fHeartbeatAck\x12\x10\n" +
 	"\x03seq\x18\x01 \x01(\x04R\x03seq\x12(\n" +
-	"\x10need_full_report\x18\x02 \x01(\bR\x0eneedFullReport\"s\n" +
+	"\x10need_full_report\x18\x02 \x01(\bR\x0eneedFullReport\"\xa7\x01\n" +
 	"\vBlockReport\x12\x12\n" +
 	"\x04node\x18\x01 \x01(\tR\x04node\x12\x12\n" +
 	"\x04full\x18\x02 \x01(\bR\x04full\x12\x1b\n" +
 	"\tchunk_ids\x18\x03 \x03(\fR\bchunkIds\x12\x1f\n" +
 	"\vdeleted_ids\x18\x04 \x03(\fR\n" +
-	"deletedIds\"5\n" +
+	"deletedIds\x12 \n" +
+	"\vincarnation\x18\x05 \x01(\x04R\vincarnation\x12\x10\n" +
+	"\x03seq\x18\x06 \x01(\x04R\x03seq\"5\n" +
 	"\x0fPutChunkRequest\x12\x0e\n" +
 	"\x02id\x18\x01 \x01(\fR\x02id\x12\x12\n" +
 	"\x04data\x18\x02 \x01(\fR\x04data\"\x12\n" +

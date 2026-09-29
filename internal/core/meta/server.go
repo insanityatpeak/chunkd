@@ -174,17 +174,21 @@ func (s *Server) handle(m iface.Message) {
 				deleted = append(deleted, id)
 			}
 		}
-		s.cluster.Removed(node, deleted)
-		s.repair.Removed(node, deleted)
 		if r.GetFull() {
 			s.verifyReport(node, ids)
-			s.cluster.FullReport(node, ids)
+		}
+		added, removed, ok := s.cluster.Report(node, Report{Incarnation: r.GetIncarnation(), Seq: r.GetSeq(), Full: r.GetFull(), Added: ids, Deleted: deleted})
+		if !ok {
+			return
+		}
+		// Only changes the report actually made: a reordered, older report
+		// must not complete a copy or a trim.
+		s.repair.Removed(node, removed)
+		s.repair.Reported(node, added)
+		if r.GetFull() {
 			// A full report can restore replicas a scan counted as missing.
 			s.repair.Scan()
-		} else {
-			s.cluster.Received(node, ids)
 		}
-		s.repair.Reported(node, ids)
 	case wire.KindReplicateFailed:
 		var f chunkdv1.ReplicateFailed
 		if err := wire.Decode(m.Body, &f); err != nil {

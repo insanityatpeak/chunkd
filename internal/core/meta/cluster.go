@@ -24,9 +24,36 @@ type NodeState struct {
 	// DeadSince is when the detector declared the node dead; repair waits
 	// a delay from here before replacing its replicas.
 	DeadSince iface.Instant
+	// Incarnation is the node process's, from its heartbeats.
+	Incarnation uint64
 	// reported is false until a full block report arrives; until then the
 	// node's locations are unknown, not empty.
 	reported bool
+	// ledger orders this incarnation's block reports.
+	ledger ledger
+}
+
+// ledger orders one node incarnation's block reports, which the network
+// may deliver out of order. A full report with seq S lists exactly the
+// store changes whose reports carry seq < S (the node takes the seq and
+// lists its store under a lock that excludes puts and deletes).
+type ledger struct {
+	inc uint64
+	// full is the seq of the newest full report applied; anything at or
+	// below it is already reflected and is ignored.
+	full uint64
+	// last holds, for chunks changed by incremental reports newer than
+	// full, the seq of the latest change (an add or a delete).
+	last map[iface.ChunkID]uint64
+}
+
+// Report is one block report: Full lists every chunk the node holds in
+// Added; otherwise Added and Deleted are changes since the node's last
+// report.
+type Report struct {
+	Incarnation, Seq uint64
+	Full             bool
+	Added, Deleted   []iface.ChunkID
 }
 
 // Cluster tracks nodes and chunk locations, rebuilt from heartbeats and
@@ -60,6 +87,7 @@ func (c *Cluster) Heartbeat(hb NodeState, b detector.Beat, now iface.Instant) (t
 		c.nodes[hb.ID] = n
 	}
 	n.Rack, n.Addr, n.Used, n.Chunks, n.Draining = hb.Rack, hb.Addr, hb.Used, hb.Chunks, hb.Draining
+	n.Incarnation = b.Incarnation
 	tr, changed = c.det.Observe(hb.ID, b, now)
 	if changed {
 		c.apply(tr)
@@ -98,35 +126,85 @@ func (c *Cluster) apply(tr detector.Transition) {
 	}
 }
 
-// FullReport replaces the node's known chunks.
-func (c *Cluster) FullReport(id iface.NodeID, chunks []iface.ChunkID) {
-	for ch := range c.byNode[id] {
-		c.drop(id, ch)
+// Report applies a block report and returns the location changes it made.
+// Reports from another incarnation than the node's latest heartbeat are
+// ignored (ok false): a killed process's late reports describe a disk the
+// new process reports itself.
+//
+// Without the ordering, a full report listed just before a put finished but
+// delivered after that put's incremental report dropped the new chunk, and
+// repair copied it again; a delete overtaken by an older full report
+// re-added a copy that no longer existed (bugs-found #7).
+func (c *Cluster) Report(id iface.NodeID, r Report) (added, removed []iface.ChunkID, ok bool) {
+	n := c.nodes[id]
+	if n == nil || r.Incarnation != n.Incarnation {
+		return nil, nil, false
 	}
-	c.byNode[id] = map[iface.ChunkID]struct{}{}
-	for _, ch := range chunks {
-		c.add(id, ch)
+	l := &n.ledger
+	if l.inc != r.Incarnation {
+		*l = ledger{inc: r.Incarnation}
 	}
-	if n := c.nodes[id]; n != nil {
-		n.reported = true
+	if r.Seq <= l.full {
+		return nil, nil, true
 	}
-}
-
-// Received records that a node stored a chunk (incremental block report).
-func (c *Cluster) Received(id iface.NodeID, chunks []iface.ChunkID) {
 	if c.byNode[id] == nil {
 		c.byNode[id] = map[iface.ChunkID]struct{}{}
 	}
-	for _, ch := range chunks {
-		c.add(id, ch)
+	// newer: an incremental change after seq already decided ch.
+	newer := func(ch iface.ChunkID, seq uint64) bool {
+		last, ok := l.last[ch]
+		return ok && last > seq
 	}
-}
-
-// Removed records chunks a node deleted.
-func (c *Cluster) Removed(id iface.NodeID, chunks []iface.ChunkID) {
-	for _, ch := range chunks {
-		c.drop(id, ch)
+	put := func(ch iface.ChunkID) {
+		if _, has := c.byNode[id][ch]; !has {
+			c.add(id, ch)
+			added = append(added, ch)
+		}
 	}
+	del := func(ch iface.ChunkID) {
+		if _, has := c.byNode[id][ch]; has {
+			c.drop(id, ch)
+			removed = append(removed, ch)
+		}
+	}
+	if !r.Full {
+		if l.last == nil {
+			l.last = map[iface.ChunkID]uint64{}
+		}
+		for _, ch := range r.Added {
+			if !newer(ch, r.Seq) {
+				l.last[ch] = r.Seq
+				put(ch)
+			}
+		}
+		for _, ch := range r.Deleted {
+			if !newer(ch, r.Seq) {
+				l.last[ch] = r.Seq
+				del(ch)
+			}
+		}
+		return added, removed, true
+	}
+	listed := make(map[iface.ChunkID]struct{}, len(r.Added))
+	for _, ch := range r.Added {
+		listed[ch] = struct{}{}
+		if !newer(ch, r.Seq) {
+			put(ch)
+		}
+	}
+	for ch := range c.byNode[id] {
+		if _, ok := listed[ch]; !ok && !newer(ch, r.Seq) {
+			del(ch)
+		}
+	}
+	l.full = r.Seq
+	for ch, seq := range l.last {
+		if seq <= r.Seq {
+			delete(l.last, ch)
+		}
+	}
+	n.reported = true
+	return added, removed, true
 }
 
 // Reported reports whether the node's locations are confirmed by a full

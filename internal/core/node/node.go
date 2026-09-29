@@ -7,6 +7,8 @@ import (
 	"context"
 	"errors"
 	"log/slog"
+	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/insanityatpeak/chunkd/internal/core/wire"
@@ -60,6 +62,37 @@ type Node struct {
 	// restarted node (seq back at 1) from replayed old heartbeats.
 	incarnation uint64
 	stopped     bool
+
+	// reportMu orders store changes against full reports: puts and deletes
+	// hold it shared while they change the store and take a seq; a full
+	// report holds it exclusively while it takes a seq and lists the store.
+	// So a full report with seq S reflects exactly the changes numbered
+	// below S, which lets the metadata server order reports the network
+	// reorders (meta.Cluster.Report).
+	reportMu  sync.RWMutex
+	reportSeq atomic.Uint64
+}
+
+// change runs a store mutation and returns the seq for its report.
+func (n *Node) change(f func() error) (uint64, error) {
+	n.reportMu.RLock()
+	defer n.reportMu.RUnlock()
+	if err := f(); err != nil {
+		return 0, err
+	}
+	return n.reportSeq.Add(1), nil
+}
+
+// report sends an incremental block report.
+func (n *Node) report(seq uint64, added, deleted []iface.ChunkID) {
+	r := &chunkdv1.BlockReport{Node: string(n.cfg.ID), Incarnation: n.incarnation, Seq: seq}
+	for _, id := range added {
+		r.ChunkIds = append(r.ChunkIds, id[:])
+	}
+	for _, id := range deleted {
+		r.DeletedIds = append(r.DeletedIds, id[:])
+	}
+	n.d.Net.Send(n.cfg.Meta, iface.Message{From: n.cfg.ID, Kind: wire.KindBlockReport, Body: wire.Marshal(r)})
 }
 
 // Stop halts timers and ignores further messages, like a killed process.
@@ -105,14 +138,14 @@ func (n *Node) putChunk(m iface.Message, respond iface.Responder) {
 	}
 	// The store rejects data that does not hash to id, so a corrupted
 	// transfer is never acknowledged.
-	if err := n.d.Store.Put(context.Background(), id, req.GetData()); err != nil {
+	seq, err := n.change(func() error { return n.d.Store.Put(context.Background(), id, req.GetData()) })
+	if err != nil {
 		respond(nil, err)
 		return
 	}
 	// Incremental block report before the ack: by the time the client
 	// commits, the report is usually already in (if not, commit retries).
-	n.d.Net.Send(n.cfg.Meta, iface.Message{From: n.cfg.ID, Kind: wire.KindBlockReport,
-		Body: wire.Marshal(&chunkdv1.BlockReport{Node: string(n.cfg.ID), ChunkIds: [][]byte{id[:]}})})
+	n.report(seq, []iface.ChunkID{id}, nil)
 	respond(wire.Marshal(&chunkdv1.PutChunkResponse{}), nil)
 }
 
@@ -162,13 +195,18 @@ func (n *Node) deleteReplica(m iface.Message) {
 	if err != nil {
 		return
 	}
-	if err := n.d.Store.Delete(context.Background(), id); err != nil && !errors.Is(err, iface.ErrNotFound) {
+	seq, err := n.change(func() error {
+		if err := n.d.Store.Delete(context.Background(), id); err != nil && !errors.Is(err, iface.ErrNotFound) {
+			return err
+		}
+		return nil
+	})
+	if err != nil {
 		n.d.Log.Error("trim delete", "chunk", id.String()[:12], "err", err)
 		return
 	}
 	n.stats.Trimmed++
-	n.d.Net.Send(n.cfg.Meta, iface.Message{From: n.cfg.ID, Kind: wire.KindBlockReport,
-		Body: wire.Marshal(&chunkdv1.BlockReport{Node: string(n.cfg.ID), DeletedIds: [][]byte{id[:]}})})
+	n.report(seq, nil, []iface.ChunkID{id})
 }
 
 // replicate pulls one chunk from a peer and stores it. Put verifies the
@@ -207,13 +245,13 @@ func (n *Node) replicate(m iface.Message) {
 			fail(err)
 			return
 		}
-		if err := n.d.Store.Put(context.Background(), id, resp.GetData()); err != nil {
+		seq, err := n.change(func() error { return n.d.Store.Put(context.Background(), id, resp.GetData()) })
+		if err != nil {
 			fail(err)
 			return
 		}
 		n.stats.RepairCopies++
-		n.d.Net.Send(n.cfg.Meta, iface.Message{From: n.cfg.ID, Kind: wire.KindBlockReport,
-			Body: wire.Marshal(&chunkdv1.BlockReport{Node: string(n.cfg.ID), ChunkIds: [][]byte{id[:]}})})
+		n.report(seq, []iface.ChunkID{id}, nil)
 	})
 }
 
@@ -257,17 +295,22 @@ func (n *Node) periodicReport() {
 // SIMPLIFIED: one message for the whole report. HDFS splits reports per
 // storage volume and rate-limits them so a cluster restart does not flood
 // the NameNode.
+// SIMPLIFIED: listing blocks puts and deletes for its duration. HDFS
+// DataNodes snapshot the replica map in memory instead of scanning disk.
 func (n *Node) fullReport() {
 	var ids [][]byte
+	n.reportMu.Lock()
+	seq := n.reportSeq.Add(1)
 	err := n.d.Store.List(context.Background(), func(id iface.ChunkID) error {
 		ids = append(ids, append([]byte(nil), id[:]...))
 		return nil
 	})
+	n.reportMu.Unlock()
 	if err != nil {
 		n.d.Log.Error("list chunks", "err", err)
 		return
 	}
 	n.stats.FullReports++
 	n.d.Net.Send(n.cfg.Meta, iface.Message{From: n.cfg.ID, Kind: wire.KindBlockReport,
-		Body: wire.Marshal(&chunkdv1.BlockReport{Node: string(n.cfg.ID), Full: true, ChunkIds: ids})})
+		Body: wire.Marshal(&chunkdv1.BlockReport{Node: string(n.cfg.ID), Full: true, ChunkIds: ids, Incarnation: n.incarnation, Seq: seq})})
 }
