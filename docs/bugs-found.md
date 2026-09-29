@@ -73,3 +73,13 @@ Related: with 1% message loss a copy command or its completion report can be los
 | Root cause | A full block report replaced the node's locations wholesale. On a node, chunk puts run on concurrent handlers while the full report is listed on the event loop, and nothing ordered the two: a report listed just before a put finished, delivered after that put's incremental report, dropped the new chunk, and repair copied it again. The sim runs one goroutine, but its network reorders messages by random delay, so the same drop was possible there, and so was the dangerous mirror case: a trim's delete report overtaken by an older full report re-added a copy that no longer existed, so repair could count, or trim against, a phantom replica. |
 | Fix | Reports carry the node's incarnation and a sequence number. A put or delete takes its number after changing the store while holding a shared lock; a full report takes its number and lists the store under the exclusive lock, so a full report numbered S reflects exactly the changes numbered below S. The metadata server keeps the latest change number per chunk since the last full report: a full report cannot drop a newer add or re-add a newer delete, reports older than the last full report are ignored, and reports from a previous incarnation are dropped. Only changes a report actually made complete copies and trims. Commit `4a02c76`. The real-mode runner also now waits for every node to be alive before calling a scenario settled, so scenarios cannot overlap (`33dcce0`). |
 | Regression test | `meta.TestClusterReportOrdering` (seven arrival orders), `meta.TestClusterRestartKeepsLocationsUntilReport` (old incarnation ignored, seq restarting at 1 accepted); real mode `transient-blip-no-repair` in CI. |
+
+## 8. A chunk with every copy corrupt was reported as unavailable
+
+| | |
+|---|---|
+| Symptom | With all 3 copies of a chunk rotted, `Get` failed with `unavailable: no intact replica`, which invites retries, instead of saying the data is lost. |
+| Repro | `TestAllReplicasCorrupt` (seed 5) against the first version of the check. |
+| Root cause | The client declared a chunk lost only if every replica answered `CodeCorrupt` or sent bad bytes. But the first corrupt report made repair start a copy whose source read hit the second rotten replica, which quarantined itself before the client got there, so the client saw `not_found` from it and concluded nothing. |
+| Fix | A chunk is reported corrupt when at least one replica failed verification and every other replica either failed it too or no longer has the chunk. Commit `da02133`. |
+| Regression test | `TestAllReplicasCorrupt` (`CodeCorrupt`, counted as lost, zero copies). |

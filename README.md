@@ -10,7 +10,7 @@ The same core code runs in two modes:
 - `real`: separate processes over gRPC, chunks on disk, metadata in a WAL with bbolt snapshots, wall clock.
 - `sim`: one process, in-memory network with loss, duplication, delay and partitions, fake clock, seeded RNG. Every run replays from its seed. It compiles to WebAssembly and runs in the browser.
 
-**Live demo:** https://insanityatpeak.github.io/chunkd/ (upload a file, see which node holds each chunk, crash a node, download and verify the SHA-256 in your browser). "Run scenario: kill node-3" plays a failure at up to 50× speed: suspect, dead, re-replication back to 3 copies, then trimming when the node returns.
+**Live demo:** https://insanityatpeak.github.io/chunkd/ (upload a file, see which node holds each chunk, crash a node, download and verify the SHA-256 in your browser). "Run scenario: kill node-3" plays a failure at up to 50× speed: suspect, dead, re-replication back to 3 copies, then trimming when the node returns. "Rot 3 chunks on node-2" flips bytes on a disk without telling anyone, and the scrubber finds and replaces them.
 
 ## Run it
 
@@ -23,7 +23,8 @@ go run ./cmd/chunkd cluster
 go run ./tools/task e2e                      # 20 MiB round trip through the gateway
 go run ./tools/task chaos --seeds=500        # 500 seeded fault schedules in the sim
 go run ./tools/task chaos --seed=63 -v       # replay one, with its schedule and logs
-go run ./tools/task chaos --mode=real --short   # kill, blip and freeze containers of the compose cluster
+go run ./tools/task chaos --mode=real --short   # kill, blip, rot and freeze containers of the compose cluster
+docker compose exec node-2 chunkd debug corrupt -n 3   # flip bytes in 3 chunk files; watch the scrubber find them
 ```
 
 The dashboard works against this cluster too: open the live demo with `?gateway=http://localhost:8080`.
@@ -40,6 +41,7 @@ The dashboard works against this cluster too: open the live demo with `?gateway=
 | Storage | One file per chunk at `ab/cd/<sha256>`; temp file, fsync, rename, fsync directory. |
 | Failure detection | Heartbeats each second. Suspect after 3 s of silence (still readable, no new replicas), dead after 10 s, back to alive after 3 on-time beats. A stalled metadata server kills nobody ([ADR-0010](docs/adr/0010-failure-detector.md)). |
 | Repair | 20 s after a death, chunks below 3 copies are copied, fewest copies first, 8 at a time, at most 40 MiB/s. The target pulls from a surviving replica and verifies the hash. Extra copies from a returning node are trimmed ([ADR-0011](docs/adr/0011-re-replication.md)). |
+| Integrity | Nodes check every chunk's SHA-256 before serving it and clients check again. A copy that fails is quarantined and replaced from a good copy at once. A rate-capped scrubber re-reads every chunk each pass, so rot nobody reads is found too ([ADR-0013](docs/adr/0013-integrity-model.md)). |
 | Slow replicas | The client scores nodes by read latency and sends a second read after the p95 (20–500 ms) ([ADR-0012](docs/adr/0012-async-caller-and-hedged-reads.md)). |
 
 Design decisions are in [docs/adr](docs/adr); bugs found by the tests in [docs/bugs-found.md](docs/bugs-found.md); current state in [docs/STATUS.md](docs/STATUS.md); the protocol with sequence diagrams in [docs/design.md](docs/design.md).
@@ -55,6 +57,13 @@ Design decisions are in [docs/adr](docs/adr); bugs found by the tests in [docs/b
 | Placement ignores existing copies of a chunk; identical chunks in one upload can get extra replicas | Correct, just wasteful | Dedup-aware placement (Phase 4) |
 | With unbalanced racks, the smallest rack holds a replica of every chunk | Rack spread deliberately outranks load (ADR-0008) | Balanced racks, or capacity-weighted placement |
 | A lost incremental block report delays a commit until the next full report (up to 30 s) | The client retries commit for 45 s | Acknowledged incremental reports |
+| Every copy of a chunk rotting within one scrub window loses it; the read fails with `corrupt` | Needs three independent failures inside one pass interval plus repair time (about q³; ADR-0013) | Shorter passes or erasure coding with parity checks |
+| Correlated corruption (a firmware or driver bug on several disks at once) defeats the independence the math assumes | Rack spread puts copies on different hardware; nothing more | Mixed disk models and firmware per replica set, as large operators do |
+| Corruption in the client's memory before it hashes the data is stored as valid | The hash is computed from what the client holds | End-to-end checksums from the data's source (the application) |
+| Quarantined files are never removed | Kept for forensics; small next to live data | GC ages them out (Phase 4) |
+| The scrubber runs on the node's event loop, one chunk per step | A 4 MiB hash takes a few ms, far below the 3 s suspect timeout | A scanner thread per volume, as HDFS does |
+| Client re-check hints are not rate-limited | Each costs the node one re-read, and only the node's check removes a copy | Per-client hint budget |
+| The metadata WAL is CRC-checked but a corrupt entry cannot be repaired | Detected at startup, the server refuses to start | Replicated log (Raft, Phase 5) |
 | Directory fsync is a no-op on Windows | Production target is Linux; NTFS journals renames | None |
 | Real-mode chaos has no message-level faults (loss, duplication, delay) | The sim covers them in 500 seeds per push; real mode covers process faults (kill, pause, wipe) | `tc netem` in each container, which needs `NET_ADMIN` |
 | Repair targets ignore the surviving replicas' racks; a repaired chunk can end with two copies in one rack | Upload placement still spreads racks, and trims keep spread when a node returns | Rack-aware target choice, as HDFS's `BlockPlacementPolicy` does with existing replicas as input |

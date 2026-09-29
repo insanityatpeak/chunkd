@@ -116,6 +116,22 @@ Meta (repair.Scheduler)            target node                 source node
 
 The client orders replicas alive first, then suspect, each by its own latency score (EWMA, failures penalised), and reads with `Caller.Hedge`: if no verified answer arrives within the p95 of recent reads (clamped to 20–500 ms), the next replica is asked too. The first answer whose SHA-256 matches the chunk ID wins.
 
+## Integrity (ADR-0013)
+
+```
+client ──chunk.get──► node: SHA-256(bytes) = id?
+                        no → quarantine/<id>, report(seq, corrupt_ids) ─► meta: drop location,
+                             answer CodeCorrupt; client tries next copy        Recheck: copy now (no delay)
+                        yes → bytes ──► client: SHA-256 again (path not trusted)
+                                         mismatch → meta.suspect hint → node.verify_chunk → node decides
+scrubber (every node): each pass lists the chunks, verifies one per step,
+                       paced to 8 MiB/s; same quarantine and report path
+```
+
+- Every copy the metadata server counts has passed a node's own check since it was stored or last scrubbed. A copy that fails any check stops counting at once.
+- Repair never propagates rot: the source verifies on `getChunk`, the target on `Put`.
+- If every copy of a chunk fails, the read returns `CodeCorrupt` ("the data is lost"), and health counts the chunk as lost.
+
 ## Dashboard view
 
 `meta.Server.ClusterView(eventsAfter)` builds everything the dashboard shows in one pass: nodes with detector state and heartbeat age, per-file replication (chunks below RF, fewest alive copies), repair counters and copies in flight, and the recent-event ring (500 events: detector transitions, copy start and end, trims). The sim's `cluster.StateSince` calls it directly; the gateway serves it at `GET /cluster?events_after=N`. Events carry a sequence number, so the UI fetches only new ones; a sequence below the last seen means the metadata server restarted.
@@ -135,5 +151,7 @@ The chaos runner (`internal/chaos`, `go run ./tools/task chaos`) adds, per seed:
 6. At the end, no chunk is without a live copy. (The checker looks at the settled state, not every step: a transient dip below RF that heals itself passes, which is how bug #6 in `docs/bugs-found.md` got past it.)
 7. Repair never exceeds its limits (peak in flight, per source, per target).
 8. The same seed produces the same trace hash.
+9. No successful read, during the run or after it, returns bytes that were never written to that path.
+10. With bit rot in the schedule: after replication settles, two full scrub passes on every running node leave no rotten chunk on any disk, and RF settles again.
 
 Real mode (`--mode=real --short`) runs three scenarios against the compose cluster: kill a node past the repair delay (RF restored, extras trimmed on return), a 15 s blip (zero copies), and a paused container (reads continue, no data loss).
