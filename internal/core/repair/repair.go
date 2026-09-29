@@ -368,7 +368,10 @@ func (s *Scheduler) trim(id iface.ChunkID, sure []Holder) {
 	if _, busy := s.trimming[id]; busy {
 		return
 	}
-	victim := Victim(sure)
+	s.sendTrim(id, Victim(sure))
+}
+
+func (s *Scheduler) sendTrim(id iface.ChunkID, victim iface.NodeID) {
 	s.nextID++
 	t := Trim{ID: s.nextID, Chunk: id, Node: victim}
 	s.trimming[id] = t
@@ -377,10 +380,30 @@ func (s *Scheduler) trim(id iface.ChunkID, sure []Holder) {
 			// Command or confirmation lost: look again now, not at the
 			// next periodic scan.
 			delete(s.trimming, id)
-			s.checkExcess(id)
+			s.retryTrim(t)
 		}
 	})
 	s.send.Trim(t)
+}
+
+// retryTrim re-sends a trim whose confirmation never came to the same node
+// (nodes confirm absent chunks too). The victim may have deleted already, so
+// trimming a different holder could leave Replicas-1 copies until the
+// victim's next full report. Only once the victim stops counting as a
+// confirmed holder is a new victim chosen, from the holders that remain.
+func (s *Scheduler) retryTrim(t Trim) {
+	if _, ok := s.view.Want(t.Chunk); !ok || s.inflight[t.Chunk] != nil {
+		return
+	}
+	a := s.assess(t.Chunk, s.clock.Now())
+	if a.missing != 0 || len(a.sure) <= s.cfg.Replicas {
+		return
+	}
+	if slices.ContainsFunc(a.sure, func(h Holder) bool { return h.Node == t.Node }) {
+		s.sendTrim(t.Chunk, t.Node)
+		return
+	}
+	s.trim(t.Chunk, a.sure)
 }
 
 // Victim picks the replica to drop: one on the rack holding the most

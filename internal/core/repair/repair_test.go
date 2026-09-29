@@ -20,6 +20,7 @@ type world struct {
 	state       map[iface.NodeID]detector.State
 	deadSince   map[iface.NodeID]iface.Instant
 	unconfirmed map[iface.NodeID]bool
+	used        map[iface.NodeID]int64
 }
 
 func newWorld(nodes int) *world {
@@ -60,7 +61,7 @@ func (w *world) Chunks(fn func(iface.ChunkID, int64)) {
 func (w *world) Holders(id iface.ChunkID) []Holder {
 	var out []Holder
 	for _, n := range w.holders[id] {
-		out = append(out, Holder{Node: n, State: w.state[n], DeadSince: w.deadSince[n], Confirmed: !w.unconfirmed[n], Rack: "r1"})
+		out = append(out, Holder{Node: n, State: w.state[n], DeadSince: w.deadSince[n], Confirmed: !w.unconfirmed[n], Rack: "r1", Used: w.used[n]})
 	}
 	return out
 }
@@ -431,6 +432,44 @@ func TestTrimSafety(t *testing.T) {
 			s.Removed(trims[0].Node, []iface.ChunkID{chunk(1)})
 			if s.Stats().Trimmed != 1 {
 				t.Fatal("trim not completed")
+			}
+		})
+	}
+}
+
+// TestTrimRetrySameVictim: when a trim's confirmation is lost, the victim may
+// already have deleted its copy. Retrying against another holder would leave
+// the chunk one below RF until the next full report.
+func TestTrimRetrySameVictim(t *testing.T) {
+	for _, tc := range []struct {
+		name      string
+		setup     func(w *world, victim iface.NodeID)
+		wantRetry bool // a second trim is sent, to the same node
+	}{
+		// The victim deleted, so its heartbeats report less used space:
+		// a fresh victim choice would now pick another node.
+		{"confirmation lost: retry the same node", func(w *world, v iface.NodeID) {
+			w.used = map[iface.NodeID]int64{node(1): 10, node(2): 10, node(3): 10, node(4): 10, v: 0}
+		}, true},
+		{"victim now suspect: no trim, 3 confirmed remain", func(w *world, v iface.NodeID) { w.state[v] = detector.Suspect }, false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			w := newWorld(6)
+			w.add(chunk(1), 1, 1, 2, 3, 4)
+			clock := sim.NewClock()
+			var trims []Trim
+			s := New(unthrottled(), clock, w, Sender{Copy: func(Copy) {}, Trim: func(tr Trim) { trims = append(trims, tr) }})
+			s.Scan()
+			if len(trims) != 1 {
+				t.Fatalf("trims %+v, want 1", trims)
+			}
+			tc.setup(w, trims[0].Node)
+			clock.Advance(unthrottled().CopyTimeout + time.Second)
+			switch {
+			case tc.wantRetry && (len(trims) != 2 || trims[1].Node != trims[0].Node):
+				t.Fatalf("after the timeout: trims %+v, want a retry to %s", trims, trims[0].Node)
+			case !tc.wantRetry && len(trims) != 1:
+				t.Fatalf("after the timeout: trims %+v, want none", trims)
 			}
 		})
 	}

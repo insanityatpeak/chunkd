@@ -150,8 +150,9 @@ func (n *Node) handle(m iface.Message) {
 	}
 }
 
-// deleteReplica drops an over-replicated copy and confirms it. A lost
-// confirmation is harmless: the next full report omits the chunk.
+// deleteReplica drops an over-replicated copy and confirms it, also when
+// the copy is already gone, so a trim retried after a lost confirmation
+// completes (repair.retryTrim).
 func (n *Node) deleteReplica(m iface.Message) {
 	var cmd chunkdv1.DeleteReplica
 	if err := wire.Decode(m.Body, &cmd); err != nil {
