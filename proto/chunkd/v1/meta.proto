@@ -67,6 +67,9 @@ message UndeleteOp {
 // the op, not in config, so every replica of the log drops the same ones.
 message AdvanceEpochOp {
   uint32 retain_epochs = 1;
+  // Pending uploads not begun or claimed from for lease_epochs epochs are
+  // aborted, releasing their claims. 0: uploads never expire.
+  uint32 lease_epochs = 2;
 }
 
 message Op {
@@ -121,6 +124,8 @@ message UploadRecord {
   uint64 id = 1;
   BeginUploadOp begin = 2;
   repeated ChunkClaim claims = 3;
+  // Epoch of the upload's begin or latest claim: its lease.
+  uint64 touched_epoch = 4;
 }
 
 message MetaSnapshot {

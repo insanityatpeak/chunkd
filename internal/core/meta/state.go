@@ -60,6 +60,9 @@ type Upload struct {
 	Claimed map[int]iface.ChunkID
 	// LWW commits over whatever version is live instead of comparing.
 	LWW bool
+	// Touched is the epoch of the begin or the latest claim. The upload
+	// expires LeaseEpochs after it (AdvanceEpoch).
+	Touched uint64
 }
 
 // ChunkInfo is the durable record of a chunk. Refcount counts references
@@ -96,8 +99,9 @@ type Committed struct {
 type Result struct {
 	UploadID uint64
 	Version  uint64
-	// Dropped counts versions hard-deleted by an AdvanceEpoch.
-	Dropped int
+	// Dropped counts versions hard-deleted by an AdvanceEpoch, Expired the
+	// uploads whose lease ran out.
+	Dropped, Expired int
 }
 
 // New returns empty state.
@@ -238,7 +242,7 @@ func (s *State) Apply(op *chunkdv1.Op) Result {
 	case *chunkdv1.Op_Begin:
 		b := o.Begin
 		s.lastUploadID++
-		u := &Upload{ID: s.lastUploadID, Path: b.GetPath(), Expected: b.GetExpectedVersion(), Size: b.GetSize(), ChunkSize: int(b.GetChunkSize()), Claims: b.GetClaims(), Claimed: map[int]iface.ChunkID{}, LWW: b.GetLastWriterWins()}
+		u := &Upload{ID: s.lastUploadID, Path: b.GetPath(), Expected: b.GetExpectedVersion(), Size: b.GetSize(), ChunkSize: int(b.GetChunkSize()), Claims: b.GetClaims(), Claimed: map[int]iface.ChunkID{}, LWW: b.GetLastWriterWins(), Touched: s.epoch}
 		for _, r := range b.GetPlacement() {
 			nodes := make([]iface.NodeID, len(r.GetNodes()))
 			for i, n := range r.GetNodes() {
@@ -270,6 +274,7 @@ func (s *State) Apply(op *chunkdv1.Op) Result {
 		return Result{UploadID: u.ID, Version: v.V}
 	case *chunkdv1.Op_Claim:
 		u := s.uploads[o.Claim.GetUploadId()]
+		u.Touched = s.epoch
 		for _, cl := range o.Claim.GetClaims() {
 			s.claim(u, int(cl.GetIndex()), cl.GetId())
 		}
@@ -295,7 +300,7 @@ func (s *State) Apply(op *chunkdv1.Op) Result {
 		return Result{Version: v.V}
 	case *chunkdv1.Op_AdvanceEpoch:
 		s.epoch++
-		return Result{Dropped: s.hardDelete(uint64(o.AdvanceEpoch.GetRetainEpochs()))}
+		return Result{Dropped: s.hardDelete(uint64(o.AdvanceEpoch.GetRetainEpochs())), Expired: s.expire(uint64(o.AdvanceEpoch.GetLeaseEpochs()))}
 	}
 	panic("unreachable")
 }
@@ -372,6 +377,31 @@ func (s *State) hardDelete(retain uint64) int {
 		f.Versions = keep
 	}
 	return dropped
+}
+
+// expire aborts uploads idle for lease epochs: a client that died
+// mid-upload stops pinning its chunks, and GC can collect them.
+// SIMPLIFIED: one lease per upload, renewed by claims. HDFS has a soft limit
+// (1 min, another writer may take over) and a hard limit (1 h, the NameNode
+// closes the file).
+func (s *State) expire(lease uint64) int {
+	if lease == 0 {
+		return 0
+	}
+	n := 0
+	for _, id := range slices.Sorted(maps.Keys(s.uploads)) {
+		if u := s.uploads[id]; u.Touched+lease <= s.epoch {
+			s.dropUpload(u)
+			n++
+		}
+	}
+	return n
+}
+
+// Marked reports whether GC must keep every copy of id: a committed or
+// retained version references it, or a pending upload has claimed it.
+func (s *State) Marked(id iface.ChunkID) bool {
+	return s.chunks[id] != nil || s.claimed[id] > 0
 }
 
 // unref drops one reference to id. At zero the record goes: the chunk is
@@ -544,7 +574,7 @@ func (s *State) Snapshot() []byte {
 			}
 			b.Placement = append(b.Placement, rep)
 		}
-		rec := &chunkdv1.UploadRecord{Id: id, Begin: b}
+		rec := &chunkdv1.UploadRecord{Id: id, Begin: b, TouchedEpoch: u.Touched}
 		for _, i := range slices.Sorted(maps.Keys(u.Claimed)) {
 			cid := u.Claimed[i]
 			rec.Claims = append(rec.Claims, &chunkdv1.ChunkClaim{Index: int32(i), Id: cid[:]})
@@ -594,7 +624,7 @@ func Restore(data []byte) (*State, error) {
 	}
 	for _, u := range snap.GetUploads() {
 		b := u.GetBegin()
-		up := &Upload{ID: u.GetId(), Path: b.GetPath(), Expected: b.GetExpectedVersion(), Size: b.GetSize(), ChunkSize: int(b.GetChunkSize()), Claims: b.GetClaims(), Claimed: map[int]iface.ChunkID{}, LWW: b.GetLastWriterWins()}
+		up := &Upload{ID: u.GetId(), Path: b.GetPath(), Expected: b.GetExpectedVersion(), Size: b.GetSize(), ChunkSize: int(b.GetChunkSize()), Claims: b.GetClaims(), Claimed: map[int]iface.ChunkID{}, LWW: b.GetLastWriterWins(), Touched: u.GetTouchedEpoch()}
 		for _, r := range b.GetPlacement() {
 			var nodes []iface.NodeID
 			for _, n := range r.GetNodes() {

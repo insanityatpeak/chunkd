@@ -49,6 +49,10 @@ type ledger struct {
 	// last holds, for chunks changed by incremental reports newer than
 	// full, the seq of the latest change (an add or a delete).
 	last map[iface.ChunkID]uint64
+	// seen is the highest seq applied: the fence for GC deletes. Every
+	// store change numbered at or below it happened before the server's
+	// current view was formed.
+	seen uint64
 }
 
 // Report is one block report: Full lists every chunk the node holds in
@@ -149,6 +153,7 @@ func (c *Cluster) Report(id iface.NodeID, r Report) (added, removed []iface.Chun
 	if l.inc != r.Incarnation {
 		*l = ledger{inc: r.Incarnation}
 	}
+	l.seen = max(l.seen, r.Seq)
 	if r.Seq <= l.full {
 		return nil, nil, true
 	}
@@ -256,6 +261,21 @@ func (c *Cluster) Detector() *detector.Detector { return c.det }
 // suspect and dead nodes; callers filter with Alive or Readable.
 func (c *Cluster) Locations(ch iface.ChunkID) []iface.NodeID {
 	return slices.Sorted(maps.Keys(c.byChunk[ch]))
+}
+
+// Fence returns the incarnation and highest applied report seq of a node
+// whose locations are confirmed, for a conditional GC delete.
+func (c *Cluster) Fence(id iface.NodeID) (inc, seq uint64, ok bool) {
+	n := c.nodes[id]
+	if n == nil || !n.reported {
+		return 0, 0, false
+	}
+	return n.ledger.inc, n.ledger.seen, true
+}
+
+// Located returns every chunk with at least one reported copy, sorted.
+func (c *Cluster) Located() []iface.ChunkID {
+	return slices.SortedFunc(maps.Keys(c.byChunk), func(a, b iface.ChunkID) int { return slices.Compare(a[:], b[:]) })
 }
 
 // Node returns one node's state.

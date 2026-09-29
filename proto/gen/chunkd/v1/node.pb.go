@@ -229,7 +229,10 @@ type BlockReport struct {
 	Seq         uint64 `protobuf:"varint,6,opt,name=seq,proto3" json:"seq,omitempty"`
 	// Chunks that failed verification and were quarantined (incremental
 	// reports only); like deleted_ids, they no longer count as replicas.
-	CorruptIds    [][]byte `protobuf:"bytes,7,rep,name=corrupt_ids,json=corruptIds,proto3" json:"corrupt_ids,omitempty"`
+	CorruptIds [][]byte `protobuf:"bytes,7,rep,name=corrupt_ids,json=corruptIds,proto3" json:"corrupt_ids,omitempty"`
+	// GC deletes the node refused because the chunk was written after the
+	// delete's fence. The copy stays and still counts.
+	KeptIds       [][]byte `protobuf:"bytes,8,rep,name=kept_ids,json=keptIds,proto3" json:"kept_ids,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -309,6 +312,13 @@ func (x *BlockReport) GetSeq() uint64 {
 func (x *BlockReport) GetCorruptIds() [][]byte {
 	if x != nil {
 		return x.CorruptIds
+	}
+	return nil
+}
+
+func (x *BlockReport) GetKeptIds() [][]byte {
+	if x != nil {
+		return x.KeptIds
 	}
 	return nil
 }
@@ -632,11 +642,17 @@ func (x *ReplicateFailed) GetError() string {
 // DeleteReplica tells a node to drop its copy of an over-replicated chunk.
 // The node confirms with deleted_ids in a block report.
 type DeleteReplica struct {
-	state         protoimpl.MessageState `protogen:"open.v1"`
-	TrimId        uint64                 `protobuf:"varint,1,opt,name=trim_id,json=trimId,proto3" json:"trim_id,omitempty"`
-	ChunkId       []byte                 `protobuf:"bytes,2,opt,name=chunk_id,json=chunkId,proto3" json:"chunk_id,omitempty"`
-	unknownFields protoimpl.UnknownFields
-	sizeCache     protoimpl.SizeCache
+	state   protoimpl.MessageState `protogen:"open.v1"`
+	TrimId  uint64                 `protobuf:"varint,1,opt,name=trim_id,json=trimId,proto3" json:"trim_id,omitempty"`
+	ChunkId []byte                 `protobuf:"bytes,2,opt,name=chunk_id,json=chunkId,proto3" json:"chunk_id,omitempty"`
+	// GC delete of an unreferenced copy: conditional on the fence. The node
+	// refuses if it is a different incarnation, or if it wrote the chunk in
+	// a change numbered above fence_seq (after the metadata server's view).
+	Gc               bool   `protobuf:"varint,3,opt,name=gc,proto3" json:"gc,omitempty"`
+	FenceIncarnation uint64 `protobuf:"varint,4,opt,name=fence_incarnation,json=fenceIncarnation,proto3" json:"fence_incarnation,omitempty"`
+	FenceSeq         uint64 `protobuf:"varint,5,opt,name=fence_seq,json=fenceSeq,proto3" json:"fence_seq,omitempty"`
+	unknownFields    protoimpl.UnknownFields
+	sizeCache        protoimpl.SizeCache
 }
 
 func (x *DeleteReplica) Reset() {
@@ -681,6 +697,27 @@ func (x *DeleteReplica) GetChunkId() []byte {
 		return x.ChunkId
 	}
 	return nil
+}
+
+func (x *DeleteReplica) GetGc() bool {
+	if x != nil {
+		return x.Gc
+	}
+	return false
+}
+
+func (x *DeleteReplica) GetFenceIncarnation() uint64 {
+	if x != nil {
+		return x.FenceIncarnation
+	}
+	return 0
+}
+
+func (x *DeleteReplica) GetFenceSeq() uint64 {
+	if x != nil {
+		return x.FenceSeq
+	}
+	return 0
 }
 
 // VerifyChunk asks a node to re-read and re-hash one chunk; a mismatch is
@@ -754,7 +791,7 @@ const file_chunkd_v1_node_proto_rawDesc = "" +
 	"\fscrub_passes\x18\f \x01(\x04R\vscrubPasses\"J\n" +
 	"\fHeartbeatAck\x12\x10\n" +
 	"\x03seq\x18\x01 \x01(\x04R\x03seq\x12(\n" +
-	"\x10need_full_report\x18\x02 \x01(\bR\x0eneedFullReport\"\xc8\x01\n" +
+	"\x10need_full_report\x18\x02 \x01(\bR\x0eneedFullReport\"\xe3\x01\n" +
 	"\vBlockReport\x12\x12\n" +
 	"\x04node\x18\x01 \x01(\tR\x04node\x12\x12\n" +
 	"\x04full\x18\x02 \x01(\bR\x04full\x12\x1b\n" +
@@ -764,7 +801,8 @@ const file_chunkd_v1_node_proto_rawDesc = "" +
 	"\vincarnation\x18\x05 \x01(\x04R\vincarnation\x12\x10\n" +
 	"\x03seq\x18\x06 \x01(\x04R\x03seq\x12\x1f\n" +
 	"\vcorrupt_ids\x18\a \x03(\fR\n" +
-	"corruptIds\"5\n" +
+	"corruptIds\x12\x19\n" +
+	"\bkept_ids\x18\b \x03(\fR\akeptIds\"5\n" +
 	"\x0fPutChunkRequest\x12\x0e\n" +
 	"\x02id\x18\x01 \x01(\fR\x02id\x12\x12\n" +
 	"\x04data\x18\x02 \x01(\fR\x04data\"\x12\n" +
@@ -783,10 +821,13 @@ const file_chunkd_v1_node_proto_rawDesc = "" +
 	"\acopy_id\x18\x01 \x01(\x04R\x06copyId\x12\x19\n" +
 	"\bchunk_id\x18\x02 \x01(\fR\achunkId\x12\x12\n" +
 	"\x04node\x18\x03 \x01(\tR\x04node\x12\x14\n" +
-	"\x05error\x18\x04 \x01(\tR\x05error\"C\n" +
+	"\x05error\x18\x04 \x01(\tR\x05error\"\x9d\x01\n" +
 	"\rDeleteReplica\x12\x17\n" +
 	"\atrim_id\x18\x01 \x01(\x04R\x06trimId\x12\x19\n" +
-	"\bchunk_id\x18\x02 \x01(\fR\achunkId\"(\n" +
+	"\bchunk_id\x18\x02 \x01(\fR\achunkId\x12\x0e\n" +
+	"\x02gc\x18\x03 \x01(\bR\x02gc\x12+\n" +
+	"\x11fence_incarnation\x18\x04 \x01(\x04R\x10fenceIncarnation\x12\x1b\n" +
+	"\tfence_seq\x18\x05 \x01(\x04R\bfenceSeq\"(\n" +
 	"\vVerifyChunk\x12\x19\n" +
 	"\bchunk_id\x18\x01 \x01(\fR\achunkIdB?Z=github.com/insanityatpeak/chunkd/proto/gen/chunkd/v1;chunkdv1b\x06proto3"
 

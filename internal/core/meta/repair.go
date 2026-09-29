@@ -15,8 +15,9 @@ type repairView struct{ s *Server }
 
 var _ repair.View = repairView{}
 
-// Want: every chunk a committed version references, until GC (Phase 4)
-// decrements its refcount. Pending uploads are the client's to finish.
+// Want: every chunk a committed or retained version references, until hard
+// delete drops the last reference. Pending uploads are the client's to
+// finish.
 func (v repairView) Want(id iface.ChunkID) (int64, bool) {
 	ci, ok := v.s.state.Chunk(id)
 	return ci.Size, ok && ci.Refcount > 0
@@ -33,6 +34,11 @@ func (v repairView) Chunks(fn func(iface.ChunkID, int64)) {
 func (v repairView) Holders(id iface.ChunkID) []repair.Holder {
 	var out []repair.Holder
 	for _, n := range v.s.cluster.Locations(id) {
+		// A copy with a GC delete in flight may vanish: counting it could
+		// trim a good copy or skip a needed one.
+		if v.s.gcPending(id, n) {
+			continue
+		}
 		ns, _ := v.s.cluster.Node(n)
 		out = append(out, repair.Holder{Node: n, State: ns.State, DeadSince: ns.DeadSince,
 			Confirmed: v.s.cluster.Reported(n), Rack: ns.Rack, Used: ns.Used})

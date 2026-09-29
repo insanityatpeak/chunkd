@@ -42,6 +42,11 @@ type Config struct {
 	// works for between (RetainEpochs-1)×EpochEvery and RetainEpochs×EpochEvery.
 	EpochEvery   time.Duration
 	RetainEpochs int
+	// LeaseEpochs: a pending upload with no claim for this many epochs is
+	// aborted. GCGrace: an unreferenced copy is deleted only after it has
+	// been unreferenced this long (ADR-0016).
+	LeaseEpochs int
+	GCGrace     time.Duration
 }
 
 // DefaultConfig is N=3, commit at 2 (ADR-0007), 4 MiB chunks (ADR-0005),
@@ -51,7 +56,7 @@ type Config struct {
 // noncurrent versions until a lifecycle rule expires them, typically days.
 func DefaultConfig(id iface.NodeID) Config {
 	return Config{ID: id, Replicas: 3, MinReplicas: 2, ChunkSize: chunk.DefaultSize, Detector: detector.DefaultConfig(), Repair: repair.DefaultConfig(), SnapshotEvery: 1000,
-		EpochEvery: 30 * time.Second, RetainEpochs: 3}
+		EpochEvery: 30 * time.Second, RetainEpochs: 3, LeaseEpochs: 4, GCGrace: time.Minute}
 }
 
 // Server is the metadata server. Everything runs on its event loop.
@@ -69,6 +74,7 @@ type Server struct {
 	// dedupSkipped counts chunk bytes clients did not send because a claim
 	// found them present. Not durable: it restarts at 0.
 	dedupSkipped uint64
+	gc           gcState
 }
 
 // NewServer recovers durable state: the latest snapshot, then every WAL
@@ -88,7 +94,7 @@ func NewServer(ctx context.Context, d Deps, cfg Config) (*Server, error) {
 	if err != nil {
 		return nil, fmt.Errorf("restore snapshot at %d: %w", at, err)
 	}
-	s := &Server{d: d, cfg: cfg, state: state, cluster: NewCluster(cfg.Detector), applied: at}
+	s := &Server{d: d, cfg: cfg, state: state, cluster: NewCluster(cfg.Detector), applied: at, gc: newGCState()}
 	rc := cfg.Repair
 	rc.Replicas = cfg.Replicas
 	s.repair = repair.New(rc, d.Clock, repairView{s}, repair.Sender{Copy: s.sendCopy, Trim: s.sendTrim, Done: s.copyDone, Trimmed: s.trimmed})
@@ -135,7 +141,8 @@ func (s *Server) Start() {
 // epoch drops is decided by applying the logged op, identically everywhere.
 func (s *Server) advanceEpoch() {
 	s.d.Clock.AfterFunc(s.cfg.EpochEvery, s.advanceEpoch)
-	res, err := s.apply(&chunkdv1.Op{Op: &chunkdv1.Op_AdvanceEpoch{AdvanceEpoch: &chunkdv1.AdvanceEpochOp{RetainEpochs: uint32(s.cfg.RetainEpochs)}}})
+	res, err := s.apply(&chunkdv1.Op{Op: &chunkdv1.Op_AdvanceEpoch{AdvanceEpoch: &chunkdv1.AdvanceEpochOp{
+		RetainEpochs: uint32(s.cfg.RetainEpochs), LeaseEpochs: uint32(s.cfg.LeaseEpochs)}}})
 	if err != nil {
 		s.d.Log.Error("advance epoch", "err", err)
 		return
@@ -143,6 +150,10 @@ func (s *Server) advanceEpoch() {
 	if res.Dropped > 0 {
 		s.event("gc", "", "epoch %d: %d versions past retention dropped", s.state.Epoch(), res.Dropped)
 	}
+	if res.Expired > 0 {
+		s.event("gc", "", "epoch %d: %d idle uploads expired, their claims released", s.state.Epoch(), res.Expired)
+	}
+	s.collect()
 }
 
 func (s *Server) tick() {
@@ -232,6 +243,14 @@ func (s *Server) handle(m iface.Message) {
 		}
 		if len(corrupt) > 0 {
 			s.corrupted(node, corrupt, removed)
+		}
+		for _, id := range deleted {
+			s.gcAcked(id, node, false)
+		}
+		for _, raw := range r.GetKeptIds() {
+			if id, err := wire.ChunkID(raw); err == nil {
+				s.gcAcked(id, node, true)
+			}
 		}
 		// Only changes the report actually made: a reordered, older report
 		// must not complete a copy or a trim.
@@ -400,8 +419,10 @@ func (s *Server) commit(m iface.Message, respond iface.Responder) {
 // liveLocations are replicas that count toward commit: alive nodes only. A
 // suspect node may already be dead, and an acknowledged upload promises
 // MinReplicas copies on nodes believed alive.
+// A copy with a GC delete in flight does not count either: it may be gone
+// by the time the version is read.
 func (s *Server) liveLocations(id iface.ChunkID) []iface.NodeID {
-	return slices.DeleteFunc(s.cluster.Locations(id), func(n iface.NodeID) bool { return !s.cluster.Alive(n) })
+	return slices.DeleteFunc(s.cluster.Locations(id), func(n iface.NodeID) bool { return !s.cluster.Alive(n) || s.gcPending(id, n) })
 }
 
 // readLocations are replicas a reader may try: alive first, then suspect.

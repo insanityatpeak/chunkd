@@ -48,6 +48,9 @@ message BlockReport {
   // Chunks that failed verification and were quarantined (incremental
   // reports only); like deleted_ids, they no longer count as replicas.
   repeated bytes corrupt_ids = 7;
+  // GC deletes the node refused because the chunk was written after the
+  // delete's fence. The copy stays and still counts.
+  repeated bytes kept_ids = 8;
 }
 
 message PutChunkRequest {
@@ -83,11 +86,18 @@ message ReplicateFailed {
   string error = 4;
 }
 
-// DeleteReplica tells a node to drop its copy of an over-replicated chunk.
-// The node confirms with deleted_ids in a block report.
+// DeleteReplica tells a node to drop its copy of an over-replicated chunk
+// (a trim) or of an unreferenced one (GC). The node confirms with
+// deleted_ids, or kept_ids for a refused GC delete, in a block report.
 message DeleteReplica {
   uint64 trim_id = 1;
   bytes chunk_id = 2;
+  // GC delete of an unreferenced copy: conditional on the fence. The node
+  // refuses if it is a different incarnation, or if it wrote the chunk in
+  // a change numbered above fence_seq (after the metadata server's view).
+  bool gc = 3;
+  uint64 fence_incarnation = 4;
+  uint64 fence_seq = 5;
 }
 
 // VerifyChunk asks a node to re-read and re-hash one chunk; a mismatch is

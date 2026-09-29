@@ -540,8 +540,11 @@ func (x *UndeleteOp) GetExpectedVersion() uint64 {
 // older than retain_epochs are dropped when it applies. The retention is in
 // the op, not in config, so every replica of the log drops the same ones.
 type AdvanceEpochOp struct {
-	state         protoimpl.MessageState `protogen:"open.v1"`
-	RetainEpochs  uint32                 `protobuf:"varint,1,opt,name=retain_epochs,json=retainEpochs,proto3" json:"retain_epochs,omitempty"`
+	state        protoimpl.MessageState `protogen:"open.v1"`
+	RetainEpochs uint32                 `protobuf:"varint,1,opt,name=retain_epochs,json=retainEpochs,proto3" json:"retain_epochs,omitempty"`
+	// Pending uploads not begun or claimed from for lease_epochs epochs are
+	// aborted, releasing their claims. 0: uploads never expire.
+	LeaseEpochs   uint32 `protobuf:"varint,2,opt,name=lease_epochs,json=leaseEpochs,proto3" json:"lease_epochs,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -579,6 +582,13 @@ func (*AdvanceEpochOp) Descriptor() ([]byte, []int) {
 func (x *AdvanceEpochOp) GetRetainEpochs() uint32 {
 	if x != nil {
 		return x.RetainEpochs
+	}
+	return 0
+}
+
+func (x *AdvanceEpochOp) GetLeaseEpochs() uint32 {
+	if x != nil {
+		return x.LeaseEpochs
 	}
 	return 0
 }
@@ -978,10 +988,12 @@ func (x *ChunkRecord) GetSize() int64 {
 }
 
 type UploadRecord struct {
-	state         protoimpl.MessageState `protogen:"open.v1"`
-	Id            uint64                 `protobuf:"varint,1,opt,name=id,proto3" json:"id,omitempty"`
-	Begin         *BeginUploadOp         `protobuf:"bytes,2,opt,name=begin,proto3" json:"begin,omitempty"`
-	Claims        []*ChunkClaim          `protobuf:"bytes,3,rep,name=claims,proto3" json:"claims,omitempty"`
+	state  protoimpl.MessageState `protogen:"open.v1"`
+	Id     uint64                 `protobuf:"varint,1,opt,name=id,proto3" json:"id,omitempty"`
+	Begin  *BeginUploadOp         `protobuf:"bytes,2,opt,name=begin,proto3" json:"begin,omitempty"`
+	Claims []*ChunkClaim          `protobuf:"bytes,3,rep,name=claims,proto3" json:"claims,omitempty"`
+	// Epoch of the upload's begin or latest claim: its lease.
+	TouchedEpoch  uint64 `protobuf:"varint,4,opt,name=touched_epoch,json=touchedEpoch,proto3" json:"touched_epoch,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -1035,6 +1047,13 @@ func (x *UploadRecord) GetClaims() []*ChunkClaim {
 		return x.Claims
 	}
 	return nil
+}
+
+func (x *UploadRecord) GetTouchedEpoch() uint64 {
+	if x != nil {
+		return x.TouchedEpoch
+	}
+	return 0
 }
 
 type MetaSnapshot struct {
@@ -3216,9 +3235,10 @@ const file_chunkd_v1_meta_proto_rawDesc = "" +
 	"UndeleteOp\x12\x12\n" +
 	"\x04path\x18\x01 \x01(\tR\x04path\x12\x18\n" +
 	"\aversion\x18\x02 \x01(\x04R\aversion\x12)\n" +
-	"\x10expected_version\x18\x03 \x01(\x04R\x0fexpectedVersion\"5\n" +
+	"\x10expected_version\x18\x03 \x01(\x04R\x0fexpectedVersion\"X\n" +
 	"\x0eAdvanceEpochOp\x12#\n" +
-	"\rretain_epochs\x18\x01 \x01(\rR\fretainEpochs\"\xfb\x02\n" +
+	"\rretain_epochs\x18\x01 \x01(\rR\fretainEpochs\x12!\n" +
+	"\flease_epochs\x18\x02 \x01(\rR\vleaseEpochs\"\xfb\x02\n" +
 	"\x02Op\x120\n" +
 	"\x05begin\x18\x01 \x01(\v2\x18.chunkd.v1.BeginUploadOpH\x00R\x05begin\x123\n" +
 	"\x06commit\x18\x02 \x01(\v2\x19.chunkd.v1.CommitUploadOpH\x00R\x06commit\x120\n" +
@@ -3249,11 +3269,12 @@ const file_chunkd_v1_meta_proto_rawDesc = "" +
 	"\vChunkRecord\x12\x0e\n" +
 	"\x02id\x18\x01 \x01(\fR\x02id\x12\x1a\n" +
 	"\brefcount\x18\x02 \x01(\x04R\brefcount\x12\x12\n" +
-	"\x04size\x18\x03 \x01(\x03R\x04size\"}\n" +
+	"\x04size\x18\x03 \x01(\x03R\x04size\"\xa2\x01\n" +
 	"\fUploadRecord\x12\x0e\n" +
 	"\x02id\x18\x01 \x01(\x04R\x02id\x12.\n" +
 	"\x05begin\x18\x02 \x01(\v2\x18.chunkd.v1.BeginUploadOpR\x05begin\x12-\n" +
-	"\x06claims\x18\x03 \x03(\v2\x15.chunkd.v1.ChunkClaimR\x06claims\"\xda\x01\n" +
+	"\x06claims\x18\x03 \x03(\v2\x15.chunkd.v1.ChunkClaimR\x06claims\x12#\n" +
+	"\rtouched_epoch\x18\x04 \x01(\x04R\ftouchedEpoch\"\xda\x01\n" +
 	"\fMetaSnapshot\x12+\n" +
 	"\x05files\x18\x01 \x03(\v2\x15.chunkd.v1.FileRecordR\x05files\x12.\n" +
 	"\x06chunks\x18\x02 \x03(\v2\x16.chunkd.v1.ChunkRecordR\x06chunks\x121\n" +

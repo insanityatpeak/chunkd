@@ -55,6 +55,10 @@ type Stats struct {
 	RepairCopies uint64 `json:"repairCopies"`
 	RepairFailed uint64 `json:"repairFailed"`
 	Trimmed      uint64 `json:"trimmed"`
+	// GC deletes carried out, and refused because the chunk was written
+	// after the delete's fence.
+	GCDeleted uint64 `json:"gcDeleted"`
+	GCKept    uint64 `json:"gcKept"`
 	// Corrupt counts chunks that failed verification and were quarantined.
 	Corrupt uint64 `json:"corrupt"`
 }
@@ -80,6 +84,30 @@ type Node struct {
 	// corrupt is counted by concurrent read handlers, so not in stats.
 	corrupt atomic.Uint64
 	scrub   *scrub.Scrubber
+
+	// chunkMu orders writes of a chunk against a GC delete of it: the delete
+	// checks lastWrite and removes the file under the same lock, so a write
+	// cannot land in between. Striped so puts of other chunks stay parallel.
+	chunkMu [64]sync.Mutex
+	// lastWrite is the seq of the latest write of each chunk in this
+	// incarnation. SIMPLIFIED: never pruned; 40 bytes per chunk written.
+	lastWriteMu sync.Mutex
+	lastWrite   map[iface.ChunkID]uint64
+}
+
+// write stores a chunk through f and records the change's seq as the
+// chunk's latest write.
+func (n *Node) write(id iface.ChunkID, f func() error) (uint64, error) {
+	mu := &n.chunkMu[id[0]%64]
+	mu.Lock()
+	defer mu.Unlock()
+	seq, err := n.change(f)
+	if err == nil {
+		n.lastWriteMu.Lock()
+		n.lastWrite[id] = seq
+		n.lastWriteMu.Unlock()
+	}
+	return seq, err
 }
 
 // change runs a store mutation and returns the seq for its report.
@@ -119,7 +147,7 @@ func New(d Deps, cfg Config) *Node {
 	if d.Clock == nil || d.Net == nil || d.Async == nil || d.Store == nil || d.Rand == nil || d.Log == nil {
 		panic("node: missing dependency")
 	}
-	n := &Node{d: d, cfg: cfg, incarnation: d.Rand.Uint64()}
+	n := &Node{d: d, cfg: cfg, incarnation: d.Rand.Uint64(), lastWrite: map[iface.ChunkID]uint64{}}
 	n.scrub = scrub.New(cfg.Scrub, d.Clock, d.Store, n.quarantine)
 	return n
 }
@@ -165,7 +193,7 @@ func (n *Node) putChunk(m iface.Message, respond iface.Responder) {
 	}
 	// The store rejects data that does not hash to id, so a corrupted
 	// transfer is never acknowledged.
-	seq, err := n.change(func() error { return n.d.Store.Put(context.Background(), id, req.GetData()) })
+	seq, err := n.write(id, func() error { return n.d.Store.Put(context.Background(), id, req.GetData()) })
 	if err != nil {
 		respond(nil, err)
 		return
@@ -265,6 +293,10 @@ func (n *Node) deleteReplica(m iface.Message) {
 	if err != nil {
 		return
 	}
+	if cmd.GetGc() {
+		n.gcDelete(id, cmd.GetFenceIncarnation(), cmd.GetFenceSeq())
+		return
+	}
 	seq, err := n.change(func() error {
 		if err := n.d.Store.Delete(context.Background(), id); err != nil && !errors.Is(err, iface.ErrNotFound) {
 			return err
@@ -277,6 +309,42 @@ func (n *Node) deleteReplica(m iface.Message) {
 	}
 	n.stats.Trimmed++
 	n.report(seq, nil, []iface.ChunkID{id}, nil)
+}
+
+// gcDelete removes an unreferenced copy unless this node wrote the chunk
+// after the metadata server's view (a change numbered above fenceSeq) or is
+// not the incarnation the server saw: then an upload may have claimed and
+// re-written it since the server decided. Either way the answer goes back
+// through the ordered report path, so the server knows the delete is over.
+func (n *Node) gcDelete(id iface.ChunkID, fenceInc, fenceSeq uint64) {
+	mu := &n.chunkMu[id[0]%64]
+	mu.Lock()
+	defer mu.Unlock()
+	n.lastWriteMu.Lock()
+	keep := fenceInc != n.incarnation || n.lastWrite[id] > fenceSeq
+	n.lastWriteMu.Unlock()
+	seq, err := n.change(func() error {
+		if keep {
+			return nil
+		}
+		if err := n.d.Store.Delete(context.Background(), id); err != nil && !errors.Is(err, iface.ErrNotFound) {
+			return err
+		}
+		return nil
+	})
+	if err != nil {
+		n.d.Log.Error("gc delete", "chunk", id.String()[:12], "err", err)
+		return
+	}
+	r := &chunkdv1.BlockReport{Node: string(n.cfg.ID), Incarnation: n.incarnation, Seq: seq}
+	if keep {
+		n.stats.GCKept++
+		r.KeptIds = [][]byte{id[:]}
+	} else {
+		n.stats.GCDeleted++
+		r.DeletedIds = [][]byte{id[:]}
+	}
+	n.d.Net.Send(n.cfg.Meta, iface.Message{From: n.cfg.ID, Kind: wire.KindBlockReport, Body: wire.Marshal(r)})
 }
 
 // replicate pulls one chunk from a peer and stores it. Put verifies the
@@ -315,7 +383,7 @@ func (n *Node) replicate(m iface.Message) {
 			fail(err)
 			return
 		}
-		seq, err := n.change(func() error { return n.d.Store.Put(context.Background(), id, resp.GetData()) })
+		seq, err := n.write(id, func() error { return n.d.Store.Put(context.Background(), id, resp.GetData()) })
 		if err != nil {
 			fail(err)
 			return
