@@ -101,8 +101,15 @@ func TestGatewayRoundTrip(t *testing.T) {
 		t.Fatalf("get: %d bytes, %v", got.Len(), err)
 	}
 	st, err := api.Stat(ctx, "/docs/a.bin")
-	if err != nil || len(st.Chunk) != 5 || len(st.Chunk[0].Replicas) != 3 {
+	if err != nil || len(st.Chunk) != 5 {
 		t.Fatalf("stat %+v %v", st, err)
+	}
+	// Commit guarantees 2 reported copies (ADR-0007); the third may still
+	// be in flight.
+	for _, ch := range st.Chunk {
+		if len(ch.Replicas) < 2 {
+			t.Fatalf("chunk %d has replicas %v, want at least 2", ch.Index, ch.Replicas)
+		}
 	}
 	files, err := api.List(ctx, "/docs")
 	if err != nil || len(files) != 1 || files[0].Path != "/docs/a.bin" {
