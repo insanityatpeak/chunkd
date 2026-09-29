@@ -26,7 +26,7 @@ type Target interface {
 	Put(path string, data []byte) error
 	Get(path string) ([]byte, error)
 	Delete(path string) error
-	Health() (client.Health, error)
+	Cluster() (client.Cluster, error)
 }
 
 // Data is the content a scenario writes to path: a pure function of the
@@ -60,7 +60,8 @@ type RealReport struct {
 // under-replicated stretch and the time to settle after quiet.
 func RunTarget(s Scenario, t Target, bound time.Duration, logf func(string, ...any)) RealReport {
 	r := RealReport{Name: s.Name, Bound: bound, Ops: map[string]int{}}
-	h0, err := t.Health()
+	c0, err := t.Cluster()
+	h0 := c0.Health
 	if err != nil {
 		r.Err = fmt.Errorf("%s: health before start: %w", s.Name, err)
 		return r
@@ -71,6 +72,7 @@ func RunTarget(s Scenario, t Target, bound time.Duration, logf func(string, ...a
 	var underSince time.Time
 	var polls, lost int
 	var last client.Health
+	allAlive := false
 	stop := make(chan struct{})
 	polled := make(chan struct{})
 	go func() {
@@ -78,12 +80,14 @@ func RunTarget(s Scenario, t Target, bound time.Duration, logf func(string, ...a
 		tick := time.NewTicker(time.Second)
 		defer tick.Stop()
 		for {
-			h, err := t.Health()
+			cl, err := t.Cluster()
+			h := cl.Health
 			now := time.Now()
 			mu.Lock()
 			if err == nil {
 				polls++
 				last = h
+				allAlive = !slices.ContainsFunc(cl.Nodes, func(n client.NodeInfo) bool { return n.State != "alive" })
 				switch {
 				case h.UnderReplicated > 0 && underSince.IsZero():
 					underSince = now
@@ -171,13 +175,16 @@ func RunTarget(s Scenario, t Target, bound time.Duration, logf func(string, ...a
 	quiet := time.Now()
 	for {
 		mu.Lock()
-		h := last
+		h, alive := last, allAlive
 		mu.Unlock()
-		if h.UnderReplicated == 0 && h.OverReplicated == 0 && time.Since(quiet) > 2*time.Second {
+		// Settled also means every node is alive: a returning node is
+		// suspect first, and until then its extra copies do not count as
+		// over-replication, so the next scenario would start mid-reconcile.
+		if h.UnderReplicated == 0 && h.OverReplicated == 0 && alive && time.Since(quiet) > 2*time.Second {
 			break
 		}
 		if time.Since(quiet) > bound {
-			errs = append(errs, fmt.Errorf("replication not settled %v after quiet: %d under, %d over", bound, h.UnderReplicated, h.OverReplicated))
+			errs = append(errs, fmt.Errorf("replication not settled %v after quiet: %d under, %d over, all nodes alive %v", bound, h.UnderReplicated, h.OverReplicated, alive))
 			break
 		}
 		time.Sleep(500 * time.Millisecond)

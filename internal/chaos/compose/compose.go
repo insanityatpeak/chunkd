@@ -92,9 +92,9 @@ func (t *Target) Delete(path string) error {
 	return err
 }
 
-func (t *Target) Health() (client.Health, error) {
+func (t *Target) Cluster() (client.Cluster, error) {
 	c, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
 	cl, err := t.api.Cluster(c, 0)
-	return cl.Health, err
+	return cl, err
 }
