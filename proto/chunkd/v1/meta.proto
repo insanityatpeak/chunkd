@@ -194,4 +194,24 @@ message ClusterResponse {
   repeated NodeInfo nodes = 1;
   int64 files = 2;
   int64 logical_bytes = 3;
+  ClusterHealth health = 4;
+}
+
+// ClusterHealth is replication state across all wanted chunks.
+message ClusterHealth {
+  int64 chunks = 1;
+  int64 under_replicated = 2;
+  int64 over_replicated = 3;
+  int64 lost = 4;
+  // replicas[i]: chunks with i copies on alive nodes; the last bucket is "or more".
+  repeated int64 replicas = 5;
+  int64 repair_queued = 6;
+  int64 repair_in_flight = 7;
+  int64 repair_waiting = 8;
+  uint64 repair_completed = 9;
+  uint64 repair_bytes = 10;
+  uint64 repair_trimmed = 11;
+  uint64 repair_timed_out = 12;
+  uint64 repair_failed = 13;
+  uint64 detector_stalls = 14;
 }

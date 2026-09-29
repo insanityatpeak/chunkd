@@ -5,7 +5,7 @@
 //	chunkd ls [prefix]                      list files
 //	chunkd stat <path>                      version, hash and chunk placement
 //	chunkd rm <path>                        delete
-//	chunkd cluster                          nodes and totals
+//	chunkd cluster [status]                 nodes, detector state and replication health
 //	chunkd ping <grpc-addr>                 ping a process
 //	chunkd probe <http-url>                 exit 0 if the URL returns 200 (health checks)
 //
@@ -105,7 +105,7 @@ func main() {
 		if v, err = api.Delete(ctx, args[1], *expected); err == nil {
 			fmt.Printf("deleted %s (tombstone v%d)\n", args[1], v)
 		}
-	case cmd == "cluster" && len(args) == 1:
+	case cmd == "cluster" && (len(args) == 1 || len(args) == 2 && args[1] == "status"):
 		var c client.Cluster
 		if c, err = api.Cluster(ctx); err == nil {
 			out.cluster(c)
@@ -225,19 +225,31 @@ func (p printer) cluster(c client.Cluster) {
 		p.print(c)
 		return
 	}
-	fmt.Printf("%d files, %s logical\n", c.Files, human(c.LogicalBytes))
+	fmt.Printf("%d files, %s logical\n\n", c.Files, human(c.LogicalBytes))
 	w := tabwriter.NewWriter(os.Stdout, 0, 4, 2, ' ', 0)
-	fmt.Fprintln(w, "NODE\tRACK\tSTATE\tCHUNKS\tUSED")
+	fmt.Fprintln(w, "NODE\tRACK\tSTATE\tLAST BEAT\tCHUNKS\tUSED")
 	for _, n := range c.Nodes {
-		state := "alive"
-		if !n.Alive {
-			state = "dead"
-		} else if n.Draining {
-			state = "draining"
+		state := n.State
+		if n.Draining {
+			state += ",draining"
 		}
-		fmt.Fprintf(w, "%s\t%s\t%s\t%d\t%s\n", n.ID, n.Rack, state, n.Chunks, human(n.UsedBytes))
+		age := (time.Duration(n.HeartbeatAgeMs) * time.Millisecond).Round(100 * time.Millisecond)
+		fmt.Fprintf(w, "%s\t%s\t%s\t%s ago\t%d\t%s\n", n.ID, n.Rack, state, age, n.Chunks, human(n.UsedBytes))
 	}
 	w.Flush()
+	h := c.Health
+	fmt.Printf("\nchunks %d: under-replicated %d, over-replicated %d, lost %d\n", h.Chunks, h.UnderReplicated, h.OverReplicated, h.Lost)
+	var dist []string
+	for i, n := range h.Replicas {
+		label := fmt.Sprint(i)
+		if i == len(h.Replicas)-1 {
+			label += "+"
+		}
+		dist = append(dist, fmt.Sprintf("%s:%d", label, n))
+	}
+	fmt.Printf("copies per chunk on alive nodes  %s\n", strings.Join(dist, "  "))
+	fmt.Printf("repair: %d queued, %d in flight, %d inside the delay; %d copies (%s), %d trimmed, %d timed out, %d failed\n",
+		h.RepairQueued, h.RepairInFlight, h.RepairWaiting, h.RepairCompleted, human(int64(h.RepairBytes)), h.RepairTrimmed, h.RepairTimedOut, h.RepairFailed)
 }
 
 func human(n int64) string {

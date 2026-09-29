@@ -1804,6 +1804,7 @@ type ClusterResponse struct {
 	Nodes         []*NodeInfo            `protobuf:"bytes,1,rep,name=nodes,proto3" json:"nodes,omitempty"`
 	Files         int64                  `protobuf:"varint,2,opt,name=files,proto3" json:"files,omitempty"`
 	LogicalBytes  int64                  `protobuf:"varint,3,opt,name=logical_bytes,json=logicalBytes,proto3" json:"logical_bytes,omitempty"`
+	Health        *ClusterHealth         `protobuf:"bytes,4,opt,name=health,proto3" json:"health,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -1855,6 +1856,163 @@ func (x *ClusterResponse) GetFiles() int64 {
 func (x *ClusterResponse) GetLogicalBytes() int64 {
 	if x != nil {
 		return x.LogicalBytes
+	}
+	return 0
+}
+
+func (x *ClusterResponse) GetHealth() *ClusterHealth {
+	if x != nil {
+		return x.Health
+	}
+	return nil
+}
+
+// ClusterHealth is replication state across all wanted chunks.
+type ClusterHealth struct {
+	state           protoimpl.MessageState `protogen:"open.v1"`
+	Chunks          int64                  `protobuf:"varint,1,opt,name=chunks,proto3" json:"chunks,omitempty"`
+	UnderReplicated int64                  `protobuf:"varint,2,opt,name=under_replicated,json=underReplicated,proto3" json:"under_replicated,omitempty"`
+	OverReplicated  int64                  `protobuf:"varint,3,opt,name=over_replicated,json=overReplicated,proto3" json:"over_replicated,omitempty"`
+	Lost            int64                  `protobuf:"varint,4,opt,name=lost,proto3" json:"lost,omitempty"`
+	// replicas[i]: chunks with i copies on alive nodes; the last bucket is "or more".
+	Replicas        []int64 `protobuf:"varint,5,rep,packed,name=replicas,proto3" json:"replicas,omitempty"`
+	RepairQueued    int64   `protobuf:"varint,6,opt,name=repair_queued,json=repairQueued,proto3" json:"repair_queued,omitempty"`
+	RepairInFlight  int64   `protobuf:"varint,7,opt,name=repair_in_flight,json=repairInFlight,proto3" json:"repair_in_flight,omitempty"`
+	RepairWaiting   int64   `protobuf:"varint,8,opt,name=repair_waiting,json=repairWaiting,proto3" json:"repair_waiting,omitempty"`
+	RepairCompleted uint64  `protobuf:"varint,9,opt,name=repair_completed,json=repairCompleted,proto3" json:"repair_completed,omitempty"`
+	RepairBytes     uint64  `protobuf:"varint,10,opt,name=repair_bytes,json=repairBytes,proto3" json:"repair_bytes,omitempty"`
+	RepairTrimmed   uint64  `protobuf:"varint,11,opt,name=repair_trimmed,json=repairTrimmed,proto3" json:"repair_trimmed,omitempty"`
+	RepairTimedOut  uint64  `protobuf:"varint,12,opt,name=repair_timed_out,json=repairTimedOut,proto3" json:"repair_timed_out,omitempty"`
+	RepairFailed    uint64  `protobuf:"varint,13,opt,name=repair_failed,json=repairFailed,proto3" json:"repair_failed,omitempty"`
+	DetectorStalls  uint64  `protobuf:"varint,14,opt,name=detector_stalls,json=detectorStalls,proto3" json:"detector_stalls,omitempty"`
+	unknownFields   protoimpl.UnknownFields
+	sizeCache       protoimpl.SizeCache
+}
+
+func (x *ClusterHealth) Reset() {
+	*x = ClusterHealth{}
+	mi := &file_chunkd_v1_meta_proto_msgTypes[30]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *ClusterHealth) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*ClusterHealth) ProtoMessage() {}
+
+func (x *ClusterHealth) ProtoReflect() protoreflect.Message {
+	mi := &file_chunkd_v1_meta_proto_msgTypes[30]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use ClusterHealth.ProtoReflect.Descriptor instead.
+func (*ClusterHealth) Descriptor() ([]byte, []int) {
+	return file_chunkd_v1_meta_proto_rawDescGZIP(), []int{30}
+}
+
+func (x *ClusterHealth) GetChunks() int64 {
+	if x != nil {
+		return x.Chunks
+	}
+	return 0
+}
+
+func (x *ClusterHealth) GetUnderReplicated() int64 {
+	if x != nil {
+		return x.UnderReplicated
+	}
+	return 0
+}
+
+func (x *ClusterHealth) GetOverReplicated() int64 {
+	if x != nil {
+		return x.OverReplicated
+	}
+	return 0
+}
+
+func (x *ClusterHealth) GetLost() int64 {
+	if x != nil {
+		return x.Lost
+	}
+	return 0
+}
+
+func (x *ClusterHealth) GetReplicas() []int64 {
+	if x != nil {
+		return x.Replicas
+	}
+	return nil
+}
+
+func (x *ClusterHealth) GetRepairQueued() int64 {
+	if x != nil {
+		return x.RepairQueued
+	}
+	return 0
+}
+
+func (x *ClusterHealth) GetRepairInFlight() int64 {
+	if x != nil {
+		return x.RepairInFlight
+	}
+	return 0
+}
+
+func (x *ClusterHealth) GetRepairWaiting() int64 {
+	if x != nil {
+		return x.RepairWaiting
+	}
+	return 0
+}
+
+func (x *ClusterHealth) GetRepairCompleted() uint64 {
+	if x != nil {
+		return x.RepairCompleted
+	}
+	return 0
+}
+
+func (x *ClusterHealth) GetRepairBytes() uint64 {
+	if x != nil {
+		return x.RepairBytes
+	}
+	return 0
+}
+
+func (x *ClusterHealth) GetRepairTrimmed() uint64 {
+	if x != nil {
+		return x.RepairTrimmed
+	}
+	return 0
+}
+
+func (x *ClusterHealth) GetRepairTimedOut() uint64 {
+	if x != nil {
+		return x.RepairTimedOut
+	}
+	return 0
+}
+
+func (x *ClusterHealth) GetRepairFailed() uint64 {
+	if x != nil {
+		return x.RepairFailed
+	}
+	return 0
+}
+
+func (x *ClusterHealth) GetDetectorStalls() uint64 {
+	if x != nil {
+		return x.DetectorStalls
 	}
 	return 0
 }
@@ -1980,11 +2138,28 @@ const file_chunkd_v1_meta_proto_rawDesc = "" +
 	"\bdraining\x18\a \x01(\bR\bdraining\x12\x14\n" +
 	"\x05state\x18\b \x01(\tR\x05state\x12(\n" +
 	"\x10heartbeat_age_ms\x18\t \x01(\x03R\x0eheartbeatAgeMs\"\x10\n" +
-	"\x0eClusterRequest\"w\n" +
+	"\x0eClusterRequest\"\xa9\x01\n" +
 	"\x0fClusterResponse\x12)\n" +
 	"\x05nodes\x18\x01 \x03(\v2\x13.chunkd.v1.NodeInfoR\x05nodes\x12\x14\n" +
 	"\x05files\x18\x02 \x01(\x03R\x05files\x12#\n" +
-	"\rlogical_bytes\x18\x03 \x01(\x03R\flogicalBytes*g\n" +
+	"\rlogical_bytes\x18\x03 \x01(\x03R\flogicalBytes\x120\n" +
+	"\x06health\x18\x04 \x01(\v2\x18.chunkd.v1.ClusterHealthR\x06health\"\x8e\x04\n" +
+	"\rClusterHealth\x12\x16\n" +
+	"\x06chunks\x18\x01 \x01(\x03R\x06chunks\x12)\n" +
+	"\x10under_replicated\x18\x02 \x01(\x03R\x0funderReplicated\x12'\n" +
+	"\x0fover_replicated\x18\x03 \x01(\x03R\x0eoverReplicated\x12\x12\n" +
+	"\x04lost\x18\x04 \x01(\x03R\x04lost\x12\x1a\n" +
+	"\breplicas\x18\x05 \x03(\x03R\breplicas\x12#\n" +
+	"\rrepair_queued\x18\x06 \x01(\x03R\frepairQueued\x12(\n" +
+	"\x10repair_in_flight\x18\a \x01(\x03R\x0erepairInFlight\x12%\n" +
+	"\x0erepair_waiting\x18\b \x01(\x03R\rrepairWaiting\x12)\n" +
+	"\x10repair_completed\x18\t \x01(\x04R\x0frepairCompleted\x12!\n" +
+	"\frepair_bytes\x18\n" +
+	" \x01(\x04R\vrepairBytes\x12%\n" +
+	"\x0erepair_trimmed\x18\v \x01(\x04R\rrepairTrimmed\x12(\n" +
+	"\x10repair_timed_out\x18\f \x01(\x04R\x0erepairTimedOut\x12#\n" +
+	"\rrepair_failed\x18\r \x01(\x04R\frepairFailed\x12'\n" +
+	"\x0fdetector_stalls\x18\x0e \x01(\x04R\x0edetectorStalls*g\n" +
 	"\fVersionState\x12\x1d\n" +
 	"\x19VERSION_STATE_UNSPECIFIED\x10\x00\x12\x1b\n" +
 	"\x17VERSION_STATE_COMMITTED\x10\x01\x12\x1b\n" +
@@ -2003,7 +2178,7 @@ func file_chunkd_v1_meta_proto_rawDescGZIP() []byte {
 }
 
 var file_chunkd_v1_meta_proto_enumTypes = make([]protoimpl.EnumInfo, 1)
-var file_chunkd_v1_meta_proto_msgTypes = make([]protoimpl.MessageInfo, 30)
+var file_chunkd_v1_meta_proto_msgTypes = make([]protoimpl.MessageInfo, 31)
 var file_chunkd_v1_meta_proto_goTypes = []any{
 	(VersionState)(0),            // 0: chunkd.v1.VersionState
 	(*Replicas)(nil),             // 1: chunkd.v1.Replicas
@@ -2036,6 +2211,7 @@ var file_chunkd_v1_meta_proto_goTypes = []any{
 	(*NodeInfo)(nil),             // 28: chunkd.v1.NodeInfo
 	(*ClusterRequest)(nil),       // 29: chunkd.v1.ClusterRequest
 	(*ClusterResponse)(nil),      // 30: chunkd.v1.ClusterResponse
+	(*ClusterHealth)(nil),        // 31: chunkd.v1.ClusterHealth
 }
 var file_chunkd_v1_meta_proto_depIdxs = []int32{
 	1,  // 0: chunkd.v1.BeginUploadOp.placement:type_name -> chunkd.v1.Replicas
@@ -2055,11 +2231,12 @@ var file_chunkd_v1_meta_proto_depIdxs = []int32{
 	22, // 14: chunkd.v1.StatResponse.chunks:type_name -> chunkd.v1.ChunkLocation
 	26, // 15: chunkd.v1.ListResponse.files:type_name -> chunkd.v1.FileInfo
 	28, // 16: chunkd.v1.ClusterResponse.nodes:type_name -> chunkd.v1.NodeInfo
-	17, // [17:17] is the sub-list for method output_type
-	17, // [17:17] is the sub-list for method input_type
-	17, // [17:17] is the sub-list for extension type_name
-	17, // [17:17] is the sub-list for extension extendee
-	0,  // [0:17] is the sub-list for field type_name
+	31, // 17: chunkd.v1.ClusterResponse.health:type_name -> chunkd.v1.ClusterHealth
+	18, // [18:18] is the sub-list for method output_type
+	18, // [18:18] is the sub-list for method input_type
+	18, // [18:18] is the sub-list for extension type_name
+	18, // [18:18] is the sub-list for extension extendee
+	0,  // [0:18] is the sub-list for field type_name
 }
 
 func init() { file_chunkd_v1_meta_proto_init() }
@@ -2079,7 +2256,7 @@ func file_chunkd_v1_meta_proto_init() {
 			GoPackagePath: reflect.TypeOf(x{}).PkgPath(),
 			RawDescriptor: unsafe.Slice(unsafe.StringData(file_chunkd_v1_meta_proto_rawDesc), len(file_chunkd_v1_meta_proto_rawDesc)),
 			NumEnums:      1,
-			NumMessages:   30,
+			NumMessages:   31,
 			NumExtensions: 0,
 			NumServices:   0,
 		},

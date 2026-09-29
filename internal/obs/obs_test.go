@@ -72,3 +72,21 @@ func TestRegistryDuplicatePanics(t *testing.T) {
 	}()
 	r.Gauge("x", "")
 }
+
+func TestGaugeVecAndMirror(t *testing.T) {
+	r := NewRegistry()
+	v := r.GaugeVec("nodes", "Nodes by state.", "state")
+	v.Set("suspect", 1)
+	v.Set("alive", 4)
+	c := r.Counter("bytes_total", "Bytes.")
+	c.Mirror(42)
+	var b strings.Builder
+	if err := r.WriteText(&b); err != nil {
+		t.Fatal(err)
+	}
+	want := "# HELP bytes_total Bytes.\n# TYPE bytes_total counter\nbytes_total 42\n" +
+		"# HELP nodes Nodes by state.\n# TYPE nodes gauge\nnodes{state=\"alive\"} 4\nnodes{state=\"suspect\"} 1\n"
+	if b.String() != want {
+		t.Fatalf("got\n%s\nwant\n%s", b.String(), want)
+	}
+}

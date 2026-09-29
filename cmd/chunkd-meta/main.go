@@ -50,6 +50,15 @@ func main() {
 		alive := p.Metrics.Gauge("chunkd_meta_nodes_alive", "Storage nodes the failure detector considers alive.")
 		files := p.Metrics.Gauge("chunkd_meta_files", "Live files.")
 		applied := p.Metrics.Gauge("chunkd_meta_applied_index", "Index of the last applied log entry.")
+		nodes := p.Metrics.GaugeVec("chunkd_meta_nodes", "Storage nodes by failure-detector state.", "state")
+		replicas := p.Metrics.GaugeVec("chunkd_meta_chunk_replicas", "Chunks by number of copies on alive nodes (replication-factor distribution).", "replicas")
+		under := p.Metrics.Gauge("chunkd_meta_under_replicated_chunks", "Chunks with fewer copies on alive nodes than the replication factor.")
+		lost := p.Metrics.Gauge("chunkd_meta_lost_chunks", "Chunks with no copy on an alive or suspect node.")
+		queue := p.Metrics.Gauge("chunkd_repair_queue_length", "Chunks queued for a repair copy.")
+		inflight := p.Metrics.Gauge("chunkd_repair_in_flight", "Repair copies in progress.")
+		repairBytes := p.Metrics.Counter("chunkd_repair_bytes_total", "Bytes copied by repair; rate() gives repair bytes/sec.")
+		repairCopies := p.Metrics.Counter("chunkd_repair_copies_total", "Repair copies completed.")
+		trimmed := p.Metrics.Counter("chunkd_repair_trimmed_total", "Over-replicated copies removed.")
 		var refresh func()
 		refresh = func() {
 			n := 0
@@ -59,6 +68,24 @@ func main() {
 				}
 			}
 			alive.Set(float64(n))
+			h := srv.Health()
+			for _, st := range []string{"alive", "suspect", "dead"} {
+				nodes.Set(st, float64(h.Nodes[st]))
+			}
+			for i, c := range h.Replicas {
+				label := fmt.Sprint(i)
+				if i == len(h.Replicas)-1 {
+					label += "+"
+				}
+				replicas.Set(label, float64(c))
+			}
+			under.Set(float64(h.UnderReplicated))
+			lost.Set(float64(h.Lost))
+			queue.Set(float64(h.Repair.Queued))
+			inflight.Set(float64(h.Repair.InFlight))
+			repairBytes.Mirror(h.Repair.Bytes)
+			repairCopies.Mirror(h.Repair.Completed)
+			trimmed.Mirror(h.Repair.Trimmed)
 			files.Set(float64(len(srv.State().List("/"))))
 			applied.Set(float64(srv.Applied()))
 			p.Clock.AfterFunc(time.Second, refresh)

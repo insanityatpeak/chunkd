@@ -354,7 +354,13 @@ func (c *Direct) Cluster(ctx context.Context) (Cluster, error) {
 	}
 	out := Cluster{Files: resp.GetFiles(), LogicalBytes: resp.GetLogicalBytes()}
 	for _, n := range resp.GetNodes() {
-		out.Nodes = append(out.Nodes, NodeInfo{ID: n.GetId(), Rack: n.GetRack(), Alive: n.GetAlive(), Draining: n.GetDraining(), UsedBytes: n.GetUsedBytes(), Chunks: n.GetChunkCount()})
+		out.Nodes = append(out.Nodes, NodeInfo{ID: n.GetId(), Rack: n.GetRack(), Alive: n.GetAlive(), State: n.GetState(), Draining: n.GetDraining(),
+			UsedBytes: n.GetUsedBytes(), Chunks: n.GetChunkCount(), HeartbeatAgeMs: n.GetHeartbeatAgeMs()})
 	}
+	h := resp.GetHealth()
+	out.Health = Health{Chunks: h.GetChunks(), UnderReplicated: h.GetUnderReplicated(), OverReplicated: h.GetOverReplicated(), Lost: h.GetLost(),
+		Replicas: h.GetReplicas(), RepairQueued: h.GetRepairQueued(), RepairInFlight: h.GetRepairInFlight(), RepairWaiting: h.GetRepairWaiting(),
+		RepairCompleted: h.GetRepairCompleted(), RepairBytes: h.GetRepairBytes(), RepairTrimmed: h.GetRepairTrimmed(),
+		RepairTimedOut: h.GetRepairTimedOut(), RepairFailed: h.GetRepairFailed(), DetectorStalls: h.GetDetectorStalls()}
 	return out, nil
 }
