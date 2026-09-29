@@ -1,5 +1,27 @@
 # Changelog
 
+## Unreleased
+
+### Dedup, versions and delete
+- A client claims each chunk before writing it; a chunk the cluster already holds with 2 copies is not sent again. The same base with ten small edits stores 220 MiB as 60 MiB.
+- Commits are compare-and-swap on the file's version by default; a lost race returns a conflict. Last-writer-wins is opt-in (`chunkd put --lww`).
+- Every retained version is readable: `chunkd log <path>`, `chunkd get --version N`.
+- Delete writes a marker. Deleted and overwritten versions stay restorable with `chunkd undelete` for a retention window counted in logged GC epochs, not wall-clock time; then they drop and release their chunks.
+
+### Garbage collection
+- Mark-and-sweep: a chunk is kept while a retained version references it or a pending upload claims it. Unreferenced copies are deleted after a 60 s grace, fenced on the node so a copy written after the decision is kept.
+- Uploads hold leases; an abandoned upload expires and its chunks are collected.
+- Refcounts and claims are recounted every epoch; drift raises a metric, a log error and a timeline event, and is never corrected silently.
+
+### Proof
+- 1,000 chaos seeds on every push (was 500), each ending with GC settled and no orphan copy on any node.
+- GC chaos scenarios: concurrent writers on one path, delete while another upload shares its chunks, uploads stalled past a GC cycle, a node returning with long-deleted chunks.
+- Two more bugs in `docs/bugs-found.md`: an upload lease shorter than the GC grace, and undelete unreachable through the compose gateway.
+
+### Demo
+- Dashboard: dedup savings, GC counters and epoch, each file's versions with restore, deleted files with undelete, gc and write events in the timeline.
+- A "Delete and collect" scenario, shareable as a link and replayed in CI like the others.
+
 ## v0.1.0 (2026-09-29)
 
 The first release: a replicated, self-healing file store with an interactive demo you can break in the browser or on your machine.
