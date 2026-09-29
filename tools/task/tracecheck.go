@@ -23,7 +23,7 @@ var traceExempt = map[string]bool{
 	"tools/task/tracecheck_test.go": true,
 }
 
-func traceCheck() error {
+func traceCheck(all bool) error {
 	patterns, err := loadPatterns()
 	if err != nil {
 		return err
@@ -52,7 +52,7 @@ func traceCheck() error {
 	}
 
 	email, _ := gitOutput("config", "user.email")
-	commits, err := outgoingCommits()
+	commits, err := outgoingCommits(all)
 	if err != nil {
 		return err
 	}
@@ -69,7 +69,11 @@ func traceCheck() error {
 	if len(hits) > 0 {
 		return fmt.Errorf("trace-check: %d finding(s)", len(hits))
 	}
-	fmt.Printf("trace-check: %d files and %d outgoing commits clean (%d patterns)\n", len(files), len(commits), len(patterns))
+	scope := "outgoing"
+	if all {
+		scope = "total"
+	}
+	fmt.Printf("trace-check: %d files and %d %s commits clean (%d patterns)\n", len(files), len(commits), scope, len(patterns))
 	return nil
 }
 
@@ -110,12 +114,14 @@ type commit struct{ sha, author, msg string }
 
 // outgoingCommits returns commits not yet on the upstream branch, or every
 // commit when there is no upstream (first push).
-func outgoingCommits() ([]commit, error) {
+// outgoingCommits returns the commits not yet pushed, or with all every
+// commit reachable from HEAD.
+func outgoingCommits(all bool) ([]commit, error) {
 	if _, err := gitOutput("rev-parse", "--verify", "-q", "HEAD"); err != nil {
 		return nil, nil // no commits yet
 	}
 	rng := "HEAD"
-	if _, err := gitOutput("rev-parse", "--abbrev-ref", "@{u}"); err == nil {
+	if _, err := gitOutput("rev-parse", "--abbrev-ref", "@{u}"); err == nil && !all {
 		rng = "@{u}..HEAD"
 	}
 	out, err := gitOutput("log", "--format=%H%x1f%ae%x1f%B%x1e", rng)
