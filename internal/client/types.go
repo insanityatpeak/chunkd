@@ -70,6 +70,7 @@ type Health struct {
 	RepairTimedOut  uint64  `json:"repairTimedOut"`
 	RepairFailed    uint64  `json:"repairFailed"`
 	DetectorStalls  uint64  `json:"detectorStalls"`
+	CorruptReplicas uint64  `json:"corruptReplicas"`
 }
 
 // FileHealth is one committed file's replication state.

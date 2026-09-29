@@ -3,6 +3,7 @@
 package blockstore
 
 import (
+	"bytes"
 	"context"
 	"crypto/sha256"
 	"encoding/hex"
@@ -10,6 +11,7 @@ import (
 	"io/fs"
 	"os"
 	"path/filepath"
+	"slices"
 	"sync"
 
 	"github.com/insanityatpeak/chunkd/internal/iface"
@@ -231,4 +233,53 @@ func (s *Store) Usage(context.Context) (iface.Usage, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	return s.usage, nil
+}
+
+// Rot flips one byte in each of n chunk files under root, simulating bit
+// rot for fault injection. Chunks are taken in ID order from index
+// pick % count, so a seed picks the same files. It edits files in place and
+// never opens the store: Open would delete a running node's temp files.
+// The node only notices when it next reads the chunk (a client read, a
+// repair copy, or the scrubber).
+func Rot(root string, n int, pick uint64) ([]iface.ChunkID, error) {
+	s := &Store{root: filepath.Clean(root)}
+	var ids []iface.ChunkID
+	if err := s.walk(func(id iface.ChunkID, _ string) error { ids = append(ids, id); return nil }); err != nil {
+		return nil, err
+	}
+	if len(ids) == 0 {
+		return nil, nil
+	}
+	slices.SortFunc(ids, func(a, b iface.ChunkID) int { return bytes.Compare(a[:], b[:]) })
+	var rotted []iface.ChunkID
+	for i := range min(n, len(ids)) {
+		id := ids[(pick+uint64(i))%uint64(len(ids))]
+		if err := flipByte(s.path(id)); err != nil {
+			return rotted, err
+		}
+		rotted = append(rotted, id)
+	}
+	return rotted, nil
+}
+
+func flipByte(path string) error {
+	f, err := os.OpenFile(path, os.O_RDWR, 0)
+	if err != nil {
+		return err
+	}
+	defer f.Close()
+	fi, err := f.Stat()
+	if err != nil || fi.Size() == 0 {
+		return err
+	}
+	b := make([]byte, 1)
+	off := fi.Size() / 2
+	if _, err := f.ReadAt(b, off); err != nil {
+		return err
+	}
+	b[0] ^= 0xff
+	if _, err := f.WriteAt(b, off); err != nil {
+		return err
+	}
+	return f.Sync()
 }

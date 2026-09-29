@@ -8,6 +8,8 @@
 //	chunkd cluster [status]                 nodes, detector state and replication health
 //	chunkd ping <grpc-addr>                 ping a process
 //	chunkd probe <http-url>                 exit 0 if the URL returns 200 (health checks)
+//	chunkd debug corrupt                    flip a byte in -n chunk files under -root (fault injection;
+//	                                        run on the node's host or with docker compose exec)
 //
 // By default it talks to the gateway (-gateway, $CHUNKD_GATEWAY). With -meta
 // it talks gRPC to the metadata server and nodes directly.
@@ -35,6 +37,7 @@ import (
 	"github.com/insanityatpeak/chunkd/internal/client"
 	"github.com/insanityatpeak/chunkd/internal/client/httpclient"
 	"github.com/insanityatpeak/chunkd/internal/iface"
+	"github.com/insanityatpeak/chunkd/internal/real/blockstore"
 	"github.com/insanityatpeak/chunkd/internal/real/grpcnet"
 	rpcv1 "github.com/insanityatpeak/chunkd/proto/gen/chunkd/rpc/v1"
 	chunkdv1 "github.com/insanityatpeak/chunkd/proto/gen/chunkd/v1"
@@ -48,8 +51,11 @@ func main() {
 	create := fs.Bool("create", false, "put: fail if the path exists")
 	expectSHA := fs.String("expect-sha256", "", "get: fail unless the content has this SHA-256")
 	asJSON := fs.Bool("json", false, "print JSON")
+	root := fs.String("root", envOr("CHUNKD_DATA", "data/node"), "debug corrupt: the node's chunk directory")
+	rotN := fs.Int("n", 1, "debug corrupt: number of chunks")
+	pick := fs.Uint64("pick", 0, "debug corrupt: first chunk, as an index into the chunks in ID order")
 	fs.Usage = func() {
-		fmt.Fprintln(os.Stderr, "usage: chunkd [flags] put|get|ls|stat|rm|cluster|ping|probe ...")
+		fmt.Fprintln(os.Stderr, "usage: chunkd [flags] put|get|ls|stat|rm|cluster|ping|probe|debug corrupt ...")
 		fs.PrintDefaults()
 	}
 	// Flags may come before or after the command.
@@ -114,6 +120,12 @@ func main() {
 		err = ping(args[1])
 	case cmd == "probe" && len(args) == 2:
 		err = probe(args[1])
+	case cmd == "debug" && len(args) == 2 && args[1] == "corrupt":
+		var ids []iface.ChunkID
+		ids, err = blockstore.Rot(*root, *rotN, *pick)
+		for _, id := range ids {
+			fmt.Println(id)
+		}
 	default:
 		fs.Usage()
 		os.Exit(2)

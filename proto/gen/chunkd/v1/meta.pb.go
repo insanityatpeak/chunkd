@@ -2258,6 +2258,8 @@ type ClusterHealth struct {
 	RepairTimedOut  uint64  `protobuf:"varint,12,opt,name=repair_timed_out,json=repairTimedOut,proto3" json:"repair_timed_out,omitempty"`
 	RepairFailed    uint64  `protobuf:"varint,13,opt,name=repair_failed,json=repairFailed,proto3" json:"repair_failed,omitempty"`
 	DetectorStalls  uint64  `protobuf:"varint,14,opt,name=detector_stalls,json=detectorStalls,proto3" json:"detector_stalls,omitempty"`
+	// Copies removed after failing verification (reads, scrub, re-checks).
+	CorruptReplicas uint64 `protobuf:"varint,15,opt,name=corrupt_replicas,json=corruptReplicas,proto3" json:"corrupt_replicas,omitempty"`
 	unknownFields   protoimpl.UnknownFields
 	sizeCache       protoimpl.SizeCache
 }
@@ -2386,6 +2388,13 @@ func (x *ClusterHealth) GetRepairFailed() uint64 {
 func (x *ClusterHealth) GetDetectorStalls() uint64 {
 	if x != nil {
 		return x.DetectorStalls
+	}
+	return 0
+}
+
+func (x *ClusterHealth) GetCorruptReplicas() uint64 {
+	if x != nil {
+		return x.CorruptReplicas
 	}
 	return 0
 }
@@ -2548,7 +2557,7 @@ const file_chunkd_v1_meta_proto_rawDesc = "" +
 	"\x05at_ms\x18\x02 \x01(\x03R\x04atMs\x12\x12\n" +
 	"\x04kind\x18\x03 \x01(\tR\x04kind\x12\x12\n" +
 	"\x04node\x18\x04 \x01(\tR\x04node\x12\x12\n" +
-	"\x04text\x18\x05 \x01(\tR\x04text\"\x8e\x04\n" +
+	"\x04text\x18\x05 \x01(\tR\x04text\"\xb9\x04\n" +
 	"\rClusterHealth\x12\x16\n" +
 	"\x06chunks\x18\x01 \x01(\x03R\x06chunks\x12)\n" +
 	"\x10under_replicated\x18\x02 \x01(\x03R\x0funderReplicated\x12'\n" +
@@ -2564,7 +2573,8 @@ const file_chunkd_v1_meta_proto_rawDesc = "" +
 	"\x0erepair_trimmed\x18\v \x01(\x04R\rrepairTrimmed\x12(\n" +
 	"\x10repair_timed_out\x18\f \x01(\x04R\x0erepairTimedOut\x12#\n" +
 	"\rrepair_failed\x18\r \x01(\x04R\frepairFailed\x12'\n" +
-	"\x0fdetector_stalls\x18\x0e \x01(\x04R\x0edetectorStalls*g\n" +
+	"\x0fdetector_stalls\x18\x0e \x01(\x04R\x0edetectorStalls\x12)\n" +
+	"\x10corrupt_replicas\x18\x0f \x01(\x04R\x0fcorruptReplicas*g\n" +
 	"\fVersionState\x12\x1d\n" +
 	"\x19VERSION_STATE_UNSPECIFIED\x10\x00\x12\x1b\n" +
 	"\x17VERSION_STATE_COMMITTED\x10\x01\x12\x1b\n" +

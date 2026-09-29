@@ -177,14 +177,16 @@ func RunTarget(s Scenario, t Target, bound time.Duration, logf func(string, ...a
 		mu.Lock()
 		h, alive := last, allAlive
 		mu.Unlock()
+		found := int(h.CorruptReplicas - h0.CorruptReplicas)
 		// Settled also means every node is alive: a returning node is
 		// suspect first, and until then its extra copies do not count as
 		// over-replication, so the next scenario would start mid-reconcile.
-		if h.UnderReplicated == 0 && h.OverReplicated == 0 && alive && time.Since(quiet) > 2*time.Second {
+		if h.UnderReplicated == 0 && h.OverReplicated == 0 && alive && found >= s.WantCorrupt && time.Since(quiet) > 2*time.Second {
 			break
 		}
 		if time.Since(quiet) > bound {
-			errs = append(errs, fmt.Errorf("replication not settled %v after quiet: %d under, %d over, all nodes alive %v", bound, h.UnderReplicated, h.OverReplicated, alive))
+			errs = append(errs, fmt.Errorf("replication not settled %v after quiet: %d under, %d over, all nodes alive %v, %d of %d rotted copies found",
+				bound, h.UnderReplicated, h.OverReplicated, alive, found, s.WantCorrupt))
 			break
 		}
 		time.Sleep(500 * time.Millisecond)
@@ -259,6 +261,16 @@ func ShortSuite() []Scenario {
 			Name: "transient-blip-no-repair", Seed: 102, Nodes: 5, Length: 45 * time.Second, NoRepair: true,
 			Ops:    append(preload(6), reads(8*time.Second, 40*time.Second, 6)...),
 			Faults: []Fault{{At: 6 * time.Second, Kind: Kill, Node: "node-2"}, {At: 21 * time.Second, Kind: Restart, Node: "node-2"}},
+		},
+		{
+			// TestCorruptChunkDetectedOnRead and TestScrubberFindsCorruption,
+			// real mode: flip bytes in 4 chunk files on node-2's volume.
+			// Reads or the scrubber (30 s passes in compose) find all 4,
+			// quarantine them, and repair restores RF; reads never return
+			// bad bytes.
+			Name: "corrupt-replicas", Seed: 104, Nodes: 5, Length: 45 * time.Second, WantCorrupt: 4,
+			Ops:    append(preload(6), reads(8*time.Second, 40*time.Second, 6)...),
+			Faults: []Fault{{At: 6 * time.Second, Kind: Corrupt, Node: "node-2", Count: 4, Pick: 104}},
 		},
 		{
 			// A paused process (docker pause) serves nothing while reads

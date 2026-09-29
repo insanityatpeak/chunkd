@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/insanityatpeak/chunkd/internal/core/repair"
+	"github.com/insanityatpeak/chunkd/internal/core/scrub"
 	"github.com/insanityatpeak/chunkd/internal/iface"
 	"github.com/insanityatpeak/chunkd/internal/sim/cluster"
 )
@@ -30,8 +31,12 @@ type Report struct {
 	Bound    time.Duration  `json:"bound"`
 	Ops      map[string]int `json:"ops"` // "put ok", "get failed", ...
 	Repair   repair.Stats   `json:"repair"`
+	Rotted   int            `json:"rotted"` // chunk copies corrupted by Corrupt faults
 	Err      error          `json:"-"`
 }
+
+// ScrubPass is the scrub interval chaos runs use.
+const ScrubPass = 20 * time.Second
 
 // Replay is the command that reruns one seed.
 func Replay(seed uint64) string { return fmt.Sprintf("go run ./tools/task chaos --seed=%d", seed) }
@@ -41,6 +46,8 @@ func Config(nodes int) cluster.Config {
 	cfg := cluster.DefaultConfig()
 	cfg.Nodes = nodes
 	cfg.Meta.ChunkSize = ChunkSize
+	// Short passes, so rot nobody reads is found within a run.
+	cfg.Scrub = scrub.Config{BytesPerSec: 8 << 20, Pass: ScrubPass}
 	return cfg
 }
 
@@ -50,6 +57,12 @@ func Run(s Scenario, w io.Writer) Report {
 	cfg := Config(s.Nodes)
 	c := cluster.New(s.Seed, cfg, w)
 	base := c.Net().Faults()
+	wipes := map[iface.NodeID]bool{} // nodes this scenario wipes at some point
+	for _, f := range s.Faults {
+		if f.Kind == Wipe {
+			wipes[f.Node] = true
+		}
+	}
 	c.Tick(3 * time.Second)
 
 	apply := func(f Fault) {
@@ -74,6 +87,17 @@ func Run(s Scenario, w io.Writer) Report {
 			c.Net().SetFaults(lossy)
 		case Clean:
 			c.Net().SetFaults(base)
+		case Corrupt:
+			rotted := c.RotNode(f.Node, f.Count, f.Pick, func(ch iface.ChunkID) bool {
+				intact := 0
+				for _, n := range c.Nodes() {
+					if n.ID() != f.Node && !wipes[n.ID()] && c.Intact(n.ID(), ch) {
+						intact++
+					}
+				}
+				return intact >= 2
+			})
+			r.Rotted += len(rotted)
 		}
 	}
 	do := func(op Op) {
@@ -140,6 +164,9 @@ func Run(s Scenario, w io.Writer) Report {
 			break
 		}
 		c.Tick(250 * time.Millisecond)
+	}
+	if r.Rotted > 0 && len(errs) == 0 {
+		errs = append(errs, scrubbed(c)...)
 	}
 
 	if err := c.AssertInvariants(); err != nil {

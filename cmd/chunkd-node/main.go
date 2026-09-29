@@ -7,9 +7,11 @@ import (
 	"flag"
 	"fmt"
 	"os"
+	"strconv"
 	"time"
 
 	"github.com/insanityatpeak/chunkd/internal/core/node"
+	"github.com/insanityatpeak/chunkd/internal/core/scrub"
 	"github.com/insanityatpeak/chunkd/internal/iface"
 	"github.com/insanityatpeak/chunkd/internal/real/blockstore"
 	"github.com/insanityatpeak/chunkd/internal/real/grpcnet"
@@ -25,6 +27,9 @@ func main() {
 	metaAddr := flag.String("meta", server.Env("CHUNKD_META", "localhost:7000"), "metadata server gRPC address")
 	rack := flag.String("rack", server.Env("CHUNKD_RACK", "r1"), "failure domain label")
 	dataDir := flag.String("data", server.Env("CHUNKD_DATA", "data/node"), "chunk directory")
+	defScrub := scrub.DefaultConfig()
+	scrubPass := flag.Duration("scrub-pass", envDuration("CHUNKD_SCRUB_PASS", defScrub.Pass), "interval between scrub pass starts")
+	scrubRate := flag.Int64("scrub-rate", envInt("CHUNKD_SCRUB_RATE", defScrub.BytesPerSec>>20), "scrub read cap, MiB/s")
 	flag.Parse()
 
 	store, err := blockstore.Open(*dataDir)
@@ -34,6 +39,7 @@ func main() {
 	}
 	cfg := node.DefaultConfig(iface.NodeID(*id), iface.NodeID(*metaID), *rack)
 	cfg.Addr = *advertise
+	cfg.Scrub = scrub.Config{BytesPerSec: *scrubRate << 20, Pass: *scrubPass}
 
 	sc := server.Config{
 		ID: cfg.ID, GRPCAddr: *grpcAddr, Advertise: *advertise, AdminAddr: *adminAddr,
@@ -78,4 +84,18 @@ func main() {
 		fmt.Fprintln(os.Stderr, "chunkd-node:", err)
 		os.Exit(1)
 	}
+}
+
+func envDuration(key string, def time.Duration) time.Duration {
+	if d, err := time.ParseDuration(os.Getenv(key)); err == nil {
+		return d
+	}
+	return def
+}
+
+func envInt(key string, def int64) int64 {
+	if n, err := strconv.ParseInt(os.Getenv(key), 10, 64); err == nil {
+		return n
+	}
+	return def
 }

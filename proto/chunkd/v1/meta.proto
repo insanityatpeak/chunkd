@@ -261,4 +261,6 @@ message ClusterHealth {
   uint64 repair_timed_out = 12;
   uint64 repair_failed = 13;
   uint64 detector_stalls = 14;
+  // Copies removed after failing verification (reads, scrub, re-checks).
+  uint64 corrupt_replicas = 15;
 }

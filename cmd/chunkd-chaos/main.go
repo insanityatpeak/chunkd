@@ -89,6 +89,7 @@ func main() {
 	var mu sync.Mutex
 	var failed []chaos.Report
 	var worst time.Duration
+	rotted := 0
 	var wg sync.WaitGroup
 	for range max(*parallel, 1) {
 		wg.Add(1)
@@ -102,6 +103,7 @@ func main() {
 					failed = append(failed, r)
 				}
 				worst = max(worst, r.Restored)
+				rotted += r.Rotted
 				if *verbose {
 					fmt.Printf("seed %d: trace %s restored %v\n", sd, r.Trace, r.Restored)
 				}
@@ -115,8 +117,8 @@ func main() {
 	close(jobs)
 	wg.Wait()
 
-	fmt.Printf("chaos: %d seeds from %d in %v, %d failed, slowest RF restore %v\n",
-		*seeds, *from, time.Since(start).Round(time.Millisecond), len(failed), worst)
+	fmt.Printf("chaos: %d seeds from %d in %v, %d failed, slowest RF restore %v, %d copies rotted\n",
+		*seeds, *from, time.Since(start).Round(time.Millisecond), len(failed), worst, rotted)
 	for _, r := range failed {
 		fmt.Fprintln(os.Stderr, r.Err)
 	}

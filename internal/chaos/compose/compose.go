@@ -7,6 +7,7 @@ import (
 	"context"
 	"fmt"
 	"os/exec"
+	"strconv"
 	"strings"
 	"time"
 
@@ -62,6 +63,11 @@ func (t *Target) Apply(f chaos.Fault) error {
 		return docker("compose", "pause", svc)
 	case chaos.Thaw:
 		return docker("compose", "unpause", svc)
+	case chaos.Corrupt:
+		// Flips bytes in the container's own volume; the node finds out on
+		// its next read of those chunks, as with real bit rot.
+		return docker("compose", "exec", "-T", svc, "chunkd", "debug", "corrupt",
+			"-root", "/data", "-n", strconv.Itoa(f.Count), "-pick", strconv.FormatUint(f.Pick, 10))
 	}
 	return chaos.ErrUnsupported
 }

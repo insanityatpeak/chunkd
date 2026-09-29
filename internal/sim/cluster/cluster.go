@@ -5,6 +5,7 @@ package cluster
 
 import (
 	"context"
+	"crypto/sha256"
 	"fmt"
 	"io"
 	"log/slog"
@@ -13,6 +14,7 @@ import (
 	"github.com/insanityatpeak/chunkd/internal/client"
 	"github.com/insanityatpeak/chunkd/internal/core/meta"
 	"github.com/insanityatpeak/chunkd/internal/core/node"
+	"github.com/insanityatpeak/chunkd/internal/core/scrub"
 	"github.com/insanityatpeak/chunkd/internal/iface"
 	"github.com/insanityatpeak/chunkd/internal/obs"
 	"github.com/insanityatpeak/chunkd/internal/sim"
@@ -29,6 +31,8 @@ type Config struct {
 	Faults sim.Faults
 	// CallTimeout bounds each client RPC in simulated time.
 	CallTimeout time.Duration
+	// Scrub sets every node's scrubber.
+	Scrub scrub.Config
 }
 
 // DefaultConfig is 1 metadata server and 5 storage nodes over 3 racks, on a
@@ -40,6 +44,7 @@ func DefaultConfig() Config {
 		Meta:        meta.DefaultConfig(MetaID),
 		Faults:      sim.Faults{DropRate: 0.01, DupRate: 0.005, MinDelay: time.Millisecond, MaxDelay: 40 * time.Millisecond, BytesPerSec: 125 << 20},
 		CallTimeout: 10 * time.Second,
+		Scrub:       scrub.DefaultConfig(),
 	}
 }
 
@@ -84,8 +89,9 @@ func New(seed uint64, cfg Config, w io.Writer) *Cluster {
 
 // startNode runs a fresh node process (new incarnation) over nd's store.
 func (c *Cluster) startNode(id iface.NodeID, nd *Node) {
-	nd.Node = node.New(node.Deps{Clock: c.clock, Net: c.net, Async: c.net.AsyncCaller(id, c.cfg.CallTimeout), Store: nd.Store, Rand: c.rng, Log: c.logger(id)},
-		node.DefaultConfig(id, MetaID, nd.Rack))
+	cfg := node.DefaultConfig(id, MetaID, nd.Rack)
+	cfg.Scrub = c.cfg.Scrub
+	nd.Node = node.New(node.Deps{Clock: c.clock, Net: c.net, Async: c.net.AsyncCaller(id, c.cfg.CallTimeout), Store: nd.Store, Rand: c.rng, Log: c.logger(id)}, cfg)
 	nd.Node.Start()
 }
 
@@ -110,6 +116,35 @@ func (c *Cluster) RestartNode(id iface.NodeID) {
 	nd.Stop()
 	c.net.Restart(id)
 	c.startNode(id, nd)
+}
+
+// RotNode flips a byte in up to n chunks on a node's disk, as bit rot
+// would. Chunks are visited in ID order starting at index pick % count, and
+// only those ok accepts are rotted. It returns the rotted chunks. The node
+// notices only when it next reads one (a client, a repair copy, the
+// scrubber).
+func (c *Cluster) RotNode(id iface.NodeID, n int, pick uint64, ok func(iface.ChunkID) bool) []iface.ChunkID {
+	store := c.node(id).Store
+	var ids []iface.ChunkID
+	_ = store.List(context.Background(), func(ch iface.ChunkID) error { ids = append(ids, ch); return nil })
+	var rotted []iface.ChunkID
+	for i := range ids {
+		if len(rotted) == n {
+			break
+		}
+		ch := ids[(pick+uint64(i))%uint64(len(ids))]
+		if ok(ch) && store.Corrupt(ch) {
+			rotted = append(rotted, ch)
+		}
+	}
+	return rotted
+}
+
+// Intact reports whether node's disk holds chunk with bytes that match its
+// hash, whether or not the node process is running.
+func (c *Cluster) Intact(node iface.NodeID, chunk iface.ChunkID) bool {
+	b, err := c.node(node).Store.Get(context.Background(), chunk)
+	return err == nil && sha256.Sum256(b) == chunk
 }
 
 // WipeNode replaces a killed node's disk with an empty one, as after a disk

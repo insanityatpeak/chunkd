@@ -397,7 +397,8 @@ func ClusterFromProto(resp *chunkdv1.ClusterResponse) Cluster {
 	out.Health = Health{Chunks: h.GetChunks(), UnderReplicated: h.GetUnderReplicated(), OverReplicated: h.GetOverReplicated(), Lost: h.GetLost(),
 		Replicas: h.GetReplicas(), RepairQueued: h.GetRepairQueued(), RepairInFlight: h.GetRepairInFlight(), RepairWaiting: h.GetRepairWaiting(),
 		RepairCompleted: h.GetRepairCompleted(), RepairBytes: h.GetRepairBytes(), RepairTrimmed: h.GetRepairTrimmed(),
-		RepairTimedOut: h.GetRepairTimedOut(), RepairFailed: h.GetRepairFailed(), DetectorStalls: h.GetDetectorStalls()}
+		RepairTimedOut: h.GetRepairTimedOut(), RepairFailed: h.GetRepairFailed(), DetectorStalls: h.GetDetectorStalls(),
+		CorruptReplicas: h.GetCorruptReplicas()}
 	for _, f := range resp.GetFileHealth() {
 		out.FileHealth = append(out.FileHealth, FileHealth{Path: f.GetPath(), Chunks: int(f.GetChunks()),
 			UnderReplicated: int(f.GetUnderReplicated()), MinLive: int(f.GetMinLive())})

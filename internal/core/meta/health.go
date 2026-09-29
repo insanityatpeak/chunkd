@@ -19,6 +19,7 @@ type Health struct {
 	Lost            int          `json:"lost"` // no copy on any alive or suspect node
 	Repair          repair.Stats `json:"repair"`
 	DetectorStalls  uint64       `json:"detectorStalls"`
+	CorruptReplicas uint64       `json:"corruptReplicas"`
 }
 
 // Health walks every wanted chunk. O(chunks); called about once a second.
@@ -55,5 +56,6 @@ func (s *Server) Health() Health {
 	})
 	h.Repair = s.repair.Stats()
 	h.DetectorStalls = s.cluster.Detector().Stalls()
+	h.CorruptReplicas = s.corruptReplicas
 	return h
 }

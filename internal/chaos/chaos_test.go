@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"github.com/insanityatpeak/chunkd/internal/iface"
+	"github.com/insanityatpeak/chunkd/internal/sim/cluster"
 )
 
 var seeds = flag.Int("seeds", 20, "random chaos seeds to run")
@@ -85,5 +86,32 @@ func TestCheckerCatchesLoss(t *testing.T) {
 	}
 	if !strings.Contains(r.Err.Error(), "replay: go run ./tools/task chaos --seed=1") {
 		t.Fatalf("failure does not print the replay command:\n%v", r.Err)
+	}
+}
+
+// The rot checks must not be vacuous: rot is visible on disk until found,
+// and a run with rot finds and replaces all of it.
+func TestCheckerSeesRot(t *testing.T) {
+	c := cluster.New(3, Config(5), io.Discard)
+	c.Tick(3 * time.Second)
+	if _, _, err := c.UploadRandom("/r", 600<<10); err != nil {
+		t.Fatal(err)
+	}
+	c.Settle(time.Minute)
+	if errs := rotOnDisk(c); len(errs) != 0 {
+		t.Fatalf("clean cluster: %v", errs)
+	}
+	rotted := c.RotNode("node-1", 5, 0, func(iface.ChunkID) bool { return true })
+	if len(rotted) == 0 {
+		t.Fatal("node-1 holds nothing to rot")
+	}
+	if errs := rotOnDisk(c); len(errs) != len(rotted) {
+		t.Fatalf("checker saw %d of %d rotted chunks", len(errs), len(rotted))
+	}
+	if errs := scrubbed(c); len(errs) != 0 {
+		t.Fatalf("after scrubbing: %v", errs)
+	}
+	if n := c.Nodes()[0].Stats().Corrupt; n != uint64(len(rotted)) {
+		t.Fatalf("node-1 quarantined %d of %d", n, len(rotted))
 	}
 }

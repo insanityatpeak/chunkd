@@ -24,10 +24,11 @@ const (
 	Wipe    Kind = "wipe"    // replace a killed node's disk with an empty one
 	Freeze  Kind = "freeze"  // pause the process (SIGSTOP, long GC)
 	Thaw    Kind = "thaw"
-	Slow    Kind = "slow"  // add Delay to every message to or from Node
-	Fast    Kind = "fast"  // clear Slow
-	Lossy   Kind = "lossy" // raise message drop and duplicate rates cluster-wide
-	Clean   Kind = "clean" // restore the base network
+	Slow    Kind = "slow"    // add Delay to every message to or from Node
+	Fast    Kind = "fast"    // clear Slow
+	Lossy   Kind = "lossy"   // raise message drop and duplicate rates cluster-wide
+	Clean   Kind = "clean"   // restore the base network
+	Corrupt Kind = "corrupt" // flip a byte in Count chunks on Node's disk (bit rot)
 )
 
 // Fault is one scheduled action.
@@ -38,6 +39,8 @@ type Fault struct {
 	Delay time.Duration // Slow
 	Drop  float64       // Lossy
 	Dup   float64       // Lossy
+	Count int           // Corrupt: chunks to rot
+	Pick  uint64        // Corrupt: first chunk, as an index into the node's chunks in ID order
 }
 
 func (f Fault) String() string {
@@ -48,6 +51,8 @@ func (f Fault) String() string {
 	case Lossy:
 		s += fmt.Sprintf(" drop %.1f%% dup %.1f%%", f.Drop*100, f.Dup*100)
 	case Clean:
+	case Corrupt:
+		s += fmt.Sprintf(" %s ×%d from #%d", f.Node, f.Count, f.Pick%1000)
 	default:
 		s += " " + string(f.Node)
 	}
@@ -81,6 +86,9 @@ type Scenario struct {
 	Ops    []Op
 	// NoRepair asserts the faults are transient: zero repair copies.
 	NoRepair bool
+	// WantCorrupt is how many rotted copies the cluster must find (by
+	// reads or the scrubber) before the run counts as settled.
+	WantCorrupt int
 }
 
 func (s Scenario) String() string {
@@ -124,7 +132,11 @@ type episode struct {
 //   - at most one wipe per scenario (commit at 2 of 3 survives one lost
 //     disk; two lost disks can destroy an acknowledged chunk by design);
 //   - one lossy window at a time;
-//   - every impairment ends 10 s before the scenario does.
+//   - every impairment ends 10 s before the scenario does;
+//   - rot (applied by the runner) only hits a chunk that keeps 2 intact
+//     copies on other nodes this scenario never wipes: rot on the last
+//     copies is detected loudly by design (TestAllReplicasCorrupt), not
+//     survivable.
 func Generate(seed uint64, sh Shape) Scenario {
 	rng := sim.NewRand(seed ^ 0x9e3779b97f4a7c15) // independent of the cluster's stream
 	s := Scenario{Seed: seed, Nodes: sh.Nodes, Length: sh.Length}
@@ -147,15 +159,18 @@ func Generate(seed uint64, sh Shape) Scenario {
 	for range 1 + rng.IntN(sh.Episodes) {
 		start := span(5*time.Second, last-5*time.Second)
 		var e episode
-		switch k := rng.IntN(10); {
+		switch k := rng.IntN(12); {
 		case k < 4:
 			e = episode{kind: Kill, node: node(), start: start, end: min(start+span(time.Second, time.Minute), last)}
 		case k < 6:
 			e = episode{kind: Freeze, node: node(), start: start, end: min(start+span(time.Second, 30*time.Second), last)}
 		case k < 8:
 			e = episode{kind: Slow, node: node(), start: start, end: min(start+span(5*time.Second, 40*time.Second), last)}
-		default:
+		case k < 10:
 			e = episode{kind: Lossy, start: start, end: min(start+span(5*time.Second, 20*time.Second), last)}
+		default:
+			// Instantaneous; the scrubber or a reader finds it later.
+			e = episode{kind: Corrupt, node: node(), start: start, end: start}
 		}
 		sameNode := func(o episode) bool { return e.node != "" && o.node == e.node }
 		if overlapping(e.start, e.end, sameNode) > 0 {
@@ -184,6 +199,8 @@ func Generate(seed uint64, sh Shape) Scenario {
 		case Lossy:
 			drop, dup := float64(rng.IntN(51))/1000, float64(rng.IntN(51))/1000
 			s.Faults = append(s.Faults, Fault{At: e.start, Kind: Lossy, Drop: drop, Dup: dup}, Fault{At: e.end, Kind: Clean})
+		case Corrupt:
+			s.Faults = append(s.Faults, Fault{At: e.start, Kind: Corrupt, Node: e.node, Count: 1 + rng.IntN(3), Pick: rng.Uint64()})
 		}
 	}
 	// Stable: a wipe must stay before the restart scheduled at the same time.

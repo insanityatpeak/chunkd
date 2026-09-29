@@ -101,3 +101,31 @@ func TestQuarantineKeepsBytesOutOfCounts(t *testing.T) {
 		t.Fatalf("usage after reopen counts quarantine: %+v", u)
 	}
 }
+
+func TestRotFlipsChosenChunks(t *testing.T) {
+	root := t.TempDir()
+	s := open(t, root)
+	ctx := context.Background()
+	for _, d := range []string{"one", "two", "three"} {
+		_ = s.Put(ctx, sha256.Sum256([]byte(d)), []byte(d))
+	}
+	rotted, err := Rot(root, 2, 7)
+	if err != nil || len(rotted) != 2 {
+		t.Fatalf("Rot = %v, %v", rotted, err)
+	}
+	again, _ := Rot(t.TempDir(), 2, 7) // empty store: nothing to do
+	if len(again) != 0 {
+		t.Fatalf("Rot on an empty store = %v", again)
+	}
+	bad := 0
+	_ = s.List(ctx, func(id iface.ChunkID) error {
+		b, _ := s.Get(ctx, id)
+		if sha256.Sum256(b) != id {
+			bad++
+		}
+		return nil
+	})
+	if bad != 2 {
+		t.Fatalf("%d chunks fail verification, want 2", bad)
+	}
+}

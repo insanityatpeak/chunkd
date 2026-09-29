@@ -46,27 +46,27 @@ services:
   node-1:
     <<: *node
     profiles: [full, small]
-    environment: { CHUNKD_ID: node-1, CHUNKD_ADVERTISE: "node-1:7000", CHUNKD_META: "meta-1:7000", CHUNKD_RACK: r1 }
+    environment: { CHUNKD_ID: node-1, CHUNKD_ADVERTISE: "node-1:7000", CHUNKD_META: "meta-1:7000", CHUNKD_RACK: r1, CHUNKD_SCRUB_PASS: 30s }
     volumes: [node-1:/data]
   node-2:
     <<: *node
     profiles: [full, small]
-    environment: { CHUNKD_ID: node-2, CHUNKD_ADVERTISE: "node-2:7000", CHUNKD_META: "meta-1:7000", CHUNKD_RACK: r2 }
+    environment: { CHUNKD_ID: node-2, CHUNKD_ADVERTISE: "node-2:7000", CHUNKD_META: "meta-1:7000", CHUNKD_RACK: r2, CHUNKD_SCRUB_PASS: 30s }
     volumes: [node-2:/data]
   node-3:
     <<: *node
     profiles: [full, small]
-    environment: { CHUNKD_ID: node-3, CHUNKD_ADVERTISE: "node-3:7000", CHUNKD_META: "meta-1:7000", CHUNKD_RACK: r3 }
+    environment: { CHUNKD_ID: node-3, CHUNKD_ADVERTISE: "node-3:7000", CHUNKD_META: "meta-1:7000", CHUNKD_RACK: r3, CHUNKD_SCRUB_PASS: 30s }
     volumes: [node-3:/data]
   node-4:
     <<: *node
     profiles: [full]
-    environment: { CHUNKD_ID: node-4, CHUNKD_ADVERTISE: "node-4:7000", CHUNKD_META: "meta-1:7000", CHUNKD_RACK: r1 }
+    environment: { CHUNKD_ID: node-4, CHUNKD_ADVERTISE: "node-4:7000", CHUNKD_META: "meta-1:7000", CHUNKD_RACK: r1, CHUNKD_SCRUB_PASS: 30s }
     volumes: [node-4:/data]
   node-5:
     <<: *node
     profiles: [full]
-    environment: { CHUNKD_ID: node-5, CHUNKD_ADVERTISE: "node-5:7000", CHUNKD_META: "meta-1:7000", CHUNKD_RACK: r2 }
+    environment: { CHUNKD_ID: node-5, CHUNKD_ADVERTISE: "node-5:7000", CHUNKD_META: "meta-1:7000", CHUNKD_RACK: r2, CHUNKD_SCRUB_PASS: 30s }
     volumes: [node-5:/data]
 
   gateway:
