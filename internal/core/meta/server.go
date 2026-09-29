@@ -43,8 +43,10 @@ type Config struct {
 	EpochEvery   time.Duration
 	RetainEpochs int
 	// LeaseEpochs: a pending upload with no claim for this many epochs is
-	// aborted. GCGrace: an unreferenced copy is deleted only after it has
-	// been unreferenced this long (ADR-0016).
+	// aborted, so one idle for less than (LeaseEpochs-1)×EpochEvery never
+	// is. GCGrace: an unreferenced copy is deleted only after it has been
+	// unreferenced this long (ADR-0016). The lease outlasts the grace plus
+	// two sweeps, so a stall GC notices never costs the upload its lease.
 	LeaseEpochs int
 	GCGrace     time.Duration
 }
@@ -56,7 +58,7 @@ type Config struct {
 // noncurrent versions until a lifecycle rule expires them, typically days.
 func DefaultConfig(id iface.NodeID) Config {
 	return Config{ID: id, Replicas: 3, MinReplicas: 2, ChunkSize: chunk.DefaultSize, Detector: detector.DefaultConfig(), Repair: repair.DefaultConfig(), SnapshotEvery: 1000,
-		EpochEvery: 30 * time.Second, RetainEpochs: 3, LeaseEpochs: 4, GCGrace: time.Minute}
+		EpochEvery: 30 * time.Second, RetainEpochs: 3, LeaseEpochs: 6, GCGrace: time.Minute}
 }
 
 // Server is the metadata server. Everything runs on its event loop.

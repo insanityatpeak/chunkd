@@ -93,3 +93,13 @@ Related: with 1% message loss a copy command or its completion report can be los
 | Root cause | A commit needs 2 of 3 replicas reported (ADR-0007). The third replica's incremental report travels on its own and can land after the commit. A scan in that gap saw 2 of 3 with no dead holder, so no delay applied, and it copied the chunk at once; the late report then made it over-replicated and a trim followed. The repair delay only excused copies on dead nodes, not copies still being written. |
 | Fix | A freshly committed chunk gets an upload grace (one copy timeout, 10 s) before a missing copy counts; a chunk on its last copy is still repaired at once. HDFS likewise leaves blocks under construction to pending-replication timeouts. Commit `405d1b2`. |
 | Regression test | `repair.TestUploadGrace` (wait inside the grace, copy after it, last copy at once); real mode `transient-blip-no-repair` in CI. |
+
+## 10. An upload stalled past the GC grace could lose its lease first
+
+| | |
+|---|---|
+| Symptom | `TestChaosGCDuringSlowUpload` (seed 1) and `TestChaosDeleteWhileUploadingSameChunk` (seed 11) failed at commit with `not_found: upload N` after stalls of 120 s and 100 s. No chunk had been deleted; the upload itself was gone. |
+| Repro | `go test ./internal/sim/cluster -run TestChaosGCDuringSlowUpload` with `LeaseEpochs: 4`. |
+| Root cause | A lease expires when `touched + LeaseEpochs <= epoch`. An upload touched just before an epoch tick loses almost a whole epoch, so 4 epochs of 30 s guarantee only 90 s of idle time, not 120 s. That is shorter than the GC grace plus two sweeps (120 s): the very stall the GC design promises to survive expired the upload through its lease instead. |
+| Fix | `LeaseEpochs: 6` (at least 150 s idle), and a sizing rule in `meta.Config`: the minimum lease, `(LeaseEpochs-1) × EpochEvery`, must exceed `GCGrace + 2 × EpochEvery`. The slow-upload scenario checks the rule against the config it runs. Found before the GC work was committed. |
+| Regression test | `TestChaosGCDuringSlowUpload`, `TestChaosDeleteWhileUploadingSameChunk`, `meta.TestUploadLeaseExpires`. |

@@ -98,7 +98,7 @@ func TestGCSparesInflightUpload(t *testing.T) {
 func TestUploadLeaseExpires(t *testing.T) {
 	e := newEnv(t, 3)
 	st := e.stage(t, "/f", []byte("abcd"))
-	e.clock.Advance(4 * time.Minute)
+	e.clock.Advance(4 * time.Minute) // above the 6-epoch (3 min) lease
 	if _, err := e.commitStaged(t, st); iface.CodeOf(err) != iface.CodeNotFound {
 		t.Fatalf("commit after the lease ran out: %v, want not found", err)
 	}
