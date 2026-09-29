@@ -305,3 +305,71 @@ func TestDedupAccounting(t *testing.T) {
 		t.Fatalf("referenced %d, unique %d; want 24, 16", ref, uniq)
 	}
 }
+
+func beginLWW(path string, size int64) *chunkdv1.Op {
+	op := begin(path, 0, size)
+	op.GetBegin().LastWriterWins = true
+	return op
+}
+
+func TestLastWriterWins(t *testing.T) {
+	ok := iface.CodeUnknown
+	s := New()
+	run(t, s, []step{
+		{begin("/a", 0, 4), ok, Result{UploadID: 1}},
+		{commit(1, 1, 'a'), ok, Result{UploadID: 1, Version: 1}},
+		// Both begin against v1; with CAS the second commit would conflict.
+		{beginLWW("/a", 4), ok, Result{UploadID: 2}},
+		{beginLWW("/a", 4), ok, Result{UploadID: 3}},
+		{commit(2, 1, 'b'), ok, Result{UploadID: 2, Version: 2}},
+		{commit(3, 1, 'c'), ok, Result{UploadID: 3, Version: 3}},
+		// A CAS writer that began before them still loses.
+		{begin("/a", 3, 4), ok, Result{UploadID: 4}},
+		{beginLWW("/a", 4), ok, Result{UploadID: 5}},
+		{commit(5, 1, 'd'), ok, Result{UploadID: 5, Version: 4}},
+		{commit(4, 1, 'e'), iface.CodeConflict, Result{}},
+	})
+	r, err := Restore(s.Snapshot())
+	if err != nil || !bytes.Equal(r.Snapshot(), s.Snapshot()) {
+		t.Fatalf("LWW flag did not survive a snapshot: %v", err)
+	}
+	if u, _ := r.Upload(4); u.LWW {
+		t.Fatal("CAS upload restored as LWW")
+	}
+}
+
+func TestVersionHistory(t *testing.T) {
+	ok := iface.CodeUnknown
+	s := New()
+	run(t, s, []step{
+		{begin("/a", 0, 4), ok, Result{UploadID: 1}},
+		{commit(1, 1, 'a'), ok, Result{UploadID: 1, Version: 1}},
+		{begin("/a", 1, 8), ok, Result{UploadID: 2}},
+		{commit(2, 2, 'b'), ok, Result{UploadID: 2, Version: 2}},
+		{del("/a", 2), ok, Result{Version: 3}},
+	})
+	tests := []struct {
+		v        uint64
+		code     iface.Code
+		wantSize int64
+	}{
+		{0, iface.CodeNotFound, 0}, // live: deleted
+		{1, ok, 4},
+		{2, ok, 8},
+		{3, iface.CodeNotFound, 0}, // the tombstone itself
+		{4, iface.CodeNotFound, 0},
+	}
+	for _, tt := range tests {
+		got, err := s.StatVersion("/a", tt.v)
+		if iface.CodeOf(err) != tt.code || (err == nil && got.Size != tt.wantSize) {
+			t.Errorf("version %d: %+v, %v; want code %v size %d", tt.v, got, err, tt.code, tt.wantSize)
+		}
+	}
+	log, err := s.Log("/a")
+	if err != nil || len(log) != 3 || !log[2].Tombstone || log[0].V != 1 {
+		t.Fatalf("log = %+v, %v", log, err)
+	}
+	if _, err := s.Log("/missing"); iface.CodeOf(err) != iface.CodeNotFound {
+		t.Fatalf("log of a missing path: %v", err)
+	}
+}

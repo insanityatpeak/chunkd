@@ -49,13 +49,15 @@ func main() {
 	metaAddr := fs.String("meta", "", "metadata server gRPC address (direct mode, bypasses the gateway)")
 	expected := fs.Uint64("expected", 0, "put/rm: expected live version (compare-and-swap); 0 with put means overwrite")
 	create := fs.Bool("create", false, "put: fail if the path exists")
+	lww := fs.Bool("lww", false, "put: last writer wins, no version check (a concurrent update is lost)")
+	version := fs.Uint64("version", 0, "get: download this version instead of the live one")
 	expectSHA := fs.String("expect-sha256", "", "get: fail unless the content has this SHA-256")
 	asJSON := fs.Bool("json", false, "print JSON")
 	root := fs.String("root", envOr("CHUNKD_DATA", "data/node"), "debug corrupt: the node's chunk directory")
 	rotN := fs.Int("n", 1, "debug corrupt: number of chunks")
 	pick := fs.Uint64("pick", 0, "debug corrupt: first chunk, as an index into the chunks in ID order")
 	fs.Usage = func() {
-		fmt.Fprintln(os.Stderr, "usage: chunkd [flags] put|get|ls|stat|rm|cluster|ping|probe|debug corrupt ...")
+		fmt.Fprintln(os.Stderr, "usage: chunkd [flags] put|get|log|ls|stat|rm|cluster|ping|probe|debug corrupt ...")
 		fs.PrintDefaults()
 	}
 	// Flags may come before or after the command.
@@ -88,10 +90,15 @@ func main() {
 	var err error
 	switch cmd := args[0]; {
 	case cmd == "put" && len(args) == 3:
-		opts := client.PutOptions{Overwrite: *expected == 0 && !*create, ExpectedVersion: *expected}
+		opts := client.PutOptions{Overwrite: *expected == 0 && !*create, ExpectedVersion: *expected, LastWriterWins: *lww}
 		err = put(ctx, api, args[1], args[2], opts, out)
 	case cmd == "get" && len(args) == 3:
-		err = get(ctx, api, args[1], args[2], *expectSHA, out)
+		err = get(ctx, api, args[1], args[2], *version, *expectSHA, out)
+	case cmd == "log" && len(args) == 2:
+		var vs []client.VersionInfo
+		if vs, err = api.Log(ctx, args[1]); err == nil {
+			out.log(vs)
+		}
 	case cmd == "ls" && len(args) <= 2:
 		prefix := "/"
 		if len(args) == 2 {
@@ -168,14 +175,14 @@ func put(ctx context.Context, api client.API, local, path string, opts client.Pu
 
 // get writes to a temp file next to the target and renames it only after
 // every check passes, so a failed download never leaves a plausible file.
-func get(ctx context.Context, api client.API, path, local, expectSHA string, out printer) error {
+func get(ctx context.Context, api client.API, path, local string, version uint64, expectSHA string, out printer) error {
 	tmp, err := os.CreateTemp(filepath.Dir(local), ".chunkd-get-*")
 	if err != nil {
 		return err
 	}
 	defer os.Remove(tmp.Name())
 	h := sha256.New()
-	m, err := api.Get(ctx, path, io.MultiWriter(tmp, h))
+	m, err := api.GetVersion(ctx, path, version, io.MultiWriter(tmp, h))
 	if cerr := tmp.Close(); err == nil {
 		err = cerr
 	}
@@ -214,6 +221,23 @@ func (p printer) list(files []client.FileInfo) {
 	fmt.Fprintln(w, "PATH\tVERSION\tSIZE\tCHUNKS\tSHA256")
 	for _, f := range files {
 		fmt.Fprintf(w, "%s\tv%d\t%s\t%d\t%.16s\n", f.Path, f.Version, human(f.Size), f.Chunks, f.SHA256)
+	}
+	w.Flush()
+}
+
+func (p printer) log(vs []client.VersionInfo) {
+	if p.json {
+		p.print(vs)
+		return
+	}
+	w := tabwriter.NewWriter(os.Stdout, 0, 4, 2, ' ', 0)
+	fmt.Fprintln(w, "VERSION\tSIZE\tCHUNKS\tSHA256")
+	for _, v := range vs {
+		if v.Deleted {
+			fmt.Fprintf(w, "v%d\t-\t-\tdeleted\n", v.Version)
+			continue
+		}
+		fmt.Fprintf(w, "v%d\t%s\t%d\t%.16s\n", v.Version, human(v.Size), v.Chunks, v.SHA256)
 	}
 	w.Flush()
 }

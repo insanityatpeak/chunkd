@@ -33,6 +33,7 @@ const (
 	KindDelete  = "meta.delete"
 	KindStat    = "meta.stat"
 	KindList    = "meta.list"
+	KindLog     = "meta.log"
 	KindCluster = "meta.cluster"
 	KindSuspect = "meta.suspect"
 

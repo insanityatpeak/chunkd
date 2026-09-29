@@ -325,3 +325,52 @@ func TestCommitWithoutClaimRejected(t *testing.T) {
 		t.Fatalf("commit of an unclaimed chunk: err = %v, want invalid", err)
 	}
 }
+
+// TestCASConflict: two writers begin against the same version, write their
+// chunks, then commit. Exactly one wins; the loser gets a conflict and its
+// content is never visible.
+func TestCASConflict(t *testing.T) {
+	e := newEnv(t, 3)
+	type writer struct {
+		begin chunkdv1.BeginUploadResponse
+		data  []byte
+		id    [32]byte
+	}
+	ws := []*writer{{data: []byte("AAAA")}, {data: []byte("BBBB")}}
+	for _, w := range ws {
+		body, err := e.rpc(t, "meta", wire.KindBegin, wire.Marshal(&chunkdv1.BeginUploadRequest{Path: "/f", Size: 4}))
+		if err != nil {
+			t.Fatal(err)
+		}
+		wire.Decode(body, &w.begin)
+		w.id = sha256.Sum256(w.data)
+		e.claim(t, w.begin.GetUploadId(), 0, w.id[:])
+		var calls []iface.Call
+		for _, r := range w.begin.GetPlacement()[0].GetReplicas() {
+			calls = append(calls, iface.Call{To: iface.NodeID(r.GetNode()), Kind: wire.KindPutChunk, Body: wire.Marshal(&chunkdv1.PutChunkRequest{Id: w.id[:], Data: w.data})})
+		}
+		e.caller.Do(context.Background(), calls)
+	}
+	e.clock.Advance(time.Second)
+	var won, conflicts int
+	var winner []byte
+	for _, w := range ws {
+		_, err := e.rpc(t, "meta", wire.KindCommit, wire.Marshal(&chunkdv1.CommitUploadRequest{UploadId: w.begin.GetUploadId(), ChunkIds: [][]byte{w.id[:]}, Sha256: w.id[:]}))
+		switch iface.CodeOf(err) {
+		case iface.CodeUnknown:
+			won++
+			winner = w.id[:]
+		case iface.CodeConflict:
+			conflicts++
+		default:
+			t.Fatalf("commit: %v", err)
+		}
+	}
+	if won != 1 || conflicts != 1 {
+		t.Fatalf("%d commits won and %d conflicted, want 1 and 1", won, conflicts)
+	}
+	st, err := e.stat(t, "/f")
+	if err != nil || st.GetVersion() != 1 || string(st.GetSha256()) != string(winner) {
+		t.Fatalf("stat after the race: %+v, %v", st, err)
+	}
+}

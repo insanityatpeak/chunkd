@@ -60,6 +60,21 @@ func (l *locked) Cluster(ctx context.Context, after uint64) (client.Cluster, err
 	defer l.mu.Unlock()
 	return l.api.Cluster(ctx, after)
 }
+func (l *locked) Log(ctx context.Context, p string) ([]client.VersionInfo, error) {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	return l.api.Log(ctx, p)
+}
+func (l *locked) StatVersion(ctx context.Context, p string, v uint64) (client.Manifest, error) {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	return l.api.StatVersion(ctx, p, v)
+}
+func (l *locked) GetVersion(ctx context.Context, p string, v uint64, w io.Writer) (client.Manifest, error) {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	return l.api.GetVersion(ctx, p, v, w)
+}
 
 func setup(t *testing.T) (*httptest.Server, *cluster.Cluster) {
 	t.Helper()

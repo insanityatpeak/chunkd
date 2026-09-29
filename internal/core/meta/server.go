@@ -107,6 +107,7 @@ func (s *Server) Start() {
 		wire.KindDelete:  s.delete,
 		wire.KindStat:    s.stat,
 		wire.KindList:    s.list,
+		wire.KindLog:     s.log,
 		wire.KindCluster: s.clusterInfo,
 		wire.KindSuspect: s.suspect,
 	} {
@@ -272,7 +273,8 @@ func (s *Server) begin(m iface.Message, respond iface.Responder) {
 		respond(nil, iface.Errorf(iface.CodeUnavailable, "%v (need %d)", err, s.cfg.MinReplicas))
 		return
 	}
-	op := &chunkdv1.BeginUploadOp{Path: req.GetPath(), ExpectedVersion: req.GetExpectedVersion(), Size: req.GetSize(), ChunkSize: int32(s.cfg.ChunkSize), Claims: true}
+	op := &chunkdv1.BeginUploadOp{Path: req.GetPath(), ExpectedVersion: req.GetExpectedVersion(), Size: req.GetSize(), ChunkSize: int32(s.cfg.ChunkSize),
+		Claims: true, LastWriterWins: req.GetLastWriterWins()}
 	resp := &chunkdv1.BeginUploadResponse{ChunkSize: int32(s.cfg.ChunkSize), MinReplicas: int32(s.cfg.MinReplicas)}
 	for _, nodes := range pl {
 		r := &chunkdv1.Replicas{}
@@ -417,7 +419,7 @@ func (s *Server) stat(m iface.Message, respond iface.Responder) {
 		respond(nil, err)
 		return
 	}
-	v, err := s.state.Stat(req.GetPath())
+	v, err := s.state.StatVersion(req.GetPath(), req.GetVersion())
 	if err != nil {
 		respond(nil, err)
 		return
@@ -442,6 +444,28 @@ func (s *Server) list(m iface.Message, respond iface.Responder) {
 	resp := &chunkdv1.ListResponse{}
 	for _, e := range s.state.List(req.GetPrefix()) {
 		resp.Files = append(resp.Files, &chunkdv1.FileInfo{Path: e.Path, Version: e.V, Size: e.Size, Sha256: e.SHA256[:], ChunkCount: int32(len(e.Chunks))})
+	}
+	respond(wire.Marshal(resp), nil)
+}
+
+func (s *Server) log(m iface.Message, respond iface.Responder) {
+	var req chunkdv1.LogRequest
+	if err := wire.Decode(m.Body, &req); err != nil {
+		respond(nil, err)
+		return
+	}
+	vs, err := s.state.Log(req.GetPath())
+	if err != nil {
+		respond(nil, err)
+		return
+	}
+	resp := &chunkdv1.LogResponse{}
+	for _, v := range vs {
+		vi := &chunkdv1.VersionInfo{Version: v.V, Size: v.Size, ChunkCount: int32(len(v.Chunks)), Tombstone: v.Tombstone}
+		if !v.Tombstone {
+			vi.Sha256 = v.SHA256[:]
+		}
+		resp.Versions = append(resp.Versions, vi)
 	}
 	respond(wire.Marshal(resp), nil)
 }

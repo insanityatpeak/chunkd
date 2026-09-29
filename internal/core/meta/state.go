@@ -51,6 +51,8 @@ type Upload struct {
 	// only for uploads begun before claims existed.
 	Claims  bool
 	Claimed map[int]iface.ChunkID
+	// LWW commits over whatever version is live instead of comparing.
+	LWW bool
 }
 
 // ChunkInfo is the durable record of a chunk. Refcount counts references
@@ -133,7 +135,7 @@ func (s *State) Validate(op *chunkdv1.Op) error {
 				return iface.Errorf(iface.CodeInvalid, "chunk %d has no replicas", i)
 			}
 		}
-		if live := s.liveVersion(b.GetPath()); live != b.GetExpectedVersion() {
+		if live := s.liveVersion(b.GetPath()); live != b.GetExpectedVersion() && !b.GetLastWriterWins() {
 			return iface.Errorf(iface.CodeConflict, "%s is at version %d, expected %d", b.GetPath(), live, b.GetExpectedVersion())
 		}
 	case *chunkdv1.Op_Commit:
@@ -161,7 +163,7 @@ func (s *State) Validate(op *chunkdv1.Op) error {
 			}
 		}
 		// Rechecked here: another writer may have committed since Begin.
-		if live := s.liveVersion(u.Path); live != u.Expected {
+		if live := s.liveVersion(u.Path); live != u.Expected && !u.LWW {
 			return iface.Errorf(iface.CodeConflict, "%s moved to version %d since upload began at %d", u.Path, live, u.Expected)
 		}
 	case *chunkdv1.Op_Claim:
@@ -212,7 +214,7 @@ func (s *State) Apply(op *chunkdv1.Op) Result {
 	case *chunkdv1.Op_Begin:
 		b := o.Begin
 		s.lastUploadID++
-		u := &Upload{ID: s.lastUploadID, Path: b.GetPath(), Expected: b.GetExpectedVersion(), Size: b.GetSize(), ChunkSize: int(b.GetChunkSize()), Claims: b.GetClaims(), Claimed: map[int]iface.ChunkID{}}
+		u := &Upload{ID: s.lastUploadID, Path: b.GetPath(), Expected: b.GetExpectedVersion(), Size: b.GetSize(), ChunkSize: int(b.GetChunkSize()), Claims: b.GetClaims(), Claimed: map[int]iface.ChunkID{}, LWW: b.GetLastWriterWins()}
 		for _, r := range b.GetPlacement() {
 			nodes := make([]iface.NodeID, len(r.GetNodes()))
 			for i, n := range r.GetNodes() {
@@ -315,6 +317,33 @@ func (s *State) Stat(p string) (Version, error) {
 	return vs[len(vs)-1], nil
 }
 
+// StatVersion returns version v of p; 0 is the live version. A tombstone
+// is not a readable version.
+func (s *State) StatVersion(p string, v uint64) (Version, error) {
+	if v == 0 {
+		return s.Stat(p)
+	}
+	if f := s.files[p]; f != nil {
+		if i, ok := slices.BinarySearchFunc(f.Versions, v, func(x Version, v uint64) int { return cmp.Compare(x.V, v) }); ok {
+			if f.Versions[i].Tombstone {
+				return Version{}, iface.Errorf(iface.CodeNotFound, "%s version %d is a delete marker", p, v)
+			}
+			return f.Versions[i], nil
+		}
+	}
+	return Version{}, iface.Errorf(iface.CodeNotFound, "%s version %d", p, v)
+}
+
+// Log returns every retained version of p, tombstones included, oldest
+// first.
+func (s *State) Log(p string) ([]Version, error) {
+	f := s.files[p]
+	if f == nil || len(f.Versions) == 0 {
+		return nil, iface.Errorf(iface.CodeNotFound, "%s", p)
+	}
+	return slices.Clone(f.Versions), nil
+}
+
 // Entry is one line of a listing.
 type Entry struct {
 	Path string
@@ -409,7 +438,7 @@ func (s *State) Snapshot() []byte {
 	}
 	for _, id := range slices.Sorted(maps.Keys(s.uploads)) {
 		u := s.uploads[id]
-		b := &chunkdv1.BeginUploadOp{Path: u.Path, ExpectedVersion: u.Expected, Size: u.Size, ChunkSize: int32(u.ChunkSize), Claims: u.Claims}
+		b := &chunkdv1.BeginUploadOp{Path: u.Path, ExpectedVersion: u.Expected, Size: u.Size, ChunkSize: int32(u.ChunkSize), Claims: u.Claims, LastWriterWins: u.LWW}
 		for _, r := range u.Placement {
 			rep := &chunkdv1.Replicas{}
 			for _, n := range r {
@@ -466,7 +495,7 @@ func Restore(data []byte) (*State, error) {
 	}
 	for _, u := range snap.GetUploads() {
 		b := u.GetBegin()
-		up := &Upload{ID: u.GetId(), Path: b.GetPath(), Expected: b.GetExpectedVersion(), Size: b.GetSize(), ChunkSize: int(b.GetChunkSize()), Claims: b.GetClaims(), Claimed: map[int]iface.ChunkID{}}
+		up := &Upload{ID: u.GetId(), Path: b.GetPath(), Expected: b.GetExpectedVersion(), Size: b.GetSize(), ChunkSize: int(b.GetChunkSize()), Claims: b.GetClaims(), Claimed: map[int]iface.ChunkID{}, LWW: b.GetLastWriterWins()}
 		for _, r := range b.GetPlacement() {
 			var nodes []iface.NodeID
 			for _, n := range r.GetNodes() {

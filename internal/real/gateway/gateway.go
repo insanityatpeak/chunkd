@@ -21,9 +21,10 @@ const (
 
 // Handler serves:
 //
-//	POST   /files/{path}            upload (Content-Length required); ?expected=N for compare-and-swap, else overwrite
-//	GET    /files/{path}            download, verified chunk by chunk
-//	GET    /files/{path}?manifest=1 metadata and chunk layout
+//	POST   /files/{path}            upload (Content-Length required); ?expected=N for compare-and-swap, ?lww=1 for last writer wins, else overwrite
+//	GET    /files/{path}            download, verified chunk by chunk; ?version=N for an older version
+//	GET    /files/{path}?manifest=1 metadata and chunk layout; ?version=N
+//	GET    /files/{path}?log=1      every retained version, oldest first
 //	GET    /files?prefix=/p         list
 //	DELETE /files/{path}            tombstone; ?expected=N
 //	GET    /cluster                 nodes, health, copies; ?events_after=N
@@ -50,8 +51,8 @@ func (h *handler) put(w http.ResponseWriter, r *http.Request) {
 		writeError(w, iface.Errorf(iface.CodeInvalid, "Content-Length required: placement needs the size up front"), http.StatusLengthRequired)
 		return
 	}
-	opts := client.PutOptions{Overwrite: true}
-	if e := r.URL.Query().Get("expected"); e != "" {
+	opts := client.PutOptions{Overwrite: true, LastWriterWins: r.URL.Query().Get("lww") == "1"}
+	if e := r.URL.Query().Get("expected"); e != "" && !opts.LastWriterWins {
 		v, err := strconv.ParseUint(e, 10, 64)
 		if err != nil {
 			writeError(w, iface.Errorf(iface.CodeInvalid, "bad expected version %q", e), 0)
@@ -81,8 +82,26 @@ func (s streamWriter) SetManifest(m client.Manifest) {
 func (s streamWriter) Write(p []byte) (int, error) { return s.w.Write(p) }
 
 func (h *handler) get(w http.ResponseWriter, r *http.Request) {
+	if r.URL.Query().Has("log") {
+		vs, err := h.api.Log(r.Context(), filePath(r))
+		if err != nil {
+			writeError(w, err, 0)
+			return
+		}
+		writeJSON(w, http.StatusOK, vs)
+		return
+	}
+	var version uint64
+	if e := r.URL.Query().Get("version"); e != "" {
+		v, err := strconv.ParseUint(e, 10, 64)
+		if err != nil {
+			writeError(w, iface.Errorf(iface.CodeInvalid, "bad version %q", e), 0)
+			return
+		}
+		version = v
+	}
 	if r.URL.Query().Has("manifest") {
-		m, err := h.api.Stat(r.Context(), filePath(r))
+		m, err := h.api.StatVersion(r.Context(), filePath(r), version)
 		if err != nil {
 			writeError(w, err, 0)
 			return
@@ -90,7 +109,7 @@ func (h *handler) get(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusOK, m)
 		return
 	}
-	_, err := h.api.Get(r.Context(), filePath(r), streamWriter{w})
+	_, err := h.api.GetVersion(r.Context(), filePath(r), version, streamWriter{w})
 	if err == nil {
 		return
 	}

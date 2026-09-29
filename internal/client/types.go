@@ -131,6 +131,19 @@ type PutOptions struct {
 	ExpectedVersion uint64
 	// Overwrite replaces whatever version is live (read, then compare-and-swap).
 	Overwrite bool
+	// LastWriterWins commits over whatever is live at commit time, with no
+	// version check. A concurrent update is silently lost (ADR-0014).
+	LastWriterWins bool
+}
+
+// VersionInfo is one entry of a file's history.
+type VersionInfo struct {
+	Version uint64 `json:"version"`
+	Size    int64  `json:"size"`
+	SHA256  string `json:"sha256,omitempty"`
+	Chunks  int    `json:"chunks"`
+	// Deleted marks a tombstone: the path reads as not found from here on.
+	Deleted bool `json:"deleted,omitempty"`
 }
 
 // API is implemented by the direct client and the HTTP gateway client.
@@ -142,6 +155,12 @@ type API interface {
 	Stat(ctx context.Context, path string) (Manifest, error)
 	List(ctx context.Context, prefix string) ([]FileInfo, error)
 	Delete(ctx context.Context, path string, expectedVersion uint64) (uint64, error)
+	// Log returns every retained version of path, oldest first.
+	Log(ctx context.Context, path string) ([]VersionInfo, error)
+	// StatVersion is Stat for a given version; 0 is the live one.
+	StatVersion(ctx context.Context, path string, version uint64) (Manifest, error)
+	// GetVersion is Get for a given version; 0 is the live one.
+	GetVersion(ctx context.Context, path string, version uint64, w io.Writer) (Manifest, error)
 	// Cluster returns the cluster view with timeline events after eventsAfter.
 	Cluster(ctx context.Context, eventsAfter uint64) (Cluster, error)
 }

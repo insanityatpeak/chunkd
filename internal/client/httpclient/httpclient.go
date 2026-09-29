@@ -74,7 +74,10 @@ func (c *Client) do(ctx context.Context, method, u string, body io.Reader, size 
 // Put streams r to the gateway.
 func (c *Client) Put(ctx context.Context, path string, r io.Reader, size int64, opts client.PutOptions) (client.Manifest, error) {
 	q := url.Values{}
-	if !opts.Overwrite {
+	switch {
+	case opts.LastWriterWins:
+		q.Set("lww", "1")
+	case !opts.Overwrite:
 		q.Set("expected", strconv.FormatUint(opts.ExpectedVersion, 10))
 	}
 	var m client.Manifest
@@ -84,19 +87,46 @@ func (c *Client) Put(ctx context.Context, path string, r io.Reader, size int64, 
 
 // Stat fetches the manifest.
 func (c *Client) Stat(ctx context.Context, path string) (client.Manifest, error) {
+	return c.StatVersion(ctx, path, 0)
+}
+
+// StatVersion fetches the manifest of one version; 0 is the live one.
+func (c *Client) StatVersion(ctx context.Context, path string, version uint64) (client.Manifest, error) {
 	var m client.Manifest
-	_, err := c.do(ctx, http.MethodGet, c.url(filesURL(path), url.Values{"manifest": {"1"}}), nil, 0, &m)
+	_, err := c.do(ctx, http.MethodGet, c.url(filesURL(path), versionQuery(version, url.Values{"manifest": {"1"}})), nil, 0, &m)
 	return m, err
+}
+
+func versionQuery(version uint64, q url.Values) url.Values {
+	if version != 0 {
+		if q == nil {
+			q = url.Values{}
+		}
+		q.Set("version", strconv.FormatUint(version, 10))
+	}
+	return q
+}
+
+// Log returns every retained version of path.
+func (c *Client) Log(ctx context.Context, path string) ([]client.VersionInfo, error) {
+	var out []client.VersionInfo
+	_, err := c.do(ctx, http.MethodGet, c.url(filesURL(path), url.Values{"log": {"1"}}), nil, 0, &out)
+	return out, err
 }
 
 // Get fetches the manifest, then the bytes, and verifies each chunk against
 // the manifest's hash and the whole file against its SHA-256.
 func (c *Client) Get(ctx context.Context, path string, w io.Writer) (client.Manifest, error) {
-	m, err := c.Stat(ctx, path)
+	return c.GetVersion(ctx, path, 0, w)
+}
+
+// GetVersion is Get for one version; 0 is the live one.
+func (c *Client) GetVersion(ctx context.Context, path string, version uint64, w io.Writer) (client.Manifest, error) {
+	m, err := c.StatVersion(ctx, path, version)
 	if err != nil {
 		return m, err
 	}
-	resp, err := c.do(ctx, http.MethodGet, c.url(filesURL(path), nil), nil, 0, nil)
+	resp, err := c.do(ctx, http.MethodGet, c.url(filesURL(path), versionQuery(version, nil)), nil, 0, nil)
 	if err != nil {
 		return m, err
 	}

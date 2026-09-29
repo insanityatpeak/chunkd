@@ -87,7 +87,7 @@ const metaAttempts = 6
 // keeps a window of packets in flight so disk and network overlap.
 func (c *Direct) Put(ctx context.Context, path string, r io.Reader, size int64, opts PutOptions) (Manifest, error) {
 	expected := opts.ExpectedVersion
-	if opts.Overwrite {
+	if opts.Overwrite && !opts.LastWriterWins {
 		expected = 0
 		st, err := c.Stat(ctx, path)
 		switch {
@@ -98,7 +98,7 @@ func (c *Direct) Put(ctx context.Context, path string, r io.Reader, size int64, 
 		}
 	}
 	var begin chunkdv1.BeginUploadResponse
-	if err := c.meta(ctx, wire.KindBegin, &chunkdv1.BeginUploadRequest{Path: path, ExpectedVersion: expected, Size: size}, &begin); err != nil {
+	if err := c.meta(ctx, wire.KindBegin, &chunkdv1.BeginUploadRequest{Path: path, ExpectedVersion: expected, Size: size, LastWriterWins: opts.LastWriterWins}, &begin); err != nil {
 		return Manifest{}, err
 	}
 	m, err := c.upload(ctx, path, r, size, &begin)
@@ -201,8 +201,13 @@ func (c *Direct) putChunk(ctx context.Context, ch chunk.Chunk, pl *chunkdv1.Chun
 
 // Stat returns the live version of path and where its chunks are.
 func (c *Direct) Stat(ctx context.Context, path string) (Manifest, error) {
+	return c.StatVersion(ctx, path, 0)
+}
+
+// StatVersion returns one version of path; 0 is the live one.
+func (c *Direct) StatVersion(ctx context.Context, path string, version uint64) (Manifest, error) {
 	var st chunkdv1.StatResponse
-	if err := c.meta(ctx, wire.KindStat, &chunkdv1.StatRequest{Path: path}, &st); err != nil {
+	if err := c.meta(ctx, wire.KindStat, &chunkdv1.StatRequest{Path: path, Version: version}, &st); err != nil {
 		return Manifest{}, err
 	}
 	m := manifest(&st)
@@ -231,8 +236,30 @@ func chunkRef(i int, loc *chunkdv1.ChunkLocation) ChunkRef {
 // against its recorded SHA-256. A replica with bad data is skipped and the
 // next one tried.
 func (c *Direct) Get(ctx context.Context, path string, w io.Writer) (Manifest, error) {
+	return c.GetVersion(ctx, path, 0, w)
+}
+
+// Log returns every retained version of path.
+func (c *Direct) Log(ctx context.Context, path string) ([]VersionInfo, error) {
+	var resp chunkdv1.LogResponse
+	if err := c.meta(ctx, wire.KindLog, &chunkdv1.LogRequest{Path: path}, &resp); err != nil {
+		return nil, err
+	}
+	out := make([]VersionInfo, 0, len(resp.GetVersions()))
+	for _, v := range resp.GetVersions() {
+		vi := VersionInfo{Version: v.GetVersion(), Size: v.GetSize(), Chunks: int(v.GetChunkCount()), Deleted: v.GetTombstone()}
+		if !vi.Deleted {
+			vi.SHA256 = hex.EncodeToString(v.GetSha256())
+		}
+		out = append(out, vi)
+	}
+	return out, nil
+}
+
+// GetVersion downloads one version of path; 0 is the live one.
+func (c *Direct) GetVersion(ctx context.Context, path string, version uint64, w io.Writer) (Manifest, error) {
 	var st chunkdv1.StatResponse
-	if err := c.meta(ctx, wire.KindStat, &chunkdv1.StatRequest{Path: path}, &st); err != nil {
+	if err := c.meta(ctx, wire.KindStat, &chunkdv1.StatRequest{Path: path, Version: version}, &st); err != nil {
 		return Manifest{}, err
 	}
 	m := manifest(&st)
