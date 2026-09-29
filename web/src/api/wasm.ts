@@ -88,6 +88,11 @@ export class WasmClusterAPI implements ClusterAPI {
     await this.call('scenario', [node, downMs]);
   }
 
+  async rot(node: string, n: number): Promise<number> {
+    const r = (await this.call('rot', [node, n])) as { rotted: number };
+    return r.rotted;
+  }
+
   dispose() {
     this.worker.terminate();
     this.subs.clear();

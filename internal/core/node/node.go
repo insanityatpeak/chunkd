@@ -346,8 +346,10 @@ func (n *Node) heartbeat() {
 		n.d.Log.Error("usage", "err", err)
 	}
 	n.stats.Heartbeats++
+	sc := n.scrub.Stats()
 	hb := &chunkdv1.Heartbeat{Node: string(n.cfg.ID), Rack: n.cfg.Rack, Addr: n.cfg.Addr,
-		UsedBytes: u.Bytes, ChunkCount: u.Chunks, Draining: n.cfg.Draining, Seq: n.stats.Heartbeats, Incarnation: n.incarnation}
+		UsedBytes: u.Bytes, ChunkCount: u.Chunks, Draining: n.cfg.Draining, Seq: n.stats.Heartbeats, Incarnation: n.incarnation,
+		Corrupt: n.corrupt.Load(), ScrubDone: int64(sc.Done), ScrubTotal: int64(sc.Total), ScrubPasses: sc.Passes}
 	n.d.Net.Send(n.cfg.Meta, iface.Message{From: n.cfg.ID, Kind: wire.KindHeartbeat, Body: wire.Marshal(hb)})
 	n.d.Clock.AfterFunc(n.cfg.Heartbeat, n.heartbeat)
 }

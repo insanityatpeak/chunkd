@@ -36,7 +36,7 @@ export function EventTimeline({ view, sim }: { view: ClusterView; sim: boolean }
 
 function tone(text: string): string {
   if (/→ dead|timed out|failed/.test(text)) return 'bad';
-  if (/→ suspect/.test(text)) return 'warn';
+  if (/→ suspect|re-check/.test(text)) return 'warn';
   if (/→ alive|completed|joined/.test(text)) return 'good';
   return '';
 }

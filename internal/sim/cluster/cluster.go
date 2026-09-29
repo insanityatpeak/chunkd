@@ -65,6 +65,7 @@ type Cluster struct {
 	// not; badReads are successful reads that returned anything else.
 	written  map[string][][32]byte
 	badReads []error
+	rotPick  uint64
 }
 
 // Node is one simulated storage node.
@@ -121,6 +122,39 @@ func (c *Cluster) RestartNode(id iface.NodeID) {
 	nd.Stop()
 	c.net.Restart(id)
 	c.startNode(id, nd)
+}
+
+// demoFiles uploads 8 files of 5 MiB if the cluster holds none.
+func (c *Cluster) demoFiles() error {
+	if len(c.meta.State().List("/")) > 0 {
+		return nil
+	}
+	for i := range 8 {
+		if _, _, err := c.UploadRandom(fmt.Sprintf("/demo/file-%d.bin", i), 5<<20); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+// ScriptRot is the dashboard's scripted bit rot: load the demo files if the
+// cluster holds none, then flip bytes in n chunks on id's disk, only where
+// two intact copies remain elsewhere. Nobody is told: the scrubber or a
+// reader must find them. Returns the rotted chunks.
+func (c *Cluster) ScriptRot(id iface.NodeID, n int) ([]iface.ChunkID, error) {
+	if err := c.demoFiles(); err != nil {
+		return nil, err
+	}
+	c.rotPick += 7919 // a different window of chunks each time, same for a seed
+	return c.RotNode(id, n, c.rotPick, func(ch iface.ChunkID) bool {
+		intact := 0
+		for _, o := range c.nodes {
+			if o.ID() != id && c.Intact(o.ID(), ch) {
+				intact++
+			}
+		}
+		return intact >= 2
+	}), nil
 }
 
 // RotNode flips a byte in up to n chunks on a node's disk, as bit rot
@@ -212,12 +246,8 @@ func (c *Cluster) NewCaller(id iface.NodeID) *sim.Caller {
 // (10 s) plus the repair delay (20 s), the timeline shows suspect, dead,
 // re-replication to RF 3, the node's return and the trims.
 func (c *Cluster) ScriptKillNode(id iface.NodeID, down time.Duration) error {
-	if len(c.meta.State().List("/")) == 0 {
-		for i := range 8 {
-			if _, _, err := c.UploadRandom(fmt.Sprintf("/demo/file-%d.bin", i), 5<<20); err != nil {
-				return err
-			}
-		}
+	if err := c.demoFiles(); err != nil {
+		return err
 	}
 	c.KillNode(id)
 	c.clock.AfterFunc(down, func() {

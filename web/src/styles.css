@@ -591,3 +591,13 @@ table.copies {
   color: var(--bad);
   font-weight: 600;
 }
+
+svg text.scrub .corrupt,
+svg tspan.corrupt {
+  fill: var(--bad);
+  font-weight: 600;
+}
+
+.ev.corrupt .ev-text {
+  color: var(--bad);
+}

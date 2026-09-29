@@ -117,6 +117,11 @@ export class HttpClusterAPI implements ClusterAPI {
   scenario(_node: string, _downMs: number): Promise<void> {
     return Promise.reject(new ChunkdError('scripted faults run in the simulation only; use docker compose kill', 'unimplemented'));
   }
+  rot(_node: string, _n: number): Promise<number> {
+    return Promise.reject(
+      new ChunkdError('scripted faults run in the simulation only; use docker compose exec node-N chunkd debug corrupt', 'unimplemented'),
+    );
+  }
 
   dispose() {
     clearInterval(this.timer);

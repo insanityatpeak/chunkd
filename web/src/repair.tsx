@@ -19,6 +19,7 @@ export function Replication({ view }: { view: ClusterView }) {
           <Stat label={`below RF ${rf}`} value={h.underReplicated} bad={h.underReplicated > 0} />
           <Stat label="above RF" value={h.overReplicated} />
           <Stat label="no live copy" value={h.lost} bad={h.lost > 0} />
+          <Stat label="corrupt copies found" value={h.corruptReplicas ?? 0} />
         </dl>
         <figure class="histogram">
           <figcaption>Chunks by copies on alive nodes</figcaption>

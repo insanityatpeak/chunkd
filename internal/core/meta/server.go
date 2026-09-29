@@ -151,7 +151,8 @@ func (s *Server) handle(m iface.Message) {
 		}
 		id := iface.NodeID(hb.GetNode())
 		tr, changed, need := s.cluster.Heartbeat(NodeState{ID: id, Rack: hb.GetRack(), Addr: hb.GetAddr(), Used: hb.GetUsedBytes(),
-			Chunks: hb.GetChunkCount(), Draining: hb.GetDraining()}, detector.Beat{Incarnation: hb.GetIncarnation(), Seq: hb.GetSeq()}, s.d.Clock.Now())
+			Chunks: hb.GetChunkCount(), Draining: hb.GetDraining(), Corrupt: hb.GetCorrupt(), ScrubDone: hb.GetScrubDone(),
+			ScrubTotal: hb.GetScrubTotal(), ScrubPasses: hb.GetScrubPasses()}, detector.Beat{Incarnation: hb.GetIncarnation(), Seq: hb.GetSeq()}, s.d.Clock.Now())
 		if changed {
 			s.transition(tr)
 			s.repair.Scan()
@@ -413,7 +414,8 @@ func (s *Server) ClusterView(eventsAfter uint64) *chunkdv1.ClusterResponse {
 	for _, n := range s.cluster.Nodes() {
 		resp.Nodes = append(resp.Nodes, &chunkdv1.NodeInfo{Id: string(n.ID), Rack: n.Rack, Addr: n.Addr, UsedBytes: n.Used,
 			ChunkCount: n.Chunks, Alive: s.cluster.Alive(n.ID), Draining: n.Draining, State: n.State.String(),
-			HeartbeatAgeMs: int64(now.Sub(n.LastSeen) / time.Millisecond)})
+			HeartbeatAgeMs: int64(now.Sub(n.LastSeen) / time.Millisecond), Corrupt: n.Corrupt, ScrubDone: n.ScrubDone,
+			ScrubTotal: n.ScrubTotal, ScrubPasses: n.ScrubPasses})
 	}
 	for _, e := range s.state.List("/") {
 		resp.Files++

@@ -19,8 +19,12 @@ type NodeState struct {
 	Used     int64
 	Chunks   int64
 	Draining bool
-	State    detector.State
-	LastSeen iface.Instant
+	// Integrity counters from the node's heartbeats.
+	Corrupt               uint64
+	ScrubDone, ScrubTotal int64
+	ScrubPasses           uint64
+	State                 detector.State
+	LastSeen              iface.Instant
 	// DeadSince is when the detector declared the node dead; repair waits
 	// a delay from here before replacing its replicas.
 	DeadSince iface.Instant
@@ -87,6 +91,7 @@ func (c *Cluster) Heartbeat(hb NodeState, b detector.Beat, now iface.Instant) (t
 		c.nodes[hb.ID] = n
 	}
 	n.Rack, n.Addr, n.Used, n.Chunks, n.Draining = hb.Rack, hb.Addr, hb.Used, hb.Chunks, hb.Draining
+	n.Corrupt, n.ScrubDone, n.ScrubTotal, n.ScrubPasses = hb.Corrupt, hb.ScrubDone, hb.ScrubTotal, hb.ScrubPasses
 	n.Incarnation = b.Incarnation
 	tr, changed = c.det.Observe(hb.ID, b, now)
 	if changed {

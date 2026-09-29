@@ -20,6 +20,7 @@ interface ChunkdGlobal {
   crash(node: string): void;
   restart(node: string): void;
   scenario(node: string, downMs: number): string;
+  rot(node: string, n: number): string;
 }
 
 // SimState is cluster.State in Go; events arrive incrementally by seq.
@@ -104,6 +105,8 @@ function call(method: Method, args: unknown[]): { value: unknown; transfer: Tran
       return { value: null, transfer: [] };
     case 'scenario':
       return { value: parse(api.scenario(a, args[1] as number)), transfer: [] };
+    case 'rot':
+      return { value: parse(api.rot(a, args[1] as number)), transfer: [] };
   }
 }
 

@@ -186,6 +186,12 @@ message NodeInfo {
   // Detector state: alive, suspect or dead (ADR-0010).
   string state = 8;
   int64 heartbeat_age_ms = 9;
+  // From the node's heartbeats: copies it quarantined since it started,
+  // and its scrub progress.
+  uint64 corrupt = 10;
+  int64 scrub_done = 11;
+  int64 scrub_total = 12;
+  uint64 scrub_passes = 13;
 }
 
 // SuspectRequest: a client received bytes for chunk_id from node that did

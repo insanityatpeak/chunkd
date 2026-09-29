@@ -391,7 +391,8 @@ func ClusterFromProto(resp *chunkdv1.ClusterResponse) Cluster {
 		Nodes: []NodeInfo{}, FileHealth: []FileHealth{}, Copies: []RepairCopy{}, Events: []Event{}}
 	for _, n := range resp.GetNodes() {
 		out.Nodes = append(out.Nodes, NodeInfo{ID: n.GetId(), Rack: n.GetRack(), Alive: n.GetAlive(), State: n.GetState(), Draining: n.GetDraining(),
-			UsedBytes: n.GetUsedBytes(), Chunks: n.GetChunkCount(), HeartbeatAgeMs: n.GetHeartbeatAgeMs()})
+			UsedBytes: n.GetUsedBytes(), Chunks: n.GetChunkCount(), HeartbeatAgeMs: n.GetHeartbeatAgeMs(),
+			Corrupt: n.GetCorrupt(), ScrubDone: n.GetScrubDone(), ScrubTotal: n.GetScrubTotal(), ScrubPasses: n.GetScrubPasses()})
 	}
 	h := resp.GetHealth()
 	out.Health = Health{Chunks: h.GetChunks(), UnderReplicated: h.GetUnderReplicated(), OverReplicated: h.GetOverReplicated(), Lost: h.GetLost(),

@@ -14,6 +14,10 @@ const SPEEDS = [1, 5, 10, 25, 50].map((x) => ({ label: `${x}×`, simMsPerSec: x 
 // after it returns.
 const SCRIPT_NODE = 'node-3';
 const SCRIPT_DOWN_MS = 90_000;
+// Bit rot nobody is told about: the scrubber (a pass every 10 simulated
+// minutes, about 12 s at 50×) or a reader finds it.
+const ROT_NODE = 'node-2';
+const ROT_CHUNKS = 3;
 
 const params = new URLSearchParams(location.search);
 
@@ -64,6 +68,10 @@ export function App() {
     setError(null);
     api.scenario(SCRIPT_NODE, SCRIPT_DOWN_MS).catch((e: Error) => setError(e.message));
   };
+  const runRot = () => {
+    setError(null);
+    api.rot(ROT_NODE, ROT_CHUNKS).catch((e: Error) => setError(e.message));
+  };
 
   return (
     <main>
@@ -101,6 +109,9 @@ export function App() {
           </span>
           <button type="button" class="script" onClick={runScript} title={`Kill ${SCRIPT_NODE}, restart it after ${SCRIPT_DOWN_MS / 1000} s`}>
             Run scenario: kill {SCRIPT_NODE}
+          </button>
+          <button type="button" class="script" onClick={runRot} title={`Flip bytes in ${ROT_CHUNKS} chunks on ${ROT_NODE}'s disk without telling anyone`}>
+            Rot {ROT_CHUNKS} chunks on {ROT_NODE}
           </button>
         </section>
       )}

@@ -4,7 +4,7 @@ import { formatBytes } from './verify';
 const W = 760;
 const META_W = 200;
 const NODE_W = 132;
-const NODE_H = 112;
+const NODE_H = 128;
 const META_Y = 12;
 const NODE_Y = 150;
 
@@ -65,8 +65,13 @@ export function ClusterView({ view, sim, onToggle }: Props) {
             <text class={`sub hb ${status(n)}`} x="10" y="86">
               heartbeat {formatAge(n.heartbeatAgeMs)} ago
             </text>
-            <rect class="bar-bg" x="10" y="96" width={NODE_W - 20} height="6" rx="3" />
-            <rect class="bar" x="10" y="96" width={((NODE_W - 20) * n.usedBytes) / maxUsed} height="6" rx="3" />
+            <text class="sub scrub" x="10" y="104">
+              <title>Scrub pass progress; copies quarantined after failing verification</title>
+              scrub {scrubPct(n)}
+              {n.corrupt ? <tspan class="corrupt"> · {n.corrupt} bad</tspan> : null}
+            </text>
+            <rect class="bar-bg" x="10" y="114" width={NODE_W - 20} height="6" rx="3" />
+            <rect class="bar" x="10" y="114" width={((NODE_W - 20) * n.usedBytes) / maxUsed} height="6" rx="3" />
             <text class={`state ${status(n)}`} x={NODE_W / 2} y={NODE_H + 18} text-anchor="middle">
               {n.crashed ? `process down · ${n.state}` : n.state}
             </text>
@@ -99,6 +104,11 @@ function status(n: NodeView): Status {
   // crashed process still shows as alive there, so mark it.
   if (n.crashed && n.state === 'alive') return 'crashed';
   return n.state;
+}
+
+function scrubPct(n: NodeView): string {
+  if (!n.scrubTotal) return n.scrubPasses ? 'idle' : 'not started';
+  return `${Math.floor((100 * (n.scrubDone ?? 0)) / n.scrubTotal)}%`;
 }
 
 function formatAge(ms: number): string {

@@ -4,7 +4,7 @@ import type { ClusterView } from './cluster';
 // state sequence depends on the seed alone, never on frame timing.
 export const STEP_MS = 50;
 
-export type Method = 'upload' | 'download' | 'stat' | 'remove' | 'crash' | 'restart' | 'scenario';
+export type Method = 'upload' | 'download' | 'stat' | 'remove' | 'crash' | 'restart' | 'scenario' | 'rot';
 
 export type ToWorker =
   | { type: 'start'; seed: number; baseUrl: string }

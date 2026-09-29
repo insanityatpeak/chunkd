@@ -33,7 +33,13 @@ type Heartbeat struct {
 	Draining   bool   `protobuf:"varint,6,opt,name=draining,proto3" json:"draining,omitempty"`
 	Seq        uint64 `protobuf:"varint,7,opt,name=seq,proto3" json:"seq,omitempty"`
 	// Random per process start; seq restarts at 1 with each incarnation.
-	Incarnation   uint64 `protobuf:"varint,8,opt,name=incarnation,proto3" json:"incarnation,omitempty"`
+	Incarnation uint64 `protobuf:"varint,8,opt,name=incarnation,proto3" json:"incarnation,omitempty"`
+	// Integrity, for the cluster view: chunks quarantined by this process,
+	// and the current scrub pass's progress in chunks.
+	Corrupt       uint64 `protobuf:"varint,9,opt,name=corrupt,proto3" json:"corrupt,omitempty"`
+	ScrubDone     int64  `protobuf:"varint,10,opt,name=scrub_done,json=scrubDone,proto3" json:"scrub_done,omitempty"`
+	ScrubTotal    int64  `protobuf:"varint,11,opt,name=scrub_total,json=scrubTotal,proto3" json:"scrub_total,omitempty"`
+	ScrubPasses   uint64 `protobuf:"varint,12,opt,name=scrub_passes,json=scrubPasses,proto3" json:"scrub_passes,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -120,6 +126,34 @@ func (x *Heartbeat) GetSeq() uint64 {
 func (x *Heartbeat) GetIncarnation() uint64 {
 	if x != nil {
 		return x.Incarnation
+	}
+	return 0
+}
+
+func (x *Heartbeat) GetCorrupt() uint64 {
+	if x != nil {
+		return x.Corrupt
+	}
+	return 0
+}
+
+func (x *Heartbeat) GetScrubDone() int64 {
+	if x != nil {
+		return x.ScrubDone
+	}
+	return 0
+}
+
+func (x *Heartbeat) GetScrubTotal() int64 {
+	if x != nil {
+		return x.ScrubTotal
+	}
+	return 0
+}
+
+func (x *Heartbeat) GetScrubPasses() uint64 {
+	if x != nil {
+		return x.ScrubPasses
 	}
 	return 0
 }
@@ -699,7 +733,7 @@ var File_chunkd_v1_node_proto protoreflect.FileDescriptor
 
 const file_chunkd_v1_node_proto_rawDesc = "" +
 	"\n" +
-	"\x14chunkd/v1/node.proto\x12\tchunkd.v1\"\xd7\x01\n" +
+	"\x14chunkd/v1/node.proto\x12\tchunkd.v1\"\xd4\x02\n" +
 	"\tHeartbeat\x12\x12\n" +
 	"\x04node\x18\x01 \x01(\tR\x04node\x12\x12\n" +
 	"\x04rack\x18\x02 \x01(\tR\x04rack\x12\x12\n" +
@@ -710,7 +744,14 @@ const file_chunkd_v1_node_proto_rawDesc = "" +
 	"chunkCount\x12\x1a\n" +
 	"\bdraining\x18\x06 \x01(\bR\bdraining\x12\x10\n" +
 	"\x03seq\x18\a \x01(\x04R\x03seq\x12 \n" +
-	"\vincarnation\x18\b \x01(\x04R\vincarnation\"J\n" +
+	"\vincarnation\x18\b \x01(\x04R\vincarnation\x12\x18\n" +
+	"\acorrupt\x18\t \x01(\x04R\acorrupt\x12\x1d\n" +
+	"\n" +
+	"scrub_done\x18\n" +
+	" \x01(\x03R\tscrubDone\x12\x1f\n" +
+	"\vscrub_total\x18\v \x01(\x03R\n" +
+	"scrubTotal\x12!\n" +
+	"\fscrub_passes\x18\f \x01(\x04R\vscrubPasses\"J\n" +
 	"\fHeartbeatAck\x12\x10\n" +
 	"\x03seq\x18\x01 \x01(\x04R\x03seq\x12(\n" +
 	"\x10need_full_report\x18\x02 \x01(\bR\x0eneedFullReport\"\xc8\x01\n" +

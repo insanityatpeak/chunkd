@@ -72,3 +72,48 @@ func TestDashboardTimeline(t *testing.T) {
 		t.Errorf("%d events after the latest seq", len(got))
 	}
 }
+
+// TestDashboardRotScript is the dashboard's "rot 3 chunks on node-2"
+// script: nobody is told, the scrubber finds all three within one pass,
+// and the state shows the count, the events and RF restored.
+func TestDashboardRotScript(t *testing.T) {
+	c := New(9, DefaultConfig(), io.Discard)
+	c.Tick(3 * time.Second)
+	rotted, err := c.ScriptRot("node-2", 3)
+	if err != nil || len(rotted) != 3 {
+		t.Fatalf("rotted %d, %v", len(rotted), err)
+	}
+	pass := c.node("node-2").Config().Scrub.Pass
+	for i := 0; c.State().Health.CorruptReplicas < 3; i++ {
+		if time.Duration(i)*time.Second > pass+time.Minute {
+			t.Fatalf("found %d of 3 within a pass: %+v", c.State().Health.CorruptReplicas, c.node("node-2").Scrub())
+		}
+		c.Tick(time.Second)
+	}
+	if _, ok := c.Settle(time.Minute); !ok {
+		t.Fatal("RF not restored")
+	}
+	c.Tick(2 * time.Second) // a heartbeat carries the node's count
+	s := c.State()
+	var n2 NodeView
+	for _, n := range s.Nodes {
+		if n.ID == "node-2" {
+			n2 = n
+		}
+	}
+	if n2.Corrupt != 3 || n2.ScrubTotal == 0 {
+		t.Fatalf("node-2 view %+v", n2.NodeInfo)
+	}
+	found := 0
+	for _, e := range s.Events {
+		if e.Kind == "corrupt" && e.Node == "node-2" && strings.Contains(e.Text, "failed verification") {
+			found++
+		}
+	}
+	if found != 3 {
+		t.Fatalf("%d corrupt events for node-2, want 3", found)
+	}
+	if err := c.AssertInvariants(); err != nil {
+		t.Fatal(err)
+	}
+}

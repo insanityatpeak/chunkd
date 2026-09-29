@@ -50,6 +50,12 @@ type NodeInfo struct {
 	Chunks    int64  `json:"chunks"`
 	// HeartbeatAgeMs is the time since the node's last heartbeat.
 	HeartbeatAgeMs int64 `json:"heartbeatAgeMs"`
+	// Corrupt counts copies the node quarantined since it started;
+	// ScrubDone of ScrubTotal is the current scrub pass's progress.
+	Corrupt     uint64 `json:"corrupt"`
+	ScrubDone   int64  `json:"scrubDone"`
+	ScrubTotal  int64  `json:"scrubTotal"`
+	ScrubPasses uint64 `json:"scrubPasses"`
 }
 
 // Health is replication state across all chunks.

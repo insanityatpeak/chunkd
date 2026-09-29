@@ -1666,8 +1666,14 @@ type NodeInfo struct {
 	// Detector state: alive, suspect or dead (ADR-0010).
 	State          string `protobuf:"bytes,8,opt,name=state,proto3" json:"state,omitempty"`
 	HeartbeatAgeMs int64  `protobuf:"varint,9,opt,name=heartbeat_age_ms,json=heartbeatAgeMs,proto3" json:"heartbeat_age_ms,omitempty"`
-	unknownFields  protoimpl.UnknownFields
-	sizeCache      protoimpl.SizeCache
+	// From the node's heartbeats: copies it quarantined since it started,
+	// and its scrub progress.
+	Corrupt       uint64 `protobuf:"varint,10,opt,name=corrupt,proto3" json:"corrupt,omitempty"`
+	ScrubDone     int64  `protobuf:"varint,11,opt,name=scrub_done,json=scrubDone,proto3" json:"scrub_done,omitempty"`
+	ScrubTotal    int64  `protobuf:"varint,12,opt,name=scrub_total,json=scrubTotal,proto3" json:"scrub_total,omitempty"`
+	ScrubPasses   uint64 `protobuf:"varint,13,opt,name=scrub_passes,json=scrubPasses,proto3" json:"scrub_passes,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
 }
 
 func (x *NodeInfo) Reset() {
@@ -1759,6 +1765,34 @@ func (x *NodeInfo) GetState() string {
 func (x *NodeInfo) GetHeartbeatAgeMs() int64 {
 	if x != nil {
 		return x.HeartbeatAgeMs
+	}
+	return 0
+}
+
+func (x *NodeInfo) GetCorrupt() uint64 {
+	if x != nil {
+		return x.Corrupt
+	}
+	return 0
+}
+
+func (x *NodeInfo) GetScrubDone() int64 {
+	if x != nil {
+		return x.ScrubDone
+	}
+	return 0
+}
+
+func (x *NodeInfo) GetScrubTotal() int64 {
+	if x != nil {
+		return x.ScrubTotal
+	}
+	return 0
+}
+
+func (x *NodeInfo) GetScrubPasses() uint64 {
+	if x != nil {
+		return x.ScrubPasses
 	}
 	return 0
 }
@@ -2507,7 +2541,7 @@ const file_chunkd_v1_meta_proto_rawDesc = "" +
 	"\vchunk_count\x18\x05 \x01(\x05R\n" +
 	"chunkCount\"9\n" +
 	"\fListResponse\x12)\n" +
-	"\x05files\x18\x01 \x03(\v2\x13.chunkd.v1.FileInfoR\x05files\"\xf4\x01\n" +
+	"\x05files\x18\x01 \x03(\v2\x13.chunkd.v1.FileInfoR\x05files\"\xf1\x02\n" +
 	"\bNodeInfo\x12\x0e\n" +
 	"\x02id\x18\x01 \x01(\tR\x02id\x12\x12\n" +
 	"\x04rack\x18\x02 \x01(\tR\x04rack\x12\x12\n" +
@@ -2519,7 +2553,14 @@ const file_chunkd_v1_meta_proto_rawDesc = "" +
 	"\x05alive\x18\x06 \x01(\bR\x05alive\x12\x1a\n" +
 	"\bdraining\x18\a \x01(\bR\bdraining\x12\x14\n" +
 	"\x05state\x18\b \x01(\tR\x05state\x12(\n" +
-	"\x10heartbeat_age_ms\x18\t \x01(\x03R\x0eheartbeatAgeMs\"?\n" +
+	"\x10heartbeat_age_ms\x18\t \x01(\x03R\x0eheartbeatAgeMs\x12\x18\n" +
+	"\acorrupt\x18\n" +
+	" \x01(\x04R\acorrupt\x12\x1d\n" +
+	"\n" +
+	"scrub_done\x18\v \x01(\x03R\tscrubDone\x12\x1f\n" +
+	"\vscrub_total\x18\f \x01(\x03R\n" +
+	"scrubTotal\x12!\n" +
+	"\fscrub_passes\x18\r \x01(\x04R\vscrubPasses\"?\n" +
 	"\x0eSuspectRequest\x12\x19\n" +
 	"\bchunk_id\x18\x01 \x01(\fR\achunkId\x12\x12\n" +
 	"\x04node\x18\x02 \x01(\tR\x04node\"\x11\n" +

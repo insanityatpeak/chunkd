@@ -16,6 +16,12 @@ message Heartbeat {
   uint64 seq = 7;
   // Random per process start; seq restarts at 1 with each incarnation.
   uint64 incarnation = 8;
+  // Integrity, for the cluster view: chunks quarantined by this process,
+  // and the current scrub pass's progress in chunks.
+  uint64 corrupt = 9;
+  int64 scrub_done = 10;
+  int64 scrub_total = 11;
+  uint64 scrub_passes = 12;
 }
 
 message HeartbeatAck {

@@ -12,6 +12,7 @@
 //	remove(path)            JSON {version}
 //	crash(node), restart(node)  kill a node's process (disk kept); start a new one
 //	scenario(node, downMs)  load demo files if empty, kill node, restart it after downMs
+//	rot(node, n)            load demo files if empty, flip bytes in n chunks on node's disk
 //
 // Errors come back as {"error": "..."} JSON. The worker only calls tick with
 // a fixed step, so a seed always yields the same state sequence.
@@ -109,6 +110,10 @@ func main() {
 		"restart": needCluster(func(args []js.Value) any {
 			c.RestartNode(iface.NodeID(args[0].String()))
 			return nil
+		}),
+		"rot": needCluster(func(args []js.Value) any {
+			ids, err := c.ScriptRot(iface.NodeID(args[0].String()), args[1].Int())
+			return jsonValue(map[string]int{"rotted": len(ids)}, err)
 		}),
 		"scenario": needCluster(func(args []js.Value) any {
 			err := c.ScriptKillNode(iface.NodeID(args[0].String()), time.Duration(args[1].Int())*time.Millisecond)

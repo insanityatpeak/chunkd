@@ -35,6 +35,12 @@ export interface NodeView {
   alive: boolean;
   state: NodeState;
   heartbeatAgeMs: number;
+  // Integrity, from heartbeats: copies quarantined since the node started,
+  // and the current scrub pass's progress in chunks.
+  corrupt?: number;
+  scrubDone?: number;
+  scrubTotal?: number;
+  scrubPasses?: number;
   crashed?: boolean; // sim only: the process is down
   usedBytes: number;
   chunks: number;
@@ -57,6 +63,7 @@ export interface Health {
   repairTimedOut: number;
   repairFailed: number;
   detectorStalls: number;
+  corruptReplicas?: number;
 }
 
 export interface RepairCopy {
@@ -71,7 +78,7 @@ export interface RepairCopy {
 export interface TimelineEvent {
   seq: number;
   atMs: number;
-  kind: 'node' | 'copy' | 'trim';
+  kind: 'node' | 'copy' | 'trim' | 'corrupt';
   node: string;
   text: string;
 }
@@ -143,6 +150,8 @@ export interface ClusterAPI {
   restart(node: string): void;
   // Scripted failure: load demo files if empty, kill node, restart it after downMs.
   scenario(node: string, downMs: number): Promise<void>;
+  // Scripted bit rot: flip bytes in n chunks on node's disk; nobody is told.
+  rot(node: string, n: number): Promise<number>;
   dispose(): void;
 }
 
