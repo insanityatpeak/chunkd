@@ -13,7 +13,7 @@ Current phase: **2: failure detection and re-replication** (complete)
 - [x] `internal/chaos`: seeded fault schedules with invariant checks and replay; 500 seeds on every push, 20k on demand
 - [x] Real-mode chaos over docker compose: kill past the delay, blip, freeze
 - [x] Dashboard: detector state and heartbeat age, per-file replication, repair queue and copies in flight, event timeline, 1×–50× speed, scripted kill-node-3 scenario; same UI against the gateway
-- [x] ADRs 0010–0012; bugs 3–6 in `docs/bugs-found.md`
+- [x] ADRs 0010–0012; bugs 3–7 in `docs/bugs-found.md`
 
 ## Exit criteria
 
@@ -36,7 +36,7 @@ Chunked, replicated upload and download; see ADRs 0005–0009. `TestRoundTrip`, 
 - [ ] Phase 3: integrity (`04-phase3-integrity`)
 - [ ] Acknowledged incremental block reports (removes the up-to-30 s commit delay after a lost report)
 - [ ] Overlap chunk uploads (window of chunks in flight)
-- [ ] Per-step safety check in the chaos harness (real copies never below RF − 1); bug #6 slipped past the end-state checker
+- [ ] Per-step safety check in the chaos harness (real copies never below RF − 1, meta never counts a copy the store lacks); bugs #6 and #7 slipped past the end-state checker
 
 ## Open decisions
 
