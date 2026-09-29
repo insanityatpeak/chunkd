@@ -250,4 +250,14 @@ func TestGatewayServesUI(t *testing.T) {
 			t.Errorf("GET %s = %d %q, want %q", path, resp.StatusCode, b, want)
 		}
 	}
+	// The API answers, not the file server: a JSON not_found, not a page.
+	resp, err := http.Post(srv.URL+"/undelete/none", "", nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	b, _ := io.ReadAll(resp.Body)
+	resp.Body.Close()
+	if resp.StatusCode != http.StatusNotFound || !strings.Contains(string(b), `"code"`) {
+		t.Errorf("POST /undelete/none = %d %q, want the API's not_found", resp.StatusCode, b)
+	}
 }

@@ -103,3 +103,13 @@ Related: with 1% message loss a copy command or its completion report can be los
 | Root cause | A lease expires when `touched + LeaseEpochs <= epoch`. An upload touched just before an epoch tick loses almost a whole epoch, so 4 epochs of 30 s guarantee only 90 s of idle time, not 120 s. That is shorter than the GC grace plus two sweeps (120 s): the very stall the GC design promises to survive expired the upload through its lease instead. |
 | Fix | `LeaseEpochs: 6` (at least 150 s idle), and a sizing rule in `meta.Config`: the minimum lease, `(LeaseEpochs-1) × EpochEvery`, must exceed `GCGrace + 2 × EpochEvery`. The slow-upload scenario checks the rule against the config it runs. Found before the GC work was committed. |
 | Regression test | `TestChaosGCDuringSlowUpload`, `TestChaosDeleteWhileUploadingSameChunk`, `meta.TestUploadLeaseExpires`. |
+
+## 11. Undelete through the compose gateway hit the file server
+
+| | |
+|---|---|
+| Symptom | In `docker compose up`, `POST http://localhost:8080/undelete/<path>` answered `404 page not found` in plain text, for the dashboard and for `chunkd undelete` against the gateway alike. The same call through `gateway.Handler` alone worked. |
+| Repro | `docker compose up -d --build --wait`, upload and delete a file, then `curl -X POST localhost:8080/undelete/<path>`. |
+| Root cause | `gateway.WithUI` puts the API and the dashboard's static files on one mux and forwards an explicit list of API prefixes. The undelete route was added to `Handler` but not to that list, so it fell through to `http.FileServer`. The gateway tests used `Handler`; the one `WithUI` test only covered `GET` routes. |
+| Fix | `/undelete/` added to the forwarded prefixes, with a comment that every `Handler` route must be listed. Found by checking the dashboard's new undelete button in live mode. |
+| Regression test | `gateway.TestGatewayServesUI` posts to `/undelete/` and requires the API's JSON `not_found`. |

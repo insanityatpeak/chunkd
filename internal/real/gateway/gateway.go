@@ -254,7 +254,9 @@ func cors(next http.Handler) http.Handler {
 // runs the simulation instead).
 func WithUI(api http.Handler, dir string) http.Handler {
 	mux := http.NewServeMux()
-	for _, p := range []string{"/files", "/files/", "/cluster"} {
+	// Every API route from Handler; a missing one falls through to the
+	// file server and answers a plain 404.
+	for _, p := range []string{"/files", "/files/", "/undelete/", "/cluster"} {
 		mux.Handle(p, api)
 	}
 	mux.HandleFunc("GET /mode.json", func(w http.ResponseWriter, _ *http.Request) {
