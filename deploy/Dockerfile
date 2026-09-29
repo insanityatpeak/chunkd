@@ -9,7 +9,7 @@ RUN --mount=type=cache,target=/go/pkg/mod go mod download
 COPY . .
 RUN --mount=type=cache,target=/go/pkg/mod --mount=type=cache,target=/root/.cache/go-build \
     CGO_ENABLED=0 go build -trimpath -ldflags="-s -w" -o /out/ \
-      ./cmd/chunkd ./cmd/chunkd-meta ./cmd/chunkd-node ./cmd/chunkd-gateway
+      ./cmd/chunkd ./cmd/chunkd-meta ./cmd/chunkd-node ./cmd/chunkd-gateway ./cmd/chunkd-demo
 # The dashboard's simulated cluster, so the page served by the gateway can
 # also switch to the in-browser simulation.
 RUN --mount=type=cache,target=/go/pkg/mod --mount=type=cache,target=/root/.cache/go-build     mkdir -p /out/wasm && GOOS=js GOARCH=wasm go build -trimpath -ldflags="-s -w" -o /out/wasm/cluster.wasm ./cmd/chunkd-wasm &&     cp "$(go env GOROOT)/lib/wasm/wasm_exec.js" /out/wasm/
@@ -41,6 +41,10 @@ FROM base AS node
 COPY --from=build /out/chunkd-node /usr/local/bin/chunkd-node
 EXPOSE 7000 9000
 ENTRYPOINT ["/usr/local/bin/chunkd-node"]
+
+FROM base AS demo
+COPY --from=build /out/chunkd-demo /usr/local/bin/chunkd-demo
+ENTRYPOINT ["/usr/local/bin/chunkd-demo"]
 
 FROM base AS gateway
 COPY --from=build /out/chunkd-gateway /usr/local/bin/chunkd-gateway

@@ -31,7 +31,7 @@ var commands = map[string]command{
 	"web":          {"install and build the dashboard into web/dist", web},
 	"up":           {"start the compose cluster (--small for 1 meta + 3 nodes)", up},
 	"down":         {"stop the compose cluster (-v also deletes its volumes)", down},
-	"demo":         {"scripted failure demo (not implemented yet)", func([]string) error { fmt.Println("demo: not implemented yet"); return nil }},
+	"demo":         {"start the compose cluster, kill a node, narrate the repair, verify the download", demo},
 	"chaos":        {"randomized fault scenarios with invariant checks (--seed=N replays one; --seeds=N)", chaos},
 	"e2e":          {"put and get 20 MiB via the compose gateway (--up to start, --down to clean up)", e2e},
 	"trace-check":  {"fail if tracked files or outgoing commits carry attribution text", func([]string) error { return traceCheck() }},
@@ -72,6 +72,14 @@ func chaos(args []string) error {
 		}
 	}
 	return goCmd(nil, append([]string{"run", "./cmd/chunkd-chaos"}, fwd...)...)
+}
+
+// demo starts the compose cluster and runs cmd/chunkd-demo against it.
+func demo(args []string) error {
+	if err := run(nil, "", "docker", "compose", "up", "-d", "--build", "--wait", "--wait-timeout", "300"); err != nil {
+		return err
+	}
+	return goCmd(nil, append([]string{"run", "./cmd/chunkd-demo"}, args...)...)
 }
 
 // chaosReal builds and starts the compose cluster, runs the real-mode

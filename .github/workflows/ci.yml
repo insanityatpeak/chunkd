@@ -78,8 +78,14 @@ jobs:
           curl -fsS http://localhost:8080/healthz
       - name: e2e put and get 20 MiB through the gateway
         run: go run ./tools/task e2e
-      - name: real-mode chaos, short suite (kill, blip, freeze)
+      - name: real-mode chaos, short suite (kill, blip, rot, freeze)
         run: go run ./tools/task chaos --mode=real --short
+      - name: demo container kills a node and verifies the repair (only Docker needed)
+        run: docker compose run --rm demo
+      - name: dashboard served by the gateway in live mode
+        run: |
+          curl -fsS http://localhost:8080/mode.json | grep -q live
+          curl -fsS http://localhost:8080/ | grep -q '<title>chunkd</title>'
       - name: small profile selects 1 meta + 3 nodes + gateway
         run: |
           docker compose down -v
