@@ -825,7 +825,8 @@ func (s *Server) clusterInfo(m iface.Message, respond iface.Responder) {
 func (s *Server) ClusterView(eventsAfter uint64) *chunkdv1.ClusterResponse {
 	now := s.d.Clock.Now()
 	ms := func(t iface.Instant) int64 { return int64(t.Sub(0) / time.Millisecond) }
-	resp := &chunkdv1.ClusterResponse{NowMs: ms(now)}
+	rs := s.raft.Status()
+	resp := &chunkdv1.ClusterResponse{NowMs: ms(now), MetaLeader: string(rs.LeaderNode), MetaTerm: rs.Term}
 	for _, n := range s.cluster.Nodes() {
 		resp.Nodes = append(resp.Nodes, &chunkdv1.NodeInfo{Id: string(n.ID), Rack: n.Rack, Addr: n.Addr, UsedBytes: n.Used,
 			ChunkCount: n.Chunks, Alive: s.cluster.Alive(n.ID), Draining: n.Draining, State: n.State.String(),

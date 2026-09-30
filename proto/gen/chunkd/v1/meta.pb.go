@@ -2948,7 +2948,11 @@ type ClusterResponse struct {
 	Epoch uint64   `protobuf:"varint,12,opt,name=epoch,proto3" json:"epoch,omitempty"`
 	Gc    *GCStats `protobuf:"bytes,13,opt,name=gc,proto3" json:"gc,omitempty"`
 	// Deleted paths with a version undelete can still restore.
-	Deleted       []*DeletedFile `protobuf:"bytes,14,rep,name=deleted,proto3" json:"deleted,omitempty"`
+	Deleted []*DeletedFile `protobuf:"bytes,14,rep,name=deleted,proto3" json:"deleted,omitempty"`
+	// The answering peer's view of the metadata group: the leader it knows
+	// (empty during an election) and its Raft term.
+	MetaLeader    string `protobuf:"bytes,15,opt,name=meta_leader,json=metaLeader,proto3" json:"meta_leader,omitempty"`
+	MetaTerm      uint64 `protobuf:"varint,16,opt,name=meta_term,json=metaTerm,proto3" json:"meta_term,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -3079,6 +3083,20 @@ func (x *ClusterResponse) GetDeleted() []*DeletedFile {
 		return x.Deleted
 	}
 	return nil
+}
+
+func (x *ClusterResponse) GetMetaLeader() string {
+	if x != nil {
+		return x.MetaLeader
+	}
+	return ""
+}
+
+func (x *ClusterResponse) GetMetaTerm() uint64 {
+	if x != nil {
+		return x.MetaTerm
+	}
+	return 0
 }
 
 // GCStats are the sweep's counters since the metadata server started.
@@ -3848,7 +3866,7 @@ const file_chunkd_v1_meta_proto_rawDesc = "" +
 	"\x04node\x18\x02 \x01(\tR\x04node\"\x11\n" +
 	"\x0fSuspectResponse\"3\n" +
 	"\x0eClusterRequest\x12!\n" +
-	"\fevents_after\x18\x01 \x01(\x04R\veventsAfter\"\xac\x04\n" +
+	"\fevents_after\x18\x01 \x01(\x04R\veventsAfter\"\xea\x04\n" +
 	"\x0fClusterResponse\x12)\n" +
 	"\x05nodes\x18\x01 \x03(\v2\x13.chunkd.v1.NodeInfoR\x05nodes\x12\x14\n" +
 	"\x05files\x18\x02 \x01(\x03R\x05files\x12#\n" +
@@ -3865,7 +3883,10 @@ const file_chunkd_v1_meta_proto_rawDesc = "" +
 	"\x0edistinct_bytes\x18\v \x01(\x03R\rdistinctBytes\x12\x14\n" +
 	"\x05epoch\x18\f \x01(\x04R\x05epoch\x12\"\n" +
 	"\x02gc\x18\r \x01(\v2\x12.chunkd.v1.GCStatsR\x02gc\x120\n" +
-	"\adeleted\x18\x0e \x03(\v2\x16.chunkd.v1.DeletedFileR\adeleted\"\xc6\x01\n" +
+	"\adeleted\x18\x0e \x03(\v2\x16.chunkd.v1.DeletedFileR\adeleted\x12\x1f\n" +
+	"\vmeta_leader\x18\x0f \x01(\tR\n" +
+	"metaLeader\x12\x1b\n" +
+	"\tmeta_term\x18\x10 \x01(\x04R\bmetaTerm\"\xc6\x01\n" +
 	"\aGCStats\x12\x18\n" +
 	"\aorphans\x18\x01 \x01(\x04R\aorphans\x12\x12\n" +
 	"\x04sent\x18\x02 \x01(\x04R\x04sent\x12\x18\n" +

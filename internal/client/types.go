@@ -128,6 +128,10 @@ type Cluster struct {
 	Epoch           uint64        `json:"epoch"`
 	GC              GCStats       `json:"gc"`
 	Deleted         []DeletedFile `json:"deleted"`
+	// MetaLeader is the metadata leader the answering peer knows, empty
+	// during an election; MetaTerm is its Raft term.
+	MetaLeader string `json:"metaLeader"`
+	MetaTerm   uint64 `json:"metaTerm"`
 }
 
 // GCStats are the sweep's counters and the retention settings.

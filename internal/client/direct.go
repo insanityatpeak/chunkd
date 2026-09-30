@@ -527,7 +527,8 @@ func (c *Direct) Cluster(ctx context.Context, eventsAfter uint64) (Cluster, erro
 func ClusterFromProto(resp *chunkdv1.ClusterResponse) Cluster {
 	out := Cluster{NowMs: resp.GetNowMs(), Files: resp.GetFiles(), LogicalBytes: resp.GetLogicalBytes(), EventSeq: resp.GetEventSeq(),
 		Nodes: []NodeInfo{}, FileHealth: []FileHealth{}, Copies: []RepairCopy{}, Events: []Event{}, Deleted: []DeletedFile{},
-		ReferencedBytes: resp.GetReferencedBytes(), DistinctBytes: resp.GetDistinctBytes(), Epoch: resp.GetEpoch()}
+		ReferencedBytes: resp.GetReferencedBytes(), DistinctBytes: resp.GetDistinctBytes(), Epoch: resp.GetEpoch(),
+		MetaLeader: resp.GetMetaLeader(), MetaTerm: resp.GetMetaTerm()}
 	if g := resp.GetGc(); g != nil {
 		out.GC = GCStats{Orphans: g.GetOrphans(), Sent: g.GetSent(), Deleted: g.GetDeleted(), Kept: g.GetKept(), Drift: g.GetDrift(),
 			RetainEpochs: g.GetRetainEpochs(), EpochEveryMs: g.GetEpochEveryMs()}

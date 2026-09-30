@@ -365,6 +365,10 @@ message ClusterResponse {
   GCStats gc = 13;
   // Deleted paths with a version undelete can still restore.
   repeated DeletedFile deleted = 14;
+  // The answering peer's view of the metadata group: the leader it knows
+  // (empty during an election) and its Raft term.
+  string meta_leader = 15;
+  uint64 meta_term = 16;
 }
 
 // GCStats are the sweep's counters since the metadata server started.
