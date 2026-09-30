@@ -4,11 +4,13 @@ import (
 	"bytes"
 	"context"
 	"crypto/sha256"
+	"encoding/binary"
 	"encoding/hex"
 	"errors"
 	"fmt"
 	"io"
 	"slices"
+	"sync/atomic"
 	"time"
 
 	"google.golang.org/protobuf/proto"
@@ -19,10 +21,25 @@ import (
 	chunkdv1 "github.com/insanityatpeak/chunkd/proto/gen/chunkd/v1"
 )
 
+// MetaPeer is one metadata server the client may talk to.
+type MetaPeer struct {
+	ID   iface.NodeID
+	Addr string // real mode only
+}
+
 // Options configure a direct client.
 type Options struct {
+	// Meta and MetaAddr name a single metadata server. Ignored if Peers is set.
 	Meta     iface.NodeID
 	MetaAddr string // real mode only
+	// Peers are the members of a metadata group. The client remembers which
+	// one led last and follows a follower's hint to the leader.
+	Peers []MetaPeer
+	// Rand supplies the request ID of each upload's Begin, kept across retries
+	// so a retry after a lost response or a leader change opens one upload.
+	// Nil: Begin carries no ID and a retry may leave an extra pending upload,
+	// which GC reclaims.
+	Rand iface.Rand
 	// CommitTimeout bounds commit retries while block reports arrive. It
 	// exceeds the 30 s full-report interval so a lost incremental report is
 	// recovered by the next full one.
@@ -40,6 +57,9 @@ type Direct struct {
 	caller iface.Caller
 	opts   Options
 	health *health
+	peers  []MetaPeer
+	// leader indexes the peer that answered last, or the one a follower named.
+	leader atomic.Int32
 }
 
 var _ API = (*Direct)(nil)
@@ -52,30 +72,78 @@ func New(caller iface.Caller, opts Options) *Direct {
 	if opts.Sleep == nil {
 		opts.Sleep = time.Sleep
 	}
-	return &Direct{caller: caller, opts: opts, health: newHealth()}
+	peers := opts.Peers
+	if len(peers) == 0 {
+		peers = []MetaPeer{{ID: opts.Meta, Addr: opts.MetaAddr}}
+	}
+	return &Direct{caller: caller, opts: opts, health: newHealth(), peers: peers}
 }
 
-// meta calls the metadata server, retrying while it is unreachable. Every
-// metadata RPC is safe to repeat: reads trivially, commit and delete by
-// design, and a repeated begin only leaves an extra pending upload that GC
-// reclaims (Phase 4).
+// meta calls the metadata service, finding its leader and riding out
+// failures. Every metadata RPC is safe to repeat: reads trivially, claim,
+// commit, delete and undelete by design, and begin through its request ID
+// (Put sets one), so a retry after a lost response or a leader change never
+// duplicates or half-applies anything.
+//
+// A follower answers CodeNotLeader naming the leader: the client goes there
+// at once. With no hint (an election is running) or an unreachable peer it
+// tries the next one after a pause, for about 11 s with three peers, roughly
+// four election timeouts.
 func (c *Direct) meta(ctx context.Context, kind string, req, resp proto.Message) error {
 	body := wire.Marshal(req)
+	attempts := metaAttempts
+	if len(c.peers) > 1 {
+		attempts = groupAttempts
+	}
 	backoff := 100 * time.Millisecond
+	hops := 0
 	for attempt := 1; ; attempt++ {
-		r := c.caller.Do(ctx, []iface.Call{{To: c.opts.Meta, Addr: c.opts.MetaAddr, Kind: kind, Body: body}})
-		if r[0].Err == nil {
+		i := int(c.leader.Load()) % len(c.peers)
+		r := c.caller.Do(ctx, []iface.Call{{To: c.peers[i].ID, Addr: c.peers[i].Addr, Kind: kind, Body: body}})
+		err := r[0].Err
+		if err == nil {
 			return wire.Decode(r[0].Body, resp)
 		}
-		if iface.CodeOf(r[0].Err) != iface.CodeUnavailable || attempt == metaAttempts || ctx.Err() != nil {
-			return r[0].Err
+		code := iface.CodeOf(err)
+		if (code != iface.CodeUnavailable && code != iface.CodeNotLeader) || attempt == attempts || ctx.Err() != nil {
+			return err
 		}
+		// Follow a hint without waiting, but not round and round: stale
+		// hints can point at each other.
+		if j := c.peerIndex(err); code == iface.CodeNotLeader && j >= 0 && j != i && hops < len(c.peers) {
+			c.leader.Store(int32(j))
+			hops++
+			continue
+		}
+		hops = 0
+		c.leader.Store(int32((i + 1) % len(c.peers)))
 		c.opts.Sleep(backoff)
 		backoff = min(backoff*2, 2*time.Second)
 	}
 }
 
-const metaAttempts = 6
+// peerIndex returns the peer a NotLeader error names, or -1.
+func (c *Direct) peerIndex(err error) int {
+	var e *iface.Error
+	if !errors.As(err, &e) || e.Code != iface.CodeNotLeader || e.Msg == "" {
+		return -1
+	}
+	return slices.IndexFunc(c.peers, func(p MetaPeer) bool { return string(p.ID) == e.Msg })
+}
+
+// requestID returns a fresh 16-byte ID for one upload's Begin, or nil.
+func (c *Direct) requestID() []byte {
+	if c.opts.Rand == nil {
+		return nil
+	}
+	b := binary.LittleEndian.AppendUint64(nil, c.opts.Rand.Uint64())
+	return binary.LittleEndian.AppendUint64(b, c.opts.Rand.Uint64())
+}
+
+const (
+	metaAttempts  = 6
+	groupAttempts = 10
+)
 
 // Put uploads r (exactly size bytes) as a new version of path.
 //
@@ -98,7 +166,7 @@ func (c *Direct) Put(ctx context.Context, path string, r io.Reader, size int64, 
 		}
 	}
 	var begin chunkdv1.BeginUploadResponse
-	if err := c.meta(ctx, wire.KindBegin, &chunkdv1.BeginUploadRequest{Path: path, ExpectedVersion: expected, Size: size, LastWriterWins: opts.LastWriterWins}, &begin); err != nil {
+	if err := c.meta(ctx, wire.KindBegin, &chunkdv1.BeginUploadRequest{Path: path, ExpectedVersion: expected, Size: size, LastWriterWins: opts.LastWriterWins, RequestId: c.requestID()}, &begin); err != nil {
 		return Manifest{}, err
 	}
 	m, err := c.upload(ctx, path, r, size, &begin)
@@ -378,7 +446,8 @@ func (c *Direct) fetchPass(ctx context.Context, loc *chunkdv1.ChunkLocation, ref
 // One attempt, no retries, so a slow metadata server never delays reads.
 func (c *Direct) suspect(ctx context.Context, chunkID []byte, node string) {
 	body := wire.Marshal(&chunkdv1.SuspectRequest{ChunkId: chunkID, Node: node})
-	c.caller.Do(ctx, []iface.Call{{To: c.opts.Meta, Addr: c.opts.MetaAddr, Kind: wire.KindSuspect, Body: body}})
+	p := c.peers[int(c.leader.Load())%len(c.peers)]
+	c.caller.Do(ctx, []iface.Call{{To: p.ID, Addr: p.Addr, Kind: wire.KindSuspect, Body: body}})
 }
 
 // noHedge is a hedge delay no read reaches.

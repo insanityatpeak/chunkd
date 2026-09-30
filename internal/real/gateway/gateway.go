@@ -206,7 +206,7 @@ func StatusOf(c iface.Code) int {
 		return http.StatusConflict
 	case iface.CodeInvalid:
 		return http.StatusBadRequest
-	case iface.CodeUnavailable, iface.CodeRetry:
+	case iface.CodeUnavailable, iface.CodeRetry, iface.CodeNotLeader:
 		return http.StatusServiceUnavailable
 	}
 	return http.StatusInternalServerError
