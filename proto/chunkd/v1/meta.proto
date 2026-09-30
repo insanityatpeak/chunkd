@@ -24,6 +24,11 @@ message BeginUploadOp {
   // Commit without comparing versions: the upload replaces whatever is live
   // when it commits. Opt-in; silently loses concurrent updates (ADR-0014).
   bool last_writer_wins = 7;
+  // Chosen by the client and kept across retries: a Begin whose request_id
+  // matches a pending upload returns that upload instead of opening another,
+  // so a retry after a lost response or a leader change opens exactly one.
+  // Empty: no deduplication.
+  bytes request_id = 8;
 }
 
 message ChunkClaim {
@@ -72,6 +77,32 @@ message AdvanceEpochOp {
   uint32 lease_epochs = 2;
 }
 
+// GCTarget is one copy a GC sweep may delete. The fence is the leader's view
+// of the node's block reports when it decided (ADR-0016): the node refuses
+// the delete if it wrote the chunk after it.
+message GCTarget {
+  bytes chunk_id = 1;
+  string node = 2;
+  uint64 fence_incarnation = 3;
+  uint64 fence_seq = 4;
+}
+
+// GCIntentOp authorizes deleting copies. A leader sends a GC delete only
+// after the intent has committed, so a deposed leader, which cannot commit,
+// can never authorize one. Applying it skips targets whose chunk is marked
+// (a claim or a reference exists) at that point in the log, and targets
+// already pending.
+message GCIntentOp {
+  repeated GCTarget targets = 1;
+}
+
+// GCDoneOp records that the nodes answered (deleted or kept): only chunk_id
+// and node are used. Until it applies, the delete is pending and may be
+// re-sent with its original fence by any leader.
+message GCDoneOp {
+  repeated GCTarget targets = 1;
+}
+
 message Op {
   oneof op {
     BeginUploadOp begin = 1;
@@ -81,6 +112,8 @@ message Op {
     ClaimChunksOp claim = 5;
     UndeleteOp undelete = 6;
     AdvanceEpochOp advance_epoch = 7;
+    GCIntentOp gc_intent = 8;
+    GCDoneOp gc_done = 9;
   }
 }
 
@@ -134,6 +167,8 @@ message MetaSnapshot {
   repeated UploadRecord uploads = 3;
   uint64 last_upload_id = 4;
   uint64 epoch = 5;
+  // GC deletes authorized and not yet answered.
+  repeated GCTarget gc_pending = 6;
 }
 
 // ---- Client RPCs to the metadata server.
@@ -155,6 +190,8 @@ message BeginUploadRequest {
   uint64 expected_version = 2;
   int64 size = 3;
   bool last_writer_wins = 4;
+  // See BeginUploadOp.request_id.
+  bytes request_id = 5;
 }
 
 message BeginUploadResponse {

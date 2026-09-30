@@ -570,3 +570,135 @@ func TestReconcile(t *testing.T) {
 		})
 	}
 }
+
+func withRequestID(op *chunkdv1.Op, id string) *chunkdv1.Op {
+	op.GetBegin().RequestId = []byte(id)
+	return op
+}
+
+// A repeated Begin with the same request ID, from a client retrying after a
+// lost response or a leader change, returns the upload it already opened.
+func TestBeginRequestIDIsIdempotent(t *testing.T) {
+	s := New()
+	first, err := s.Apply(withRequestID(begin("/f", 0, 4), "r1"))
+	if err != nil || first.UploadID != 1 {
+		t.Fatalf("first begin: %+v, %v", first, err)
+	}
+	again, err := s.Apply(withRequestID(begin("/f", 0, 4), "r1"))
+	if err != nil || again.UploadID != first.UploadID || s.PendingUploads() != 1 {
+		t.Fatalf("repeated begin: %+v, %v, %d pending; want upload %d and one pending", again, err, s.PendingUploads(), first.UploadID)
+	}
+	// Even if the path moved on meanwhile, the repeat is answered, not rejected.
+	if _, err := s.Apply(begin("/f", 0, 4)); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := s.Apply(commit(2, 1, 'z')); err != nil {
+		t.Fatal(err)
+	}
+	if got, err := s.Apply(withRequestID(begin("/f", 0, 4), "r1")); err != nil || got.UploadID != first.UploadID {
+		t.Fatalf("repeat after the path changed: %+v, %v", got, err)
+	}
+	// A different request opens its own upload; a request ID survives a snapshot.
+	other, _ := s.Apply(withRequestID(begin("/g", 0, 4), "r2"))
+	if other.UploadID == first.UploadID {
+		t.Fatal("distinct request IDs shared an upload")
+	}
+	r, err := Restore(s.Snapshot())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got, _ := r.Apply(withRequestID(begin("/g", 0, 4), "r2")); got.UploadID != other.UploadID {
+		t.Fatalf("after restore: upload %d, want %d", got.UploadID, other.UploadID)
+	}
+	// Once the upload is over, its request ID is free again.
+	if _, err := s.Apply(abort(other.UploadID)); err != nil {
+		t.Fatal(err)
+	}
+	if again, _ := s.Apply(withRequestID(begin("/g", 0, 4), "r2")); again.UploadID == other.UploadID {
+		t.Fatal("a finished upload's request ID still answers with it")
+	}
+}
+
+func gcIntent(node string, seq uint64, ids ...iface.ChunkID) *chunkdv1.Op {
+	g := &chunkdv1.GCIntentOp{}
+	for _, id := range ids {
+		g.Targets = append(g.Targets, &chunkdv1.GCTarget{ChunkId: id[:], Node: node, FenceIncarnation: 7, FenceSeq: seq})
+	}
+	return &chunkdv1.Op{Op: &chunkdv1.Op_GcIntent{GcIntent: g}}
+}
+
+func gcDone(node string, ids ...iface.ChunkID) *chunkdv1.Op {
+	g := &chunkdv1.GCDoneOp{}
+	for _, id := range ids {
+		g.Targets = append(g.Targets, &chunkdv1.GCTarget{ChunkId: id[:], Node: node})
+	}
+	return &chunkdv1.Op{Op: &chunkdv1.Op_GcDone{GcDone: g}}
+}
+
+func TestGCIntents(t *testing.T) {
+	orphan := chunkOf('o', 0)
+	ref := chunkOf('a', 0) // referenced by /f below
+	claimed := chunkOf('c', 0)
+	s := New()
+	for i, op := range []*chunkdv1.Op{begin("/f", 0, 4), commit(1, 1, 'a'), beginClaims("/g", 0, 4), claimOp(2, 'c', 0)} {
+		if _, err := s.Apply(op); err != nil {
+			t.Fatalf("setup %d: %v", i, err)
+		}
+	}
+
+	// Only the unmarked chunk is authorized: a referenced chunk and a claimed
+	// one are protected at this point of the log.
+	res, err := s.Apply(gcIntent("n1", 5, orphan, ref, claimed))
+	if err != nil || res.Intents != 1 {
+		t.Fatalf("intent: %+v, %v; want 1 target accepted", res, err)
+	}
+	if got, ok := s.GCPending(orphan, "n1"); !ok || got.Incarnation != 7 || got.Seq != 5 {
+		t.Fatalf("pending = %+v, %v", got, ok)
+	}
+	for _, id := range []iface.ChunkID{ref, claimed} {
+		if _, ok := s.GCPending(id, "n1"); ok {
+			t.Fatalf("marked chunk %s became pending", id.String()[:8])
+		}
+	}
+
+	// A second intent keeps the first one's fence: a newer fence would allow
+	// deleting a copy written after the first decision.
+	if res, _ := s.Apply(gcIntent("n1", 99, orphan)); res.Intents != 0 {
+		t.Fatalf("repeated intent added %d", res.Intents)
+	}
+	if got, _ := s.GCPending(orphan, "n1"); got.Seq != 5 {
+		t.Fatalf("fence moved to %d", got.Seq)
+	}
+	// Another node is its own target.
+	if res, _ := s.Apply(gcIntent("n2", 3, orphan)); res.Intents != 1 {
+		t.Fatalf("second node: %d", res.Intents)
+	}
+
+	// Pending deletes survive a snapshot, and identical logs give identical bytes.
+	r, err := Restore(s.Snapshot())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !bytes.Equal(r.Snapshot(), s.Snapshot()) || len(r.GCPendingAll()) != 2 {
+		t.Fatalf("restore lost pending deletes: %d", len(r.GCPendingAll()))
+	}
+
+	if _, err := s.Apply(gcDone("n1", orphan)); err != nil {
+		t.Fatal(err)
+	}
+	if _, ok := s.GCPending(orphan, "n1"); ok {
+		t.Fatal("done did not clear the delete")
+	}
+	if all := s.GCPendingAll(); len(all) != 1 || all[0].Node != "n2" {
+		t.Fatalf("pending after done = %+v", all)
+	}
+	if _, err := s.Apply(gcDone("n2", orphan)); err != nil {
+		t.Fatal(err)
+	}
+	if len(s.GCPendingAll()) != 0 {
+		t.Fatal("pending not empty after both done")
+	}
+	if err := s.Validate(gcIntent("n1", 1)); iface.CodeOf(err) != iface.CodeInvalid {
+		t.Fatalf("intent with no targets: %v, want invalid", err)
+	}
+}

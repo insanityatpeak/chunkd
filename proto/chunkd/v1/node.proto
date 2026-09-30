@@ -29,6 +29,11 @@ message HeartbeatAck {
   // Set when the metadata server has no location data for this node, e.g.
   // after it restarted; the node answers with a full block report.
   bool need_full_report = 2;
+  // The acking peer's Raft term, meaningful only when leader is set: a node
+  // learns the current fencing token from the leader's acks, so it refuses
+  // a deposed leader's commands even before any command of the new term.
+  uint64 term = 3;
+  bool leader = 4;
 }
 
 // BlockReport lists chunks a node holds. A full report replaces everything
@@ -75,6 +80,9 @@ message ReplicateChunk {
   bytes chunk_id = 2;
   string source = 3;
   string source_addr = 4;
+  // The sending leader's Raft term: the fencing token. A node refuses a
+  // command below the highest term it has seen.
+  uint64 term = 5;
 }
 
 // ReplicateFailed tells the metadata server a copy will not complete, so
@@ -98,10 +106,14 @@ message DeleteReplica {
   bool gc = 3;
   uint64 fence_incarnation = 4;
   uint64 fence_seq = 5;
+  // The sending leader's Raft term (see ReplicateChunk).
+  uint64 term = 6;
 }
 
 // VerifyChunk asks a node to re-read and re-hash one chunk; a mismatch is
 // quarantined and reported like a failed read.
 message VerifyChunk {
   bytes chunk_id = 1;
+  // The sending leader's Raft term (see ReplicateChunk).
+  uint64 term = 2;
 }

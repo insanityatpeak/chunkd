@@ -164,8 +164,13 @@ type HeartbeatAck struct {
 	// Set when the metadata server has no location data for this node, e.g.
 	// after it restarted; the node answers with a full block report.
 	NeedFullReport bool `protobuf:"varint,2,opt,name=need_full_report,json=needFullReport,proto3" json:"need_full_report,omitempty"`
-	unknownFields  protoimpl.UnknownFields
-	sizeCache      protoimpl.SizeCache
+	// The acking peer's Raft term, meaningful only when leader is set: a node
+	// learns the current fencing token from the leader's acks, so it refuses
+	// a deposed leader's commands even before any command of the new term.
+	Term          uint64 `protobuf:"varint,3,opt,name=term,proto3" json:"term,omitempty"`
+	Leader        bool   `protobuf:"varint,4,opt,name=leader,proto3" json:"leader,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
 }
 
 func (x *HeartbeatAck) Reset() {
@@ -208,6 +213,20 @@ func (x *HeartbeatAck) GetSeq() uint64 {
 func (x *HeartbeatAck) GetNeedFullReport() bool {
 	if x != nil {
 		return x.NeedFullReport
+	}
+	return false
+}
+
+func (x *HeartbeatAck) GetTerm() uint64 {
+	if x != nil {
+		return x.Term
+	}
+	return 0
+}
+
+func (x *HeartbeatAck) GetLeader() bool {
+	if x != nil {
+		return x.Leader
 	}
 	return false
 }
@@ -502,11 +521,14 @@ func (x *GetChunkResponse) GetData() []byte {
 // ReplicateChunk tells a node to pull a chunk from source and store it
 // (repair). Completion is the node's incremental block report.
 type ReplicateChunk struct {
-	state         protoimpl.MessageState `protogen:"open.v1"`
-	CopyId        uint64                 `protobuf:"varint,1,opt,name=copy_id,json=copyId,proto3" json:"copy_id,omitempty"`
-	ChunkId       []byte                 `protobuf:"bytes,2,opt,name=chunk_id,json=chunkId,proto3" json:"chunk_id,omitempty"`
-	Source        string                 `protobuf:"bytes,3,opt,name=source,proto3" json:"source,omitempty"`
-	SourceAddr    string                 `protobuf:"bytes,4,opt,name=source_addr,json=sourceAddr,proto3" json:"source_addr,omitempty"`
+	state      protoimpl.MessageState `protogen:"open.v1"`
+	CopyId     uint64                 `protobuf:"varint,1,opt,name=copy_id,json=copyId,proto3" json:"copy_id,omitempty"`
+	ChunkId    []byte                 `protobuf:"bytes,2,opt,name=chunk_id,json=chunkId,proto3" json:"chunk_id,omitempty"`
+	Source     string                 `protobuf:"bytes,3,opt,name=source,proto3" json:"source,omitempty"`
+	SourceAddr string                 `protobuf:"bytes,4,opt,name=source_addr,json=sourceAddr,proto3" json:"source_addr,omitempty"`
+	// The sending leader's Raft term: the fencing token. A node refuses a
+	// command below the highest term it has seen.
+	Term          uint64 `protobuf:"varint,5,opt,name=term,proto3" json:"term,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -567,6 +589,13 @@ func (x *ReplicateChunk) GetSourceAddr() string {
 		return x.SourceAddr
 	}
 	return ""
+}
+
+func (x *ReplicateChunk) GetTerm() uint64 {
+	if x != nil {
+		return x.Term
+	}
+	return 0
 }
 
 // ReplicateFailed tells the metadata server a copy will not complete, so
@@ -652,8 +681,10 @@ type DeleteReplica struct {
 	Gc               bool   `protobuf:"varint,3,opt,name=gc,proto3" json:"gc,omitempty"`
 	FenceIncarnation uint64 `protobuf:"varint,4,opt,name=fence_incarnation,json=fenceIncarnation,proto3" json:"fence_incarnation,omitempty"`
 	FenceSeq         uint64 `protobuf:"varint,5,opt,name=fence_seq,json=fenceSeq,proto3" json:"fence_seq,omitempty"`
-	unknownFields    protoimpl.UnknownFields
-	sizeCache        protoimpl.SizeCache
+	// The sending leader's Raft term (see ReplicateChunk).
+	Term          uint64 `protobuf:"varint,6,opt,name=term,proto3" json:"term,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
 }
 
 func (x *DeleteReplica) Reset() {
@@ -721,11 +752,20 @@ func (x *DeleteReplica) GetFenceSeq() uint64 {
 	return 0
 }
 
+func (x *DeleteReplica) GetTerm() uint64 {
+	if x != nil {
+		return x.Term
+	}
+	return 0
+}
+
 // VerifyChunk asks a node to re-read and re-hash one chunk; a mismatch is
 // quarantined and reported like a failed read.
 type VerifyChunk struct {
-	state         protoimpl.MessageState `protogen:"open.v1"`
-	ChunkId       []byte                 `protobuf:"bytes,1,opt,name=chunk_id,json=chunkId,proto3" json:"chunk_id,omitempty"`
+	state   protoimpl.MessageState `protogen:"open.v1"`
+	ChunkId []byte                 `protobuf:"bytes,1,opt,name=chunk_id,json=chunkId,proto3" json:"chunk_id,omitempty"`
+	// The sending leader's Raft term (see ReplicateChunk).
+	Term          uint64 `protobuf:"varint,2,opt,name=term,proto3" json:"term,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -767,6 +807,13 @@ func (x *VerifyChunk) GetChunkId() []byte {
 	return nil
 }
 
+func (x *VerifyChunk) GetTerm() uint64 {
+	if x != nil {
+		return x.Term
+	}
+	return 0
+}
+
 var File_chunkd_v1_node_proto protoreflect.FileDescriptor
 
 const file_chunkd_v1_node_proto_rawDesc = "" +
@@ -789,10 +836,12 @@ const file_chunkd_v1_node_proto_rawDesc = "" +
 	" \x01(\x03R\tscrubDone\x12\x1f\n" +
 	"\vscrub_total\x18\v \x01(\x03R\n" +
 	"scrubTotal\x12!\n" +
-	"\fscrub_passes\x18\f \x01(\x04R\vscrubPasses\"J\n" +
+	"\fscrub_passes\x18\f \x01(\x04R\vscrubPasses\"v\n" +
 	"\fHeartbeatAck\x12\x10\n" +
 	"\x03seq\x18\x01 \x01(\x04R\x03seq\x12(\n" +
-	"\x10need_full_report\x18\x02 \x01(\bR\x0eneedFullReport\"\xe3\x01\n" +
+	"\x10need_full_report\x18\x02 \x01(\bR\x0eneedFullReport\x12\x12\n" +
+	"\x04term\x18\x03 \x01(\x04R\x04term\x12\x16\n" +
+	"\x06leader\x18\x04 \x01(\bR\x06leader\"\xe3\x01\n" +
 	"\vBlockReport\x12\x12\n" +
 	"\x04node\x18\x01 \x01(\tR\x04node\x12\x12\n" +
 	"\x04full\x18\x02 \x01(\bR\x04full\x12\x1b\n" +
@@ -811,26 +860,29 @@ const file_chunkd_v1_node_proto_rawDesc = "" +
 	"\x0fGetChunkRequest\x12\x0e\n" +
 	"\x02id\x18\x01 \x01(\fR\x02id\"&\n" +
 	"\x10GetChunkResponse\x12\x12\n" +
-	"\x04data\x18\x01 \x01(\fR\x04data\"}\n" +
+	"\x04data\x18\x01 \x01(\fR\x04data\"\x91\x01\n" +
 	"\x0eReplicateChunk\x12\x17\n" +
 	"\acopy_id\x18\x01 \x01(\x04R\x06copyId\x12\x19\n" +
 	"\bchunk_id\x18\x02 \x01(\fR\achunkId\x12\x16\n" +
 	"\x06source\x18\x03 \x01(\tR\x06source\x12\x1f\n" +
 	"\vsource_addr\x18\x04 \x01(\tR\n" +
-	"sourceAddr\"o\n" +
+	"sourceAddr\x12\x12\n" +
+	"\x04term\x18\x05 \x01(\x04R\x04term\"o\n" +
 	"\x0fReplicateFailed\x12\x17\n" +
 	"\acopy_id\x18\x01 \x01(\x04R\x06copyId\x12\x19\n" +
 	"\bchunk_id\x18\x02 \x01(\fR\achunkId\x12\x12\n" +
 	"\x04node\x18\x03 \x01(\tR\x04node\x12\x14\n" +
-	"\x05error\x18\x04 \x01(\tR\x05error\"\x9d\x01\n" +
+	"\x05error\x18\x04 \x01(\tR\x05error\"\xb1\x01\n" +
 	"\rDeleteReplica\x12\x17\n" +
 	"\atrim_id\x18\x01 \x01(\x04R\x06trimId\x12\x19\n" +
 	"\bchunk_id\x18\x02 \x01(\fR\achunkId\x12\x0e\n" +
 	"\x02gc\x18\x03 \x01(\bR\x02gc\x12+\n" +
 	"\x11fence_incarnation\x18\x04 \x01(\x04R\x10fenceIncarnation\x12\x1b\n" +
-	"\tfence_seq\x18\x05 \x01(\x04R\bfenceSeq\"(\n" +
+	"\tfence_seq\x18\x05 \x01(\x04R\bfenceSeq\x12\x12\n" +
+	"\x04term\x18\x06 \x01(\x04R\x04term\"<\n" +
 	"\vVerifyChunk\x12\x19\n" +
-	"\bchunk_id\x18\x01 \x01(\fR\achunkIdB?Z=github.com/insanityatpeak/chunkd/proto/gen/chunkd/v1;chunkdv1b\x06proto3"
+	"\bchunk_id\x18\x01 \x01(\fR\achunkId\x12\x12\n" +
+	"\x04term\x18\x02 \x01(\x04R\x04termB?Z=github.com/insanityatpeak/chunkd/proto/gen/chunkd/v1;chunkdv1b\x06proto3"
 
 var (
 	file_chunkd_v1_node_proto_rawDescOnce sync.Once

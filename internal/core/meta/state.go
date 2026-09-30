@@ -63,6 +63,16 @@ type Upload struct {
 	// Touched is the epoch of the begin or the latest claim. The upload
 	// expires LeaseEpochs after it (AdvanceEpoch).
 	Touched uint64
+	// RequestID is the client's key for its Begin: a repeat returns this upload.
+	RequestID string
+}
+
+// GCTarget is a GC delete the log has authorized and no node has answered:
+// delete Chunk on Node unless it wrote the chunk after the fence.
+type GCTarget struct {
+	Chunk            iface.ChunkID
+	Node             iface.NodeID
+	Incarnation, Seq uint64
 }
 
 // ChunkInfo is the durable record of a chunk. Refcount counts references
@@ -87,6 +97,13 @@ type State struct {
 	// epoch is logical GC time, advanced only by logged AdvanceEpoch ops, so
 	// retention never depends on any machine's clock.
 	epoch uint64
+	// requests maps a Begin's request ID to its pending upload; derived from
+	// uploads, so not stored separately.
+	requests map[string]uint64
+	// gcPending are the deletes a committed GCIntent authorized and no GCDone
+	// has cleared. Replicated, so any leader can resend them with their
+	// original fence.
+	gcPending map[iface.ChunkID]map[iface.NodeID]GCTarget
 }
 
 // Committed locates the version an upload produced.
@@ -102,11 +119,15 @@ type Result struct {
 	// Dropped counts versions hard-deleted by an AdvanceEpoch, Expired the
 	// uploads whose lease ran out.
 	Dropped, Expired int
+	// Intents counts the GC targets a GCIntent added; the rest were marked
+	// or already pending.
+	Intents int
 }
 
 // New returns empty state.
 func New() *State {
-	return &State{files: map[string]*File{}, chunks: map[iface.ChunkID]*ChunkInfo{}, uploads: map[uint64]*Upload{}, committed: map[uint64]Committed{}, claimed: map[iface.ChunkID]int{}}
+	return &State{files: map[string]*File{}, chunks: map[iface.ChunkID]*ChunkInfo{}, uploads: map[uint64]*Upload{}, committed: map[uint64]Committed{}, claimed: map[iface.ChunkID]int{},
+		requests: map[string]uint64{}, gcPending: map[iface.ChunkID]map[iface.NodeID]GCTarget{}}
 }
 
 // ValidPath reports whether p is an absolute, clean path to a file.
@@ -137,6 +158,11 @@ func (s *State) Validate(op *chunkdv1.Op) error {
 	switch o := op.GetOp().(type) {
 	case *chunkdv1.Op_Begin:
 		b := o.Begin
+		// A repeat of a pending Begin is answered with that upload, whatever
+		// the state of the path has become since: nothing is applied.
+		if _, dup := s.requests[string(b.GetRequestId())]; dup && len(b.GetRequestId()) > 0 {
+			return nil
+		}
 		if !ValidPath(b.GetPath()) {
 			return iface.Errorf(iface.CodeInvalid, "bad path %q", b.GetPath())
 		}
@@ -226,8 +252,24 @@ func (s *State) Validate(op *chunkdv1.Op) error {
 		if o.AdvanceEpoch.GetRetainEpochs() == 0 {
 			return iface.Errorf(iface.CodeInvalid, "retain_epochs must be at least 1")
 		}
+	case *chunkdv1.Op_GcIntent:
+		return validTargets(o.GcIntent.GetTargets())
+	case *chunkdv1.Op_GcDone:
+		return validTargets(o.GcDone.GetTargets())
 	default:
 		return iface.Errorf(iface.CodeInvalid, "empty op")
+	}
+	return nil
+}
+
+func validTargets(ts []*chunkdv1.GCTarget) error {
+	if len(ts) == 0 {
+		return iface.Errorf(iface.CodeInvalid, "no targets")
+	}
+	for _, t := range ts {
+		if len(t.GetChunkId()) != len(iface.ChunkID{}) || t.GetNode() == "" {
+			return iface.Errorf(iface.CodeInvalid, "bad gc target: chunk id of %d bytes, node %q", len(t.GetChunkId()), t.GetNode())
+		}
 	}
 	return nil
 }
@@ -247,8 +289,15 @@ func (s *State) apply(op *chunkdv1.Op) Result {
 	switch o := op.GetOp().(type) {
 	case *chunkdv1.Op_Begin:
 		b := o.Begin
+		if id, dup := s.requests[string(b.GetRequestId())]; dup && len(b.GetRequestId()) > 0 {
+			return Result{UploadID: id}
+		}
 		s.lastUploadID++
-		u := &Upload{ID: s.lastUploadID, Path: b.GetPath(), Expected: b.GetExpectedVersion(), Size: b.GetSize(), ChunkSize: int(b.GetChunkSize()), Claims: b.GetClaims(), Claimed: map[int]iface.ChunkID{}, LWW: b.GetLastWriterWins(), Touched: s.epoch}
+		u := &Upload{ID: s.lastUploadID, Path: b.GetPath(), Expected: b.GetExpectedVersion(), Size: b.GetSize(), ChunkSize: int(b.GetChunkSize()), Claims: b.GetClaims(), Claimed: map[int]iface.ChunkID{}, LWW: b.GetLastWriterWins(), Touched: s.epoch,
+			RequestID: string(b.GetRequestId())}
+		if u.RequestID != "" {
+			s.requests[u.RequestID] = u.ID
+		}
 		for _, r := range b.GetPlacement() {
 			nodes := make([]iface.NodeID, len(r.GetNodes()))
 			for i, n := range r.GetNodes() {
@@ -307,8 +356,53 @@ func (s *State) apply(op *chunkdv1.Op) Result {
 	case *chunkdv1.Op_AdvanceEpoch:
 		s.epoch++
 		return Result{Dropped: s.hardDelete(uint64(o.AdvanceEpoch.GetRetainEpochs())), Expired: s.expire(uint64(o.AdvanceEpoch.GetLeaseEpochs()))}
+	case *chunkdv1.Op_GcIntent:
+		var added int
+		for _, t := range o.GcIntent.GetTargets() {
+			var id iface.ChunkID
+			copy(id[:], t.GetChunkId())
+			n := iface.NodeID(t.GetNode())
+			// Marked here, in log order: a claim applied before this intent
+			// protects the chunk, one applied after is protected by the fence.
+			if _, pending := s.gcPending[id][n]; pending || s.Marked(id) {
+				continue
+			}
+			if s.gcPending[id] == nil {
+				s.gcPending[id] = map[iface.NodeID]GCTarget{}
+			}
+			s.gcPending[id][n] = GCTarget{Chunk: id, Node: n, Incarnation: t.GetFenceIncarnation(), Seq: t.GetFenceSeq()}
+			added++
+		}
+		return Result{Intents: added}
+	case *chunkdv1.Op_GcDone:
+		for _, t := range o.GcDone.GetTargets() {
+			var id iface.ChunkID
+			copy(id[:], t.GetChunkId())
+			delete(s.gcPending[id], iface.NodeID(t.GetNode()))
+			if len(s.gcPending[id]) == 0 {
+				delete(s.gcPending, id)
+			}
+		}
+		return Result{}
 	}
 	panic("unreachable")
+}
+
+// GCPending returns the authorized, unanswered GC delete of id on n.
+func (s *State) GCPending(id iface.ChunkID, n iface.NodeID) (GCTarget, bool) {
+	t, ok := s.gcPending[id][n]
+	return t, ok
+}
+
+// GCPendingAll returns every pending GC delete, ordered by chunk then node.
+func (s *State) GCPendingAll() []GCTarget {
+	var out []GCTarget
+	for _, id := range slices.SortedFunc(maps.Keys(s.gcPending), func(a, b iface.ChunkID) int { return bytes.Compare(a[:], b[:]) }) {
+		for _, n := range slices.Sorted(maps.Keys(s.gcPending[id])) {
+			out = append(out, s.gcPending[id][n])
+		}
+	}
+	return out
 }
 
 func (s *State) claim(u *Upload, i int, raw []byte) {
@@ -328,6 +422,9 @@ func (s *State) dropUpload(u *Upload) {
 		if s.claimed[id]--; s.claimed[id] == 0 {
 			delete(s.claimed, id)
 		}
+	}
+	if u.RequestID != "" {
+		delete(s.requests, u.RequestID)
 	}
 	delete(s.uploads, u.ID)
 }
@@ -592,6 +689,9 @@ func (s *State) Snapshot() []byte {
 	for _, id := range slices.Sorted(maps.Keys(s.uploads)) {
 		u := s.uploads[id]
 		b := &chunkdv1.BeginUploadOp{Path: u.Path, ExpectedVersion: u.Expected, Size: u.Size, ChunkSize: int32(u.ChunkSize), Claims: u.Claims, LastWriterWins: u.LWW}
+		if u.RequestID != "" {
+			b.RequestId = []byte(u.RequestID)
+		}
 		for _, r := range u.Placement {
 			rep := &chunkdv1.Replicas{}
 			for _, n := range r {
@@ -605,6 +705,9 @@ func (s *State) Snapshot() []byte {
 			rec.Claims = append(rec.Claims, &chunkdv1.ChunkClaim{Index: int32(i), Id: cid[:]})
 		}
 		snap.Uploads = append(snap.Uploads, rec)
+	}
+	for _, t := range s.GCPendingAll() {
+		snap.GcPending = append(snap.GcPending, &chunkdv1.GCTarget{ChunkId: t.Chunk[:], Node: string(t.Node), FenceIncarnation: t.Incarnation, FenceSeq: t.Seq})
 	}
 	out, err := proto.MarshalOptions{Deterministic: true}.Marshal(snap)
 	if err != nil {
@@ -649,7 +752,11 @@ func Restore(data []byte) (*State, error) {
 	}
 	for _, u := range snap.GetUploads() {
 		b := u.GetBegin()
-		up := &Upload{ID: u.GetId(), Path: b.GetPath(), Expected: b.GetExpectedVersion(), Size: b.GetSize(), ChunkSize: int(b.GetChunkSize()), Claims: b.GetClaims(), Claimed: map[int]iface.ChunkID{}, LWW: b.GetLastWriterWins(), Touched: u.GetTouchedEpoch()}
+		up := &Upload{ID: u.GetId(), Path: b.GetPath(), Expected: b.GetExpectedVersion(), Size: b.GetSize(), ChunkSize: int(b.GetChunkSize()), Claims: b.GetClaims(), Claimed: map[int]iface.ChunkID{}, LWW: b.GetLastWriterWins(), Touched: u.GetTouchedEpoch(),
+			RequestID: string(b.GetRequestId())}
+		if up.RequestID != "" {
+			s.requests[up.RequestID] = up.ID
+		}
 		for _, r := range b.GetPlacement() {
 			var nodes []iface.NodeID
 			for _, n := range r.GetNodes() {
@@ -661,6 +768,15 @@ func Restore(data []byte) (*State, error) {
 		for _, cl := range u.GetClaims() {
 			s.claim(up, int(cl.GetIndex()), cl.GetId())
 		}
+	}
+	for _, t := range snap.GetGcPending() {
+		var id iface.ChunkID
+		copy(id[:], t.GetChunkId())
+		n := iface.NodeID(t.GetNode())
+		if s.gcPending[id] == nil {
+			s.gcPending[id] = map[iface.NodeID]GCTarget{}
+		}
+		s.gcPending[id][n] = GCTarget{Chunk: id, Node: n, Incarnation: t.GetFenceIncarnation(), Seq: t.GetFenceSeq()}
 	}
 	return s, nil
 }
