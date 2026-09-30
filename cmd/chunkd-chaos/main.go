@@ -24,7 +24,7 @@ import (
 
 // runReal runs the short suite against the compose cluster, one scenario at a
 // time, and returns the exit code.
-func runReal(gateway, project string, bound time.Duration) int {
+func runReal(gateway, project string, bound time.Duration, artifacts string) int {
 	t := compose.New(gateway, project)
 	logf := func(format string, args ...any) {
 		fmt.Printf("%s  %s\n", time.Now().Format("15:04:05"), fmt.Sprintf(format, args...))
@@ -32,7 +32,7 @@ func runReal(gateway, project string, bound time.Duration) int {
 	code := 0
 	for _, s := range chaos.ShortSuite() {
 		logf("start %s", s.Name)
-		r := chaos.RunTarget(s, t, bound, logf)
+		r := chaos.RunTarget(s, t, bound, logf, chaos.Options{Artifacts: artifacts})
 		for _, f := range r.Skipped {
 			logf("%s: skipped %v (sim only)", s.Name, f)
 		}
@@ -41,8 +41,8 @@ func runReal(gateway, project string, bound time.Duration) int {
 			code = 1
 			continue
 		}
-		logf("ok %s: longest under-replication %v (bound %v), %d repair copies, ops %v",
-			s.Name, r.LongestUnder.Round(time.Second), r.Bound, r.RepairCopies, r.Ops)
+		logf("ok %s: longest under-replication %v (bound %v), %d repair copies, %d ops linearizable, metadata leaders %v, ops %v",
+			s.Name, r.LongestUnder.Round(time.Second), r.Bound, r.RepairCopies, r.History, r.Leaders, r.Ops)
 	}
 	return code
 }
@@ -59,7 +59,7 @@ func main() {
 	project := flag.String("project", "chunkd", "real mode: compose project name")
 	bound := flag.Duration("bound", 90*time.Second, "real mode: longest allowed under-replication, and settle time after quiet")
 	metas := flag.Int("metas", 1, "sim mode: metadata peers; 3 adds leader kills, freezes, partitions and repeated elections")
-	artifacts := flag.String("artifacts", "", "sim mode: directory for the visualization of a history that is not linearizable")
+	artifacts := flag.String("artifacts", "", "directory for the visualization of a history that is not linearizable")
 	flag.Parse()
 
 	if *mode == "real" {
@@ -67,7 +67,7 @@ func main() {
 			fmt.Fprintln(os.Stderr, "chunkd-chaos: real mode runs the -short suite only")
 			os.Exit(2)
 		}
-		os.Exit(runReal(*gateway, *project, *bound))
+		os.Exit(runReal(*gateway, *project, *bound, *artifacts))
 	}
 
 	shape := chaos.DefaultShape()

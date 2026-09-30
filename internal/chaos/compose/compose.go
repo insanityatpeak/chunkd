@@ -21,6 +21,7 @@ type Target struct {
 	api     *httpclient.Client
 	project string
 	wiped   map[string]bool
+	killed  string // metadata peer KillLeader stopped, until ReviveLeader
 }
 
 var _ chaos.Target = (*Target)(nil)
@@ -40,10 +41,33 @@ func docker(args ...string) error {
 
 // Apply injects process-level faults. Message-level faults (loss,
 // duplication, per-node delay) need tc netem and NET_ADMIN in every
-// container; they run in the sim only.
+// container; they run in the sim only, as do the leader freeze and the
+// leader partition, which need per-link rules between metadata peers.
 func (t *Target) Apply(f chaos.Fault) error {
 	svc := string(f.Node)
 	switch f.Kind {
+	case chaos.KillLeader:
+		if t.killed != "" {
+			return fmt.Errorf("%s is still down", t.killed)
+		}
+		leader, err := t.leader(15 * time.Second)
+		if err != nil {
+			return err
+		}
+		if err := docker("compose", "kill", leader); err != nil {
+			return err
+		}
+		t.killed = leader
+		return nil
+	case chaos.ReviveLeader:
+		if t.killed == "" {
+			return fmt.Errorf("no killed leader to revive")
+		}
+		if err := docker("compose", "start", t.killed); err != nil {
+			return err
+		}
+		t.killed = ""
+		return nil
 	case chaos.Kill:
 		return docker("compose", "kill", svc)
 	case chaos.Restart:
@@ -72,30 +96,45 @@ func (t *Target) Apply(f chaos.Fault) error {
 	return chaos.ErrUnsupported
 }
 
+// leader returns the metadata leader the cluster view names (the service
+// has the peer's name), waiting out an election for up to limit.
+func (t *Target) leader(limit time.Duration) (string, error) {
+	deadline := time.Now().Add(limit)
+	for {
+		cl, err := t.Cluster()
+		if err == nil && cl.MetaLeader != "" {
+			return cl.MetaLeader, nil
+		}
+		if time.Now().After(deadline) {
+			return "", fmt.Errorf("no metadata leader in the cluster view after %v (last error: %v)", limit, err)
+		}
+		time.Sleep(500 * time.Millisecond)
+	}
+}
+
 func ctx() (context.Context, context.CancelFunc) {
 	return context.WithTimeout(context.Background(), 2*time.Minute)
 }
 
-func (t *Target) Put(path string, data []byte) error {
+func (t *Target) Put(path string, data []byte) (uint64, error) {
 	c, cancel := ctx()
 	defer cancel()
-	_, err := t.api.Put(c, path, bytes.NewReader(data), int64(len(data)), client.PutOptions{Overwrite: true})
-	return err
+	m, err := t.api.Put(c, path, bytes.NewReader(data), int64(len(data)), client.PutOptions{Overwrite: true})
+	return m.Version, err
 }
 
-func (t *Target) Get(path string) ([]byte, error) {
+func (t *Target) Get(path string) ([]byte, uint64, error) {
 	c, cancel := ctx()
 	defer cancel()
 	var buf bytes.Buffer
-	_, err := t.api.Get(c, path, &buf)
-	return buf.Bytes(), err
+	m, err := t.api.Get(c, path, &buf)
+	return buf.Bytes(), m.Version, err
 }
 
-func (t *Target) Delete(path string) error {
+func (t *Target) Delete(path string) (uint64, error) {
 	c, cancel := ctx()
 	defer cancel()
-	_, err := t.api.Delete(c, path, 0)
-	return err
+	return t.api.Delete(c, path, 0)
 }
 
 func (t *Target) Cluster() (client.Cluster, error) {

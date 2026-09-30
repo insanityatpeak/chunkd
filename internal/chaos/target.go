@@ -1,17 +1,21 @@
 package chaos
 
 import (
+	"cmp"
 	"crypto/sha256"
 	"errors"
 	"fmt"
 	"hash/fnv"
 	"maps"
 	"math/rand/v2"
+	"path/filepath"
 	"slices"
 	"sync"
 	"time"
 
 	"github.com/insanityatpeak/chunkd/internal/client"
+	"github.com/insanityatpeak/chunkd/internal/history"
+	"github.com/insanityatpeak/chunkd/internal/history/check"
 	"github.com/insanityatpeak/chunkd/internal/iface"
 )
 
@@ -20,12 +24,13 @@ var ErrUnsupported = errors.New("fault not supported by this target")
 
 // Target is a cluster the real-mode runner drives: separate processes on a
 // wall clock. Apply returns ErrUnsupported for faults the target cannot
-// inject; the runner skips them and says so.
+// inject; the runner skips them and says so. Put and Delete return the
+// version they created, Get the version it read, for the history check.
 type Target interface {
 	Apply(f Fault) error
-	Put(path string, data []byte) error
-	Get(path string) ([]byte, error)
-	Delete(path string) error
+	Put(path string, data []byte) (uint64, error)
+	Get(path string) ([]byte, uint64, error)
+	Delete(path string) (uint64, error)
 	Cluster() (client.Cluster, error)
 }
 
@@ -52,13 +57,20 @@ type RealReport struct {
 	Bound        time.Duration
 	RepairCopies uint64 // during this scenario
 	Ops          map[string]int
-	Err          error
+	// Leaders is each metadata leader the health poll saw, in order.
+	Leaders []string
+	// History is how many recorded operations the linearizability check covered.
+	History int
+	Err     error
 }
 
 // RunTarget runs s against t on the wall clock. Faults fire on their own
 // schedule while operations run. bound limits both the longest
-// under-replicated stretch and the time to settle after quiet.
-func RunTarget(s Scenario, t Target, bound time.Duration, logf func(string, ...any)) RealReport {
+// under-replicated stretch and the time to settle after quiet. Every path
+// lives under a namespace of its own for this run, so the recorded history
+// starts from empty paths even on a cluster earlier scenarios wrote to; the
+// content written is still Data(seed, the scenario's path, size).
+func RunTarget(s Scenario, t Target, bound time.Duration, logf func(string, ...any), opts Options) RealReport {
 	r := RealReport{Name: s.Name, Bound: bound, Ops: map[string]int{}}
 	c0, err := t.Cluster()
 	h0 := c0.Health
@@ -66,12 +78,21 @@ func RunTarget(s Scenario, t Target, bound time.Duration, logf func(string, ...a
 		r.Err = fmt.Errorf("%s: health before start: %w", s.Name, err)
 		return r
 	}
+	ns := fmt.Sprintf("/run-%d/%s", time.Now().UnixMilli(), s.Name)
+	rec := &history.Recorder{}
+	now := func() int64 { return time.Now().UnixNano() }
 
 	// Poll replication health once a second for the whole run.
 	var mu sync.Mutex
 	var underSince time.Time
 	var polls, lost int
 	var last client.Health
+	// Repair and corruption counters are the answering leader's, since its
+	// process started: across a leader change they restart, so the run adds
+	// up per-leader deltas. Copies in the second before a new leader's first
+	// poll are not counted.
+	prev, prevLeader := h0, c0.MetaLeader
+	var repaired, found uint64
 	allAlive := false
 	stop := make(chan struct{})
 	polled := make(chan struct{})
@@ -87,6 +108,14 @@ func RunTarget(s Scenario, t Target, bound time.Duration, logf func(string, ...a
 			if err == nil {
 				polls++
 				last = h
+				if cl.MetaLeader == prevLeader && h.RepairCompleted >= prev.RepairCompleted && h.CorruptReplicas >= prev.CorruptReplicas {
+					repaired += h.RepairCompleted - prev.RepairCompleted
+					found += h.CorruptReplicas - prev.CorruptReplicas
+				}
+				prev, prevLeader = h, cl.MetaLeader
+				if l := cl.MetaLeader; l != "" && (len(r.Leaders) == 0 || r.Leaders[len(r.Leaders)-1] != l) {
+					r.Leaders = append(r.Leaders, l)
+				}
 				allAlive = !slices.ContainsFunc(cl.Nodes, func(n client.NodeInfo) bool { return n.State != "alive" })
 				switch {
 				case h.UnderReplicated > 0 && underSince.IsZero():
@@ -109,6 +138,8 @@ func RunTarget(s Scenario, t Target, bound time.Duration, logf func(string, ...a
 		}
 	}()
 
+	var errs []error
+	killedLeader := false
 	start := time.Now()
 	faultsDone := make(chan struct{})
 	go func() {
@@ -116,16 +147,17 @@ func RunTarget(s Scenario, t Target, bound time.Duration, logf func(string, ...a
 		for _, f := range s.Faults {
 			time.Sleep(time.Until(start.Add(f.At)))
 			err := t.Apply(f)
+			mu.Lock()
 			switch {
 			case errors.Is(err, ErrUnsupported):
-				mu.Lock()
 				r.Skipped = append(r.Skipped, f)
-				mu.Unlock()
 			case err != nil:
-				logf("%s: %v failed: %v", s.Name, f, err)
+				errs = append(errs, fmt.Errorf("%v: %w", f, err))
 			default:
+				killedLeader = killedLeader || f.Kind == KillLeader
 				logf("%s: %v", s.Name, f)
 			}
+			mu.Unlock()
 		}
 	}()
 
@@ -135,35 +167,43 @@ func RunTarget(s Scenario, t Target, bound time.Duration, logf func(string, ...a
 	}
 	acked := map[string]*ack{}
 	written := map[string][][32]byte{} // every content sent to a path
-	var errs []error
 	for _, op := range s.Ops {
 		time.Sleep(time.Until(start.Add(op.At)))
+		p := ns + op.Path
 		var err error
+		call := now()
 		switch op.Kind {
 		case Put:
 			data := Data(s.Seed, op.Path, op.Size)
 			sum := sha256.Sum256(data)
-			written[op.Path] = append(written[op.Path], sum)
-			err = t.Put(op.Path, data)
-			switch a := acked[op.Path]; {
+			written[p] = append(written[p], sum)
+			var v uint64
+			v, err = t.Put(p, data)
+			rec.Put(1, p, sum, call, now(), v, err)
+			switch a := acked[p]; {
 			case err == nil:
-				acked[op.Path] = &ack{hashes: [][32]byte{sum}}
+				acked[p] = &ack{hashes: [][32]byte{sum}}
 			case a != nil:
 				a.hashes = append(a.hashes, sum)
 			}
 		case Get:
 			var data []byte
-			data, err = t.Get(op.Path)
-			// Invariant: a read never returns bytes nobody wrote there
-			// (paths from earlier scenarios are not tracked).
-			if w, tracked := written[op.Path]; err == nil && tracked && !slices.Contains(w, sha256.Sum256(data)) {
+			var v uint64
+			data, v, err = t.Get(p)
+			rec.Read(1, p, call, now(), v, sha256.Sum256(data), err)
+			// Invariant: a read never returns bytes nobody wrote there.
+			if err == nil && !slices.Contains(written[p], sha256.Sum256(data)) {
+				mu.Lock()
 				errs = append(errs, fmt.Errorf("a read of %s at %v returned %d bytes never written there", op.Path, op.At, len(data)))
+				mu.Unlock()
 			}
 		case Delete:
-			err = t.Delete(op.Path)
-			switch a := acked[op.Path]; {
+			var v uint64
+			v, err = t.Delete(p)
+			rec.Delete(1, p, call, now(), v, err)
+			switch a := acked[p]; {
 			case err == nil:
-				delete(acked, op.Path)
+				delete(acked, p)
 			case a != nil:
 				a.gone = true
 			}
@@ -183,18 +223,17 @@ func RunTarget(s Scenario, t Target, bound time.Duration, logf func(string, ...a
 	quiet := time.Now()
 	for {
 		mu.Lock()
-		h, alive := last, allAlive
+		h, alive, seen := last, allAlive, int(found)
 		mu.Unlock()
-		found := int(h.CorruptReplicas - h0.CorruptReplicas)
 		// Settled also means every node is alive: a returning node is
 		// suspect first, and until then its extra copies do not count as
 		// over-replication, so the next scenario would start mid-reconcile.
-		if h.UnderReplicated == 0 && h.OverReplicated == 0 && alive && found >= s.WantCorrupt && time.Since(quiet) > 2*time.Second {
+		if h.UnderReplicated == 0 && h.OverReplicated == 0 && alive && seen >= s.WantCorrupt && time.Since(quiet) > 2*time.Second {
 			break
 		}
 		if time.Since(quiet) > bound {
 			errs = append(errs, fmt.Errorf("replication not settled %v after quiet: %d under, %d over, all nodes alive %v, %d of %d rotted copies found",
-				bound, h.UnderReplicated, h.OverReplicated, alive, found, s.WantCorrupt))
+				bound, h.UnderReplicated, h.OverReplicated, alive, seen, s.WantCorrupt))
 			break
 		}
 		time.Sleep(500 * time.Millisecond)
@@ -204,7 +243,9 @@ func RunTarget(s Scenario, t Target, bound time.Duration, logf func(string, ...a
 
 	for _, p := range slices.Sorted(maps.Keys(acked)) {
 		a := acked[p]
-		data, err := t.Get(p)
+		call := now()
+		data, v, err := t.Get(p)
+		rec.Read(1, p, call, now(), v, sha256.Sum256(data), err)
 		if err != nil {
 			if !(a.gone && iface.CodeOf(err) == iface.CodeNotFound) {
 				errs = append(errs, fmt.Errorf("acknowledged %s unreadable: %w", p, err))
@@ -221,12 +262,28 @@ func RunTarget(s Scenario, t Target, bound time.Duration, logf func(string, ...a
 	if r.LongestUnder > bound {
 		errs = append(errs, fmt.Errorf("chunks under-replicated for %v, bound %v", r.LongestUnder, bound))
 	}
-	r.RepairCopies = last.RepairCompleted - h0.RepairCompleted
+	r.RepairCopies = repaired
 	if s.NoRepair && r.RepairCopies > 0 {
 		errs = append(errs, fmt.Errorf("%d repair copies for a transient fault", r.RepairCopies))
 	}
 	if polls == 0 {
 		errs = append(errs, errors.New("health was never readable"))
+	}
+	if killedLeader && len(r.Leaders) < 2 {
+		errs = append(errs, fmt.Errorf("the metadata leader was killed but no failover was seen (leaders %v)", r.Leaders))
+	}
+	res := check.Check(rec.Ops())
+	r.History = res.Ops
+	if err := res.Err(); err != nil {
+		if opts.Artifacts != "" {
+			art := filepath.Join(opts.Artifacts, s.Name+".html")
+			if werr := writeArtifact(art, res); werr != nil {
+				err = fmt.Errorf("%w (visualization not written: %v)", err, werr)
+			} else {
+				err = fmt.Errorf("%w (visualization: %s)", err, art)
+			}
+		}
+		errs = append(errs, err)
 	}
 	if err := errors.Join(errs...); err != nil {
 		r.Err = fmt.Errorf("%s: %w\n%s", s.Name, err, s)
@@ -288,5 +345,31 @@ func ShortSuite() []Scenario {
 			Ops:    append(preload(6), reads(8*time.Second, 35*time.Second, 6)...),
 			Faults: []Fault{{At: 6 * time.Second, Kind: Freeze, Node: "node-1"}, {At: 20 * time.Second, Kind: Thaw, Node: "node-1"}},
 		},
+		{
+			// TestKillLeaderMidUpload, real mode: the metadata leader (found
+			// from the cluster view when the fault fires) is killed while
+			// writes go on every 2 s, then restarted over its log 20 s later.
+			// The gateway's client finds the new leader; every acknowledged
+			// upload reads back, the history is linearizable, and a failover
+			// must have been seen.
+			Name: "kill-meta-leader", Seed: 105, Nodes: 5, Length: 60 * time.Second,
+			Ops:    sorted(append(append(preload(6), reads(8*time.Second, 55*time.Second, 6)...), writes(10*time.Second, 50*time.Second)...)),
+			Faults: []Fault{{At: 15 * time.Second, Kind: KillLeader}, {At: 35 * time.Second, Kind: ReviveLeader}},
+		},
 	}
+}
+
+// writes puts a file of 256 KiB and up every 2 s in [from, to).
+func writes(from, to time.Duration) []Op {
+	var ops []Op
+	for t, i := from, 0; t < to; t, i = t+2*time.Second, i+1 {
+		ops = append(ops, Op{At: t, Kind: Put, Path: fmt.Sprintf("/chaos/w%02d", i), Size: 256<<10 + int64(i)*4099})
+	}
+	return ops
+}
+
+// sorted orders ops by time; RunTarget issues them in slice order.
+func sorted(ops []Op) []Op {
+	slices.SortStableFunc(ops, func(a, b Op) int { return cmp.Compare(a.At, b.At) })
+	return ops
 }
