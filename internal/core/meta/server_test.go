@@ -45,6 +45,9 @@ func newEnv(t *testing.T, nodes int) *env {
 
 func (e *env) startMeta(t *testing.T) {
 	t.Helper()
+	if e.srv != nil {
+		e.srv.Stop() // a restart replaces the process; the old one must not share its store
+	}
 	cfg := meta.DefaultConfig("meta")
 	cfg.ChunkSize = 4
 	srv, err := meta.NewServer(context.Background(), meta.Deps{Clock: e.clock, Net: e.net, Store: e.store, Rand: e.rng, Log: e.log}, cfg)
@@ -227,6 +230,7 @@ func TestSnapshotDuringOperationRecovers(t *testing.T) {
 	e := newEnv(t, 3)
 	cfg := meta.DefaultConfig("meta")
 	cfg.ChunkSize, cfg.SnapshotEvery = 4, 5
+	e.srv.Stop() // the first server's consensus node must not share the store
 	srv, err := meta.NewServer(context.Background(), meta.Deps{Clock: e.clock, Net: e.net, Store: e.store, Rand: e.rng, Log: e.log}, cfg)
 	if err != nil {
 		t.Fatal(err)
@@ -239,8 +243,10 @@ func TestSnapshotDuringOperationRecovers(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
-	if at, _, _ := e.store.LoadSnapshot(context.Background()); at != 10 {
-		t.Fatalf("snapshot at %d, want 10", at)
+	// Raft numbers its own entries too (the bootstrap membership, the leader's
+	// no-op), so assert the shape: a snapshot, and a log tail after it.
+	if at, _, _ := e.store.LoadSnapshot(context.Background()); at == 0 || at >= e.srv.Applied() {
+		t.Fatalf("snapshot at %d with %d applied: want a snapshot and entries after it", at, e.srv.Applied())
 	}
 	before := e.srv.State().Snapshot()
 	e.startMeta(t)
@@ -372,5 +378,87 @@ func TestCASConflict(t *testing.T) {
 	st, err := e.stat(t, "/f")
 	if err != nil || st.GetVersion() != 1 || string(st.GetSha256()) != string(winner) {
 		t.Fatalf("stat after the race: %+v, %v", st, err)
+	}
+}
+
+// Three metadata peers: only the leader proposes epochs and serves requests,
+// a follower names the leader, every peer applies the same log, and a new
+// leader takes over when the old one dies.
+func TestMetadataGroupRedirectsReplicatesAndFailsOver(t *testing.T) {
+	clock := sim.NewClock()
+	rng := sim.NewRand(3)
+	log := slog.New(slog.NewTextHandler(io.Discard, nil))
+	net := sim.NewNet(clock, rng, sim.Faults{MinDelay: time.Millisecond, MaxDelay: 5 * time.Millisecond})
+	peers := []iface.NodeID{"meta-1", "meta-2", "meta-3"}
+	srvs := map[iface.NodeID]*meta.Server{}
+	for _, id := range peers {
+		cfg := meta.DefaultConfig(id)
+		cfg.Peers = peers
+		srv, err := meta.NewServer(context.Background(), meta.Deps{Clock: clock, Net: net, Store: sim.NewMetaStore(), Rand: rng, Log: log}, cfg)
+		if err != nil {
+			t.Fatal(err)
+		}
+		srv.Start()
+		srvs[id] = srv
+	}
+	caller := net.NewCaller("client", 10*time.Second)
+	leader := func(alive ...iface.NodeID) iface.NodeID {
+		t.Helper()
+		var l iface.NodeID
+		for _, id := range alive {
+			if srvs[id].Raft().Ready {
+				if l != "" {
+					t.Fatalf("two ready leaders: %s and %s", l, id)
+				}
+				l = id
+			}
+		}
+		if l == "" {
+			t.Fatal("no ready leader")
+		}
+		return l
+	}
+	clock.Advance(5 * time.Second)
+	l := leader(peers...)
+
+	for _, id := range peers {
+		r := caller.Do(context.Background(), []iface.Call{{To: id, Kind: wire.KindList, Body: wire.Marshal(&chunkdv1.ListRequest{Prefix: "/"})}})
+		switch {
+		case id == l && r[0].Err != nil:
+			t.Fatalf("leader %s: %v", id, r[0].Err)
+		case id != l && (iface.CodeOf(r[0].Err) != iface.CodeNotLeader || r[0].Err.(*iface.Error).Msg != string(l)):
+			t.Fatalf("follower %s: %v, want NotLeader naming %s", id, r[0].Err, l)
+		}
+	}
+
+	// One epoch per EpochEvery, not one per peer.
+	clock.Advance(35 * time.Second)
+	for _, id := range peers {
+		if e := srvs[id].State().Epoch(); e != 1 {
+			t.Fatalf("%s at epoch %d after one epoch interval, want 1", id, e)
+		}
+	}
+
+	srvs[l].Stop()
+	net.Crash(l)
+	var rest []iface.NodeID
+	for _, id := range peers {
+		if id != l {
+			rest = append(rest, id)
+		}
+	}
+	clock.Advance(10 * time.Second)
+	nl := leader(rest...)
+	if nl == l {
+		t.Fatal("the dead peer still leads")
+	}
+	clock.Advance(35 * time.Second)
+	for _, id := range rest {
+		if e := srvs[id].State().Epoch(); e != 2 {
+			t.Fatalf("%s at epoch %d after failover and another interval, want 2", id, e)
+		}
+	}
+	if string(srvs[rest[0]].State().Snapshot()) != string(srvs[rest[1]].State().Snapshot()) {
+		t.Fatal("surviving peers' states differ")
 	}
 }

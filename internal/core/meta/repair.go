@@ -101,6 +101,9 @@ func (s *Server) corrupted(node iface.NodeID, corrupt, removed []iface.ChunkID) 
 // HDFS DataNodes throttle client-reported bad blocks the same way scans
 // are throttled.
 func (s *Server) suspect(m iface.Message, respond iface.Responder) {
+	if !s.requireLeader(respond) {
+		return
+	}
 	var req chunkdv1.SuspectRequest
 	if err := wire.Decode(m.Body, &req); err != nil {
 		respond(nil, err)

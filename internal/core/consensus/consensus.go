@@ -11,6 +11,7 @@
 package consensus
 
 import (
+	"bytes"
 	"context"
 	"encoding/binary"
 	"errors"
@@ -111,6 +112,11 @@ type Status struct {
 type pending struct {
 	cb      func(any, error)
 	expires iface.Instant
+	// data is the proposed payload. An applied entry answers the callback
+	// only if its payload matches: ids restart at 1 with every incarnation,
+	// so an entry the previous incarnation logged could otherwise deliver its
+	// result to a new proposal that reused the id.
+	data []byte
 }
 
 type readReq struct {
@@ -171,10 +177,6 @@ func New(ctx context.Context, d Deps, cfg Config, fsm FSM) (*Node, error) {
 	}
 	n := &Node{d: d, cfg: cfg, fsm: fsm, mem: raft.NewMemoryStorage(), voters: slices.Clone(cfg.Peers),
 		proposals: map[uint64]*pending{}, confWait: map[uint64]*pending{}, reads: map[uint64]*readReq{}, seen: map[uint64]iface.Instant{}}
-	// Ids from a random base so a callback registered before a restart can
-	// never collide with an entry the previous incarnation logged.
-	n.nextProp, n.nextRead = d.Rand.Uint64(), d.Rand.Uint64()
-
 	snapAt, blob, err := d.Store.LoadSnapshot(ctx)
 	at := uint64(snapAt)
 	if err != nil {
@@ -245,7 +247,14 @@ func New(ctx context.Context, d Deps, cfg Config, fsm FSM) (*Node, error) {
 		}
 	}
 	n.lastHeard = d.Clock.Now()
-	n.rearm()
+	if len(n.voters) == 1 {
+		// A group of one never waits for anyone: draw nothing from the
+		// shared RNG, so adding consensus leaves a single server's run
+		// exactly as it was.
+		n.electionAt = cfg.ElectionTimeout
+	} else {
+		n.rearm()
+	}
 	n.term = n.rn.BasicStatus().GetTerm()
 	n.process()
 	return n, nil
@@ -421,7 +430,7 @@ func (n *Node) Propose(data []byte, cb func(any, error)) {
 		cb(nil, iface.Errorf(iface.CodeUnavailable, "proposal dropped: %v", err))
 		return
 	}
-	n.proposals[id] = &pending{cb: cb, expires: n.d.Clock.Now().Add(n.cfg.RequestTimeout)}
+	n.proposals[id] = &pending{cb: cb, expires: n.d.Clock.Now().Add(n.cfg.RequestTimeout), data: data}
 	n.process()
 }
 
@@ -602,7 +611,7 @@ func (n *Node) applyEntry(e *pb.Entry) {
 		if len(e.GetData()) >= 8 {
 			id := binary.LittleEndian.Uint64(e.GetData())
 			res := n.fsm.Apply(e.GetIndex(), e.GetData()[8:])
-			if p, ok := n.proposals[id]; ok {
+			if p, ok := n.proposals[id]; ok && bytes.Equal(p.data, e.GetData()[8:]) {
 				delete(n.proposals, id)
 				n.later(func() { p.cb(res, nil) })
 			}

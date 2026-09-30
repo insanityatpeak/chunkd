@@ -198,6 +198,11 @@ func (c *Cluster) logger(id iface.NodeID) *slog.Logger {
 }
 
 func (c *Cluster) startMeta() error {
+	// The old process is gone: its timers and consensus node must not go on
+	// writing to the store the new one recovers from.
+	if c.meta != nil {
+		c.meta.Stop()
+	}
 	srv, err := meta.NewServer(context.Background(), meta.Deps{Clock: c.clock, Net: c.net, Store: c.metaStore, Rand: c.rng, Log: c.logger(MetaID)}, c.cfg.Meta)
 	if err != nil {
 		return err

@@ -173,6 +173,14 @@ type Scheduler struct {
 
 	wake   iface.Timer
 	wakeAt iface.Instant
+
+	// active: this scheduler may send commands. Only the metadata leader's
+	// is; a deposed leader must stop at once, since a command from it would
+	// race the new leader's (SetActive).
+	active bool
+	// graceUntil: after SetActive(true), a chunk with more than one copy left
+	// waits until then; zero for a scheduler never deactivated.
+	graceUntil iface.Instant
 }
 
 // New returns a scheduler that acts through send.
@@ -186,7 +194,34 @@ func New(cfg Config, clock iface.Clock, view View, send Sender) *Scheduler {
 		fresh:    map[iface.ChunkID]iface.Instant{},
 		src:      map[iface.NodeID]int{},
 		dst:      map[iface.NodeID]int{},
+		active:   true,
 	}
+}
+
+// SetActive turns command sending on or off. Turning it off drops all queue
+// and in-flight bookkeeping: it is soft state that belongs to one leader's
+// term, and copies already on their way finish harmlessly (the next leader
+// trims any surplus). Turning it on scans, and treats every chunk as freshly
+// committed for UploadGrace, since the new leader cannot know which commits
+// have reports still in flight.
+func (s *Scheduler) SetActive(on bool) {
+	if s.active == on {
+		return
+	}
+	s.active = on
+	if !on {
+		s.q, s.queued = nil, map[iface.ChunkID]*item{}
+		s.inflight, s.trimming = map[iface.ChunkID]*Copy{}, map[iface.ChunkID]Trim{}
+		s.src, s.dst = map[iface.NodeID]int{}, map[iface.NodeID]int{}
+		s.fresh = map[iface.ChunkID]iface.Instant{}
+		if s.wake != nil {
+			s.wake.Stop()
+			s.wake = nil
+		}
+		return
+	}
+	s.graceUntil = s.clock.Now().Add(s.cfg.UploadGrace)
+	s.Scan()
 }
 
 // Start begins periodic scans.
@@ -242,6 +277,9 @@ func (s *Scheduler) assess(id iface.ChunkID, now iface.Instant) assessment {
 		// Ready once enough excuses expire that the gap is real.
 		a.readyAt = excused[a.live+len(excused)-s.cfg.Replicas]
 	}
+	if a.live > 1 && now < s.graceUntil {
+		a.readyAt = max(a.readyAt, s.graceUntil)
+	}
 	// A just-committed chunk's missing report is usually in flight, not
 	// lost: wait out the grace (bugs-found #9).
 	if t, ok := s.fresh[id]; ok {
@@ -266,6 +304,9 @@ func (s *Scheduler) Fresh(ids []iface.ChunkID) {
 // Scan re-evaluates every wanted chunk, queues the ones that need a copy
 // now and schedules a wake-up for the ones still inside the delay.
 func (s *Scheduler) Scan() {
+	if !s.active {
+		return
+	}
 	now := s.clock.Now()
 	waiting, lost := 0, 0
 	next := iface.Instant(-1)
@@ -306,6 +347,9 @@ func (s *Scheduler) Scan() {
 // failed verification and was quarantined) and queues the short ones at
 // once: the repair delay only excuses holders that are dead and may return.
 func (s *Scheduler) Recheck(ids []iface.ChunkID) {
+	if !s.active {
+		return
+	}
 	now := s.clock.Now()
 	for _, id := range ids {
 		if _, ok := s.view.Want(id); !ok || s.inflight[id] != nil {
@@ -355,6 +399,9 @@ func (s *Scheduler) wakeAtLeast(at iface.Instant) {
 // allow. Items blocked on a per-node limit are skipped, not dropped, so one
 // busy node does not stall the rest of the queue.
 func (s *Scheduler) dispatch() {
+	if !s.active {
+		return
+	}
 	now := s.clock.Now()
 	var blocked []*item
 	defer func() {
@@ -443,6 +490,9 @@ func (s *Scheduler) trim(id iface.ChunkID, sure []Holder) {
 }
 
 func (s *Scheduler) sendTrim(id iface.ChunkID, victim iface.NodeID) {
+	if !s.active {
+		return
+	}
 	s.nextID++
 	t := Trim{ID: s.nextID, Chunk: id, Node: victim}
 	s.trimming[id] = t
@@ -571,6 +621,9 @@ func (s *Scheduler) finish(c *Copy, o Outcome) {
 // Reported tells the scheduler node now holds chunks (a block report). A
 // report from a copy's target completes it.
 func (s *Scheduler) Reported(node iface.NodeID, chunks []iface.ChunkID) {
+	if !s.active {
+		return
+	}
 	for _, id := range chunks {
 		if c := s.inflight[id]; c != nil && c.Target == node {
 			s.stats.Completed++
@@ -587,6 +640,9 @@ func (s *Scheduler) Reported(node iface.NodeID, chunks []iface.ChunkID) {
 
 // Failed reports that a copy's target could not complete it.
 func (s *Scheduler) Failed(id uint64, chunk iface.ChunkID) {
+	if !s.active {
+		return
+	}
 	if c := s.inflight[chunk]; c != nil && c.ID == id {
 		s.stats.Failed++
 		s.finish(c, Failed)
