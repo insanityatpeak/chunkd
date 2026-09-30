@@ -13,6 +13,7 @@ import (
 	"net/http"
 	"os"
 	"os/signal"
+	"slices"
 	"strings"
 	"syscall"
 	"time"
@@ -135,6 +136,29 @@ func ParsePeers(s string) (map[iface.NodeID]string, error) {
 		out[iface.NodeID(id)] = addr
 	}
 	return out, nil
+}
+
+// ParseGroup parses a metadata group, "id=host:port,id=host:port", or a bare
+// "host:port" for a single server called def. The IDs come back sorted: a
+// peer's Raft ID is its position in the list, so every process must derive
+// the same order from the same text.
+func ParseGroup(s string, def iface.NodeID) ([]iface.NodeID, map[iface.NodeID]string, error) {
+	if !strings.Contains(s, "=") {
+		if strings.TrimSpace(s) == "" {
+			return nil, nil, fmt.Errorf("empty metadata address")
+		}
+		return []iface.NodeID{def}, map[iface.NodeID]string{def: strings.TrimSpace(s)}, nil
+	}
+	addrs, err := ParsePeers(s)
+	if err != nil {
+		return nil, nil, err
+	}
+	ids := make([]iface.NodeID, 0, len(addrs))
+	for id := range addrs {
+		ids = append(ids, id)
+	}
+	slices.Sort(ids)
+	return ids, addrs, nil
 }
 
 // Env returns the environment variable key, or def if unset. Flags default to

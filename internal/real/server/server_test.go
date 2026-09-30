@@ -36,3 +36,35 @@ func TestParsePeers(t *testing.T) {
 		}
 	}
 }
+
+func TestParseGroup(t *testing.T) {
+	tests := []struct {
+		in      string
+		wantIDs []iface.NodeID
+		wantErr bool
+	}{
+		{"localhost:7000", []iface.NodeID{"meta-1"}, false},
+		{" host:7000 ", []iface.NodeID{"meta-1"}, false},
+		{"meta-3=c:7000,meta-1=a:7000,meta-2=b:7000", []iface.NodeID{"meta-1", "meta-2", "meta-3"}, false},
+		{"", nil, true},
+		{"a=", nil, true},
+	}
+	for _, tt := range tests {
+		ids, addrs, err := ParseGroup(tt.in, "meta-1")
+		if (err != nil) != tt.wantErr {
+			t.Errorf("ParseGroup(%q) err = %v, wantErr %v", tt.in, err, tt.wantErr)
+			continue
+		}
+		if len(ids) != len(tt.wantIDs) || len(addrs) != len(tt.wantIDs) {
+			t.Errorf("ParseGroup(%q) = %v %v, want ids %v", tt.in, ids, addrs, tt.wantIDs)
+			continue
+		}
+		for i := range ids {
+			// The order is the peers' Raft IDs: identical on every process.
+			if ids[i] != tt.wantIDs[i] {
+				t.Errorf("ParseGroup(%q) ids = %v, want %v", tt.in, ids, tt.wantIDs)
+				break
+			}
+		}
+	}
+}

@@ -25,8 +25,10 @@ const MetaID iface.NodeID = "meta-1"
 
 // Config sizes the cluster and its network.
 type Config struct {
-	Nodes  int
-	Racks  int
+	Nodes int
+	Racks int
+	// Metas is the size of the metadata group; 0 or 1 is a single server.
+	Metas  int
 	Meta   meta.Config
 	Faults sim.Faults
 	// CallTimeout bounds each client RPC in simulated time.
@@ -50,17 +52,16 @@ func DefaultConfig() Config {
 
 // Cluster is a running simulation. Like the sim, it is single-threaded.
 type Cluster struct {
-	seed      uint64
-	cfg       Config
-	clock     *sim.Clock
-	net       *sim.Net
-	rng       iface.Rand
-	log       io.Writer
-	metaStore *sim.MetaStore
-	meta      *meta.Server
-	nodes     []*Node
-	client    *client.Direct
-	acked     map[string]*acked
+	seed   uint64
+	cfg    Config
+	clock  *sim.Clock
+	net    *sim.Net
+	rng    iface.Rand
+	log    io.Writer
+	metas  []*metaPeer
+	nodes  []*Node
+	client *client.Direct
+	acked  map[string]*acked
 	// written holds every content ever sent to a path, acknowledged or
 	// not; badReads are successful reads that returned anything else.
 	written  map[string][][32]byte
@@ -81,11 +82,16 @@ type Node struct {
 // New builds and starts a cluster whose every choice derives from seed. Logs
 // go to w; pass io.Discard to silence them.
 func New(seed uint64, cfg Config, w io.Writer) *Cluster {
-	c := &Cluster{seed: seed, cfg: cfg, clock: sim.NewClock(), rng: sim.NewRand(seed), log: w, metaStore: sim.NewMetaStore(), acked: map[string]*acked{},
+	c := &Cluster{seed: seed, cfg: cfg, clock: sim.NewClock(), rng: sim.NewRand(seed), log: w, acked: map[string]*acked{},
 		written: map[string][][32]byte{}}
 	c.net = sim.NewNet(c.clock, c.rng, cfg.Faults)
-	if err := c.startMeta(); err != nil {
-		panic(err) // an empty in-memory log cannot fail to recover
+	for i := range max(cfg.Metas, 1) { // all of them exist before any starts: each needs the full peer list
+		c.metas = append(c.metas, &metaPeer{id: metaName(i), store: sim.NewMetaStore()})
+	}
+	for _, p := range c.metas {
+		if err := c.startMeta(p); err != nil {
+			panic(err) // an empty in-memory log cannot fail to recover
+		}
 	}
 	for i := 1; i <= cfg.Nodes; i++ {
 		id := iface.NodeID(fmt.Sprintf("node-%d", i))
@@ -99,6 +105,7 @@ func New(seed uint64, cfg Config, w io.Writer) *Cluster {
 // startNode runs a fresh node process (new incarnation) over nd's store.
 func (c *Cluster) startNode(id iface.NodeID, nd *Node) {
 	cfg := node.DefaultConfig(id, MetaID, nd.Rack)
+	cfg.Metas = c.MetaIDs()
 	cfg.Scrub = c.cfg.Scrub
 	n, err := node.New(node.Deps{Clock: c.clock, Net: c.net, Async: c.net.AsyncCaller(id, c.cfg.CallTimeout), Store: nd.Store, Rand: c.rng, Log: c.logger(id)}, cfg)
 	if err != nil {
@@ -133,7 +140,7 @@ func (c *Cluster) RestartNode(id iface.NodeID) {
 
 // demoFiles uploads 8 files of 5 MiB if the cluster holds none.
 func (c *Cluster) demoFiles() error {
-	if len(c.meta.State().List("/")) > 0 {
+	if len(c.Meta().State().List("/")) > 0 {
 		return nil
 	}
 	for i := range 8 {
@@ -201,25 +208,75 @@ func (c *Cluster) logger(id iface.NodeID) *slog.Logger {
 	return obs.NewLogger(c.log, string(id), slog.LevelInfo)
 }
 
-func (c *Cluster) startMeta() error {
+// metaPeer is one metadata server process and the disk it recovers from.
+type metaPeer struct {
+	id    iface.NodeID
+	store *sim.MetaStore
+	srv   *meta.Server
+}
+
+// metaName names peer i (from 0): meta-1, meta-2, …
+func metaName(i int) iface.NodeID { return iface.NodeID(fmt.Sprintf("meta-%d", i+1)) }
+
+// MetaIDs are the metadata peers' node IDs.
+func (c *Cluster) MetaIDs() []iface.NodeID {
+	ids := make([]iface.NodeID, len(c.metas))
+	for i, p := range c.metas {
+		ids[i] = p.id
+	}
+	return ids
+}
+
+func (c *Cluster) metaPeer(id iface.NodeID) *metaPeer {
+	for _, p := range c.metas {
+		if p.id == id {
+			return p
+		}
+	}
+	panic(fmt.Sprintf("no metadata peer %s", id))
+}
+
+// startMeta runs a fresh process for p over its own log.
+func (c *Cluster) startMeta(p *metaPeer) error {
 	// The old process is gone: its timers and consensus node must not go on
 	// writing to the store the new one recovers from.
-	if c.meta != nil {
-		c.meta.Stop()
+	if p.srv != nil {
+		p.srv.Stop()
 	}
-	srv, err := meta.NewServer(context.Background(), meta.Deps{Clock: c.clock, Net: c.net, Store: c.metaStore, Rand: c.rng, Log: c.logger(MetaID)}, c.cfg.Meta)
+	cfg := c.cfg.Meta
+	cfg.ID = p.id
+	if len(c.metas) > 1 {
+		cfg.Peers = c.MetaIDs()
+	}
+	srv, err := meta.NewServer(context.Background(), meta.Deps{Clock: c.clock, Net: c.net, Store: p.store, Rand: c.rng, Log: c.logger(p.id)}, cfg)
 	if err != nil {
 		return err
 	}
 	srv.Start()
-	c.meta = srv
+	p.srv = srv
 	return nil
 }
 
-// RestartMeta replaces the metadata server with a fresh one recovered from
-// the same log, as after a process crash. Locations come back through block
+// RestartMeta replaces the first metadata server with a fresh one recovered
+// from its log, as after a process crash. Locations come back through block
 // reports.
-func (c *Cluster) RestartMeta() error { return c.startMeta() }
+func (c *Cluster) RestartMeta() error { return c.startMeta(c.metas[0]) }
+
+// KillMeta stops a metadata peer's process and cuts it off. Its log survives.
+func (c *Cluster) KillMeta(id iface.NodeID) {
+	p := c.metaPeer(id)
+	p.srv.Stop()
+	c.net.Crash(id)
+}
+
+// ReviveMeta starts a new process for a killed peer over the same log.
+func (c *Cluster) ReviveMeta(id iface.NodeID) error {
+	c.net.Restart(id)
+	return c.startMeta(c.metaPeer(id))
+}
+
+// MetaPeer returns peer id's server, for tests that inspect one peer.
+func (c *Cluster) MetaPeer(id iface.NodeID) *meta.Server { return c.metaPeer(id).srv }
 
 // AfterFunc runs f at Now()+d on the simulation's clock, including while
 // a client call is advancing it. Chaos schedules faults this way so they
@@ -250,8 +307,43 @@ func (c *Cluster) Now() iface.Instant { return c.clock.Now() }
 // Net exposes the network for fault injection.
 func (c *Cluster) Net() *sim.Net { return c.net }
 
-// Meta exposes the metadata server. Only touch it between Ticks.
-func (c *Cluster) Meta() *meta.Server { return c.meta }
+// Meta exposes the metadata leader, or while an election runs the live peer
+// that has applied the most. With a single server it is that server. Only
+// touch it between Ticks.
+func (c *Cluster) Meta() *meta.Server {
+	best := c.metas[0].srv
+	for _, p := range c.metas {
+		if c.net.Crashed(p.id) {
+			continue
+		}
+		if p.srv.Raft().Ready {
+			return p.srv
+		}
+		if c.net.Crashed(c.metaID(best)) || p.srv.Applied() > best.Applied() {
+			best = p.srv
+		}
+	}
+	return best
+}
+
+func (c *Cluster) metaID(srv *meta.Server) iface.NodeID {
+	for _, p := range c.metas {
+		if p.srv == srv {
+			return p.id
+		}
+	}
+	return ""
+}
+
+// MetaLeader returns the ready leader's ID, or "" during an election.
+func (c *Cluster) MetaLeader() iface.NodeID {
+	for _, p := range c.metas {
+		if !c.net.Crashed(p.id) && p.srv.Raft().Ready {
+			return p.id
+		}
+	}
+	return ""
+}
 
 // Nodes returns the storage nodes in ID order.
 func (c *Cluster) Nodes() []*Node { return c.nodes }

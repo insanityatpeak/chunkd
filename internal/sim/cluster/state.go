@@ -71,9 +71,9 @@ func (c *Cluster) State() State { return c.StateSince(0) }
 // StateSince returns the current snapshot with the events after seq.
 func (c *Cluster) StateSince(seq uint64) State {
 	now := c.clock.Now()
-	view := client.ClusterFromProto(c.meta.ClusterView(seq))
+	view := client.ClusterFromProto(c.Meta().ClusterView(seq))
 	s := State{Seed: c.seed, NowMs: int64(now) / int64(time.Millisecond), Net: c.net.Stats(), Files: []FileView{},
-		Meta:   MetaView{ID: MetaID, Applied: uint64(c.meta.Applied()), Pending: c.meta.State().PendingUploads()},
+		Meta:   MetaView{ID: c.metaID(c.Meta()), Applied: uint64(c.Meta().Applied()), Pending: c.Meta().State().PendingUploads()},
 		Health: view.Health, Copies: view.Copies, Events: view.Events, EventSeq: view.EventSeq, Reads: slices.Clone(c.readLog),
 		ReferencedBytes: view.ReferencedBytes, DistinctBytes: view.DistinctBytes, Epoch: view.Epoch, GC: view.GC, Deleted: view.Deleted}
 	if s.Reads == nil {
@@ -97,7 +97,7 @@ func (c *Cluster) StateSince(seq uint64) State {
 	for _, f := range view.FileHealth {
 		health[f.Path] = f
 	}
-	for _, e := range c.meta.State().List("/") {
+	for _, e := range c.Meta().State().List("/") {
 		h := health[e.Path]
 		s.Files = append(s.Files, FileView{Path: e.Path, Version: e.V, Size: e.Size, Chunks: len(e.Chunks), UnderReplicated: h.UnderReplicated, MinLive: h.MinLive})
 	}

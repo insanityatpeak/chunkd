@@ -14,23 +14,38 @@ import (
 	"github.com/insanityatpeak/chunkd/internal/iface"
 	"github.com/insanityatpeak/chunkd/internal/real/gateway"
 	"github.com/insanityatpeak/chunkd/internal/real/grpcnet"
+	"github.com/insanityatpeak/chunkd/internal/real/runtime"
 	"github.com/insanityatpeak/chunkd/internal/real/server"
 )
 
 func main() {
 	id := flag.String("id", server.Env("CHUNKD_ID", "gateway-1"), "gateway ID")
 	httpAddr := flag.String("http", server.Env("CHUNKD_HTTP", ":8080"), "HTTP listen address")
-	metaID := flag.String("meta-id", server.Env("CHUNKD_META_ID", "meta-1"), "metadata server ID")
-	metaAddr := flag.String("meta", server.Env("CHUNKD_META", "localhost:7000"), "metadata server gRPC address")
+	metaID := flag.String("meta-id", server.Env("CHUNKD_META_ID", "meta-1"), "metadata server ID (a single server)")
+	metaAddr := flag.String("meta", server.Env("CHUNKD_META", "localhost:7000"), "metadata server gRPC address (a single server)")
+	metas := flag.String("metas", server.Env("CHUNKD_METAS", ""), "the metadata group as id=host:port,...; overrides -meta")
 	uiDir := flag.String("ui", server.Env("CHUNKD_UI", ""), "serve the dashboard's static build from this directory at /")
 	flag.Parse()
 
-	caller := grpcnet.NewCaller(map[iface.NodeID]string{iface.NodeID(*metaID): *metaAddr}, 30*time.Second)
+	group := *metas
+	if group == "" {
+		group = *metaAddr
+	}
+	ids, addrs, err := server.ParseGroup(group, iface.NodeID(*metaID))
+	if err != nil {
+		fmt.Fprintln(os.Stderr, "chunkd-gateway:", err)
+		os.Exit(1)
+	}
+	caller := grpcnet.NewCaller(addrs, 30*time.Second)
 	defer caller.Close()
-	api := client.New(caller, client.Options{Meta: iface.NodeID(*metaID), MetaAddr: *metaAddr})
+	opts := client.Options{Rand: runtime.NewRand()}
+	for _, id := range ids {
+		opts.Peers = append(opts.Peers, client.MetaPeer{ID: id, Addr: addrs[id]})
+	}
+	api := client.New(caller, opts)
 
 	cfg := server.Config{ID: iface.NodeID(*id), AdminAddr: *httpAddr}
-	err := server.Run("gateway", cfg, func(p *server.Process) error {
+	err = server.Run("gateway", cfg, func(p *server.Process) error {
 		p.Healthy = func() error {
 			ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
 			defer cancel()

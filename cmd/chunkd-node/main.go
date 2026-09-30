@@ -23,8 +23,9 @@ func main() {
 	grpcAddr := flag.String("grpc", server.Env("CHUNKD_GRPC", ":7000"), "gRPC listen address")
 	advertise := flag.String("advertise", server.Env("CHUNKD_ADVERTISE", "localhost:7001"), "gRPC address peers and clients dial")
 	adminAddr := flag.String("admin", server.Env("CHUNKD_ADMIN", ":9000"), "HTTP address for /metrics and /healthz")
-	metaID := flag.String("meta-id", server.Env("CHUNKD_META_ID", "meta-1"), "metadata server ID")
-	metaAddr := flag.String("meta", server.Env("CHUNKD_META", "localhost:7000"), "metadata server gRPC address")
+	metaID := flag.String("meta-id", server.Env("CHUNKD_META_ID", "meta-1"), "metadata server ID (a single server)")
+	metaAddr := flag.String("meta", server.Env("CHUNKD_META", "localhost:7000"), "metadata server gRPC address (a single server)")
+	metas := flag.String("metas", server.Env("CHUNKD_METAS", ""), "the metadata group as id=host:port,...; overrides -meta")
 	rack := flag.String("rack", server.Env("CHUNKD_RACK", "r1"), "failure domain label")
 	dataDir := flag.String("data", server.Env("CHUNKD_DATA", "data/node"), "chunk directory")
 	defScrub := scrub.DefaultConfig()
@@ -41,10 +42,17 @@ func main() {
 	cfg.Addr = *advertise
 	cfg.Scrub = scrub.Config{BytesPerSec: *scrubRate << 20, Pass: *scrubPass}
 
-	sc := server.Config{
-		ID: cfg.ID, GRPCAddr: *grpcAddr, Advertise: *advertise, AdminAddr: *adminAddr,
-		Peers: map[iface.NodeID]string{cfg.Metas[0]: *metaAddr},
+	group := *metas
+	if group == "" {
+		group = *metaAddr
 	}
+	ids, addrs, err := server.ParseGroup(group, iface.NodeID(*metaID))
+	if err != nil {
+		fmt.Fprintln(os.Stderr, "chunkd-node:", err)
+		os.Exit(1)
+	}
+	cfg.Metas = ids
+	sc := server.Config{ID: cfg.ID, GRPCAddr: *grpcAddr, Advertise: *advertise, AdminAddr: *adminAddr, Peers: addrs}
 	err = server.Run("node", sc, func(p *server.Process) error {
 		// Repair pulls chunks from peers: a 4 MiB stream per copy.
 		// Lives as long as the process.

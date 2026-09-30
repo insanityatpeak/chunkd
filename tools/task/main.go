@@ -230,12 +230,15 @@ func web([]string) error {
 
 func up(args []string) error {
 	cmd := []string{"compose"}
+	var env []string
 	for _, a := range args {
 		if a == "--small" {
 			cmd = append(cmd, "--profile", "small")
+			// One metadata server: the group is just meta-1.
+			env = append(env, "META_PEERS=meta-1=meta-1:7000")
 		}
 	}
-	return run(nil, "", "docker", append(cmd, "up", "-d", "--build")...)
+	return run(env, "", "docker", append(cmd, "up", "-d", "--build")...)
 }
 
 func down(args []string) error {

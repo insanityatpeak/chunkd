@@ -15,6 +15,7 @@ import (
 
 	"github.com/insanityatpeak/chunkd/internal/client"
 	"github.com/insanityatpeak/chunkd/internal/iface"
+	"github.com/insanityatpeak/chunkd/internal/sim"
 )
 
 // Client returns the cluster's test client, creating it on first use. Its
@@ -22,7 +23,16 @@ import (
 func (c *Cluster) Client() *client.Direct {
 	if c.client == nil {
 		caller := c.NewCaller("client-1")
-		c.client = client.New(caller, client.Options{Meta: MetaID, Sleep: caller.Sleep})
+		opts := client.Options{Meta: MetaID, Sleep: caller.Sleep}
+		if len(c.metas) > 1 {
+			for _, id := range c.MetaIDs() {
+				opts.Peers = append(opts.Peers, client.MetaPeer{ID: id})
+			}
+			// Request IDs come from a stream of their own: a single-server
+			// run, which sets none, must draw exactly what it always drew.
+			opts.Rand = sim.NewRand(c.seed ^ 0x5eed_c11e)
+		}
+		c.client = client.New(caller, opts)
 	}
 	return c.client
 }
@@ -136,9 +146,9 @@ func (c *Cluster) AssertInvariants() error {
 			errs = append(errs, fmt.Errorf("acknowledged %s reads back %x, not any of %d acknowledged or ambiguous versions", path, got[:8], len(a.hashes)))
 		}
 	}
-	st := c.meta.State()
+	st := c.Meta().State()
 	now := c.clock.Now()
-	cl := c.meta.Cluster()
+	cl := c.Meta().Cluster()
 	for _, e := range st.List("/") {
 		if _, _, err := c.Download(e.Path); err != nil {
 			errs = append(errs, fmt.Errorf("committed %s v%d unreadable: %w", e.Path, e.V, err))
@@ -168,9 +178,9 @@ func (c *Cluster) AssertInvariants() error {
 // reported copies on alive nodes.
 func (c *Cluster) UnderReplicated() int {
 	n := 0
-	cl := c.meta.Cluster()
+	cl := c.Meta().Cluster()
 	seen := map[iface.ChunkID]bool{}
-	for _, e := range c.meta.State().List("/") {
+	for _, e := range c.Meta().State().List("/") {
 		for _, id := range e.Chunks {
 			if seen[id] {
 				continue
@@ -194,9 +204,9 @@ func (c *Cluster) UnderReplicated() int {
 // reported locations on alive nodes.
 func (c *Cluster) OverReplicated() int {
 	n := 0
-	cl := c.meta.Cluster()
+	cl := c.Meta().Cluster()
 	seen := map[iface.ChunkID]bool{}
-	for _, e := range c.meta.State().List("/") {
+	for _, e := range c.Meta().State().List("/") {
 		for _, id := range e.Chunks {
 			if seen[id] {
 				continue
@@ -220,13 +230,13 @@ func (c *Cluster) OverReplicated() int {
 func (c *Cluster) BytesOn(id iface.NodeID) int64 {
 	var total int64
 	seen := map[iface.ChunkID]bool{}
-	for _, e := range c.meta.State().List("/") {
+	for _, e := range c.Meta().State().List("/") {
 		for _, ch := range e.Chunks {
-			if seen[ch] || !slices.Contains(c.meta.Cluster().Locations(ch), id) {
+			if seen[ch] || !slices.Contains(c.Meta().Cluster().Locations(ch), id) {
 				continue
 			}
 			seen[ch] = true
-			ci, _ := c.meta.State().Chunk(ch)
+			ci, _ := c.Meta().State().Chunk(ch)
 			total += ci.Size
 		}
 	}
@@ -255,4 +265,30 @@ func (c *Cluster) Settle(limit time.Duration) (time.Duration, bool) {
 		c.Tick(250 * time.Millisecond)
 	}
 	return c.clock.Now().Sub(start), false
+}
+
+// AssertMetaAgree checks that every live metadata peer holds byte-identical
+// state: the same log applied gives the same namespace, refcounts, claims,
+// epoch and pending GC deletes. Call it after the group has been quiet for a
+// few seconds, so followers have applied what the leader committed.
+func (c *Cluster) AssertMetaAgree() error {
+	var base []byte
+	var baseID iface.NodeID
+	var errs []error
+	for _, p := range c.metas {
+		if c.net.Crashed(p.id) {
+			continue
+		}
+		snap := p.srv.State().Snapshot()
+		switch {
+		case base == nil:
+			base, baseID = snap, p.id
+		case !bytes.Equal(base, snap):
+			errs = append(errs, fmt.Errorf("%s (applied %d) and %s (applied %d) hold different state", baseID, c.metaPeer(baseID).srv.Applied(), p.id, p.srv.Applied()))
+		}
+	}
+	if err := errors.Join(errs...); err != nil {
+		return fmt.Errorf("seed %d at t=%v: %w", c.seed, c.clock.Now(), err)
+	}
+	return nil
 }

@@ -53,7 +53,7 @@ func (c *Cluster) RunScenario(name string) error {
 		}
 		c.net.SetSlow("node-4", 2*time.Second)
 		c.clock.AfterFunc(60*time.Second, func() { c.net.SetSlow("node-4", 0) })
-		files := c.meta.State().List("/demo/")
+		files := c.Meta().State().List("/demo/")
 		for i := range 14 {
 			p := files[i%len(files)].Path
 			c.after(time.Duration(i+1)*5*time.Second, func() { c.scriptRead(p) })
@@ -158,16 +158,18 @@ func (c *Cluster) Thaw(id iface.NodeID)   { c.net.Thaw(id) }
 // SetSlow adds d to every message to or from id; 0 clears it.
 func (c *Cluster) SetSlow(id iface.NodeID, d time.Duration) { c.net.SetSlow(id, d) }
 
-// Partition cuts id off from the metadata server in both directions, or
+// Partition cuts id off from the metadata servers in both directions, or
 // heals that cut. Clients can still reach the node: it looks dead to the
-// metadata server but keeps serving reads.
+// metadata servers but keeps serving reads.
 func (c *Cluster) Partition(id iface.NodeID, on bool) {
 	if on {
-		c.net.Partition([]iface.NodeID{id}, []iface.NodeID{MetaID})
+		c.net.Partition([]iface.NodeID{id}, c.MetaIDs())
 		return
 	}
-	c.net.Unblock(id, MetaID)
-	c.net.Unblock(MetaID, id)
+	for _, m := range c.MetaIDs() {
+		c.net.Unblock(id, m)
+		c.net.Unblock(m, id)
+	}
 }
 
 // CorruptReplica flips a byte in node's copy of chunk (hex ID).

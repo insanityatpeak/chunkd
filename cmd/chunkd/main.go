@@ -39,6 +39,8 @@ import (
 	"github.com/insanityatpeak/chunkd/internal/iface"
 	"github.com/insanityatpeak/chunkd/internal/real/blockstore"
 	"github.com/insanityatpeak/chunkd/internal/real/grpcnet"
+	"github.com/insanityatpeak/chunkd/internal/real/runtime"
+	"github.com/insanityatpeak/chunkd/internal/real/server"
 	rpcv1 "github.com/insanityatpeak/chunkd/proto/gen/chunkd/rpc/v1"
 	chunkdv1 "github.com/insanityatpeak/chunkd/proto/gen/chunkd/v1"
 )
@@ -46,7 +48,7 @@ import (
 func main() {
 	fs := flag.NewFlagSet("chunkd", flag.ExitOnError)
 	gatewayURL := fs.String("gateway", envOr("CHUNKD_GATEWAY", "http://localhost:8080"), "gateway base URL")
-	metaAddr := fs.String("meta", "", "metadata server gRPC address (direct mode, bypasses the gateway)")
+	metaAddr := fs.String("meta", "", "metadata server gRPC address, or a group as id=host:port,... (direct mode, bypasses the gateway)")
 	expected := fs.Uint64("expected", 0, "put/rm: expected live version (compare-and-swap); 0 with put means overwrite")
 	create := fs.Bool("create", false, "put: fail if the path exists")
 	lww := fs.Bool("lww", false, "put: last writer wins, no version check (a concurrent update is lost)")
@@ -78,9 +80,18 @@ func main() {
 
 	var api client.API
 	if *metaAddr != "" {
-		caller := grpcnet.NewCaller(map[iface.NodeID]string{"meta-1": *metaAddr}, 30*time.Second)
+		ids, addrs, err := server.ParseGroup(*metaAddr, "meta-1")
+		if err != nil {
+			fmt.Fprintln(os.Stderr, "chunkd:", err)
+			os.Exit(2)
+		}
+		caller := grpcnet.NewCaller(addrs, 30*time.Second)
 		defer caller.Close()
-		api = client.New(caller, client.Options{Meta: "meta-1", MetaAddr: *metaAddr})
+		opts := client.Options{Rand: runtime.NewRand()}
+		for _, id := range ids {
+			opts.Peers = append(opts.Peers, client.MetaPeer{ID: id, Addr: addrs[id]})
+		}
+		api = client.New(caller, opts)
 	} else {
 		api = httpclient.New(*gatewayURL)
 	}

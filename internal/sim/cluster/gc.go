@@ -40,7 +40,7 @@ func (c *Cluster) Stored() map[iface.ChunkID][]iface.NodeID {
 //     by a retained version or claimed by a pending upload).
 //  2. Refcounts and claim counts equal a recount from first principles.
 func (c *Cluster) AssertCollected() error {
-	st := c.meta.State()
+	st := c.Meta().State()
 	var errs []error
 	orphans := 0
 	for id, nodes := range c.Stored() {

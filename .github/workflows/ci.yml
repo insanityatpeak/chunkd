@@ -87,6 +87,8 @@ jobs:
           curl -fsS http://localhost:8080/mode.json | grep -q live
           curl -fsS http://localhost:8080/ | grep -q '<title>chunkd</title>'
       - name: small profile selects 1 meta + 3 nodes + gateway
+        env:
+          META_PEERS: meta-1=meta-1:7000
         run: |
           docker compose down -v
           docker compose --profile small up -d --wait --wait-timeout 180

@@ -23,6 +23,7 @@ func main() {
 	advertise := flag.String("advertise", server.Env("CHUNKD_ADVERTISE", "localhost:7000"), "gRPC address peers dial")
 	adminAddr := flag.String("admin", server.Env("CHUNKD_ADMIN", ":9000"), "HTTP address for /metrics, /healthz, /nodes")
 	dataDir := flag.String("data", server.Env("CHUNKD_DATA", "data/meta"), "directory for the WAL and snapshots")
+	group := flag.String("peers", server.Env("CHUNKD_PEERS", ""), "the metadata group as id=host:port,... (this server included); empty runs a group of one")
 	cfg := meta.DefaultConfig("")
 	flag.IntVar(&cfg.Replicas, "replicas", cfg.Replicas, "replicas per chunk")
 	flag.IntVar(&cfg.MinReplicas, "min-replicas", cfg.MinReplicas, "reported replicas required to commit")
@@ -32,6 +33,16 @@ func main() {
 	flag.Parse()
 	cfg.ID = iface.NodeID(*id)
 
+	sc := server.Config{ID: cfg.ID, GRPCAddr: *grpcAddr, Advertise: *advertise, AdminAddr: *adminAddr}
+	if *group != "" {
+		ids, addrs, err := server.ParseGroup(*group, cfg.ID)
+		if err != nil {
+			fmt.Fprintln(os.Stderr, "chunkd-meta:", err)
+			os.Exit(1)
+		}
+		cfg.Peers, sc.Peers = ids, addrs
+	}
+
 	store, err := metastore.Open(*dataDir)
 	if err != nil {
 		fmt.Fprintln(os.Stderr, "chunkd-meta:", err)
@@ -39,7 +50,6 @@ func main() {
 	}
 	defer store.Close()
 
-	sc := server.Config{ID: cfg.ID, GRPCAddr: *grpcAddr, Advertise: *advertise, AdminAddr: *adminAddr}
 	err = server.Run("meta", sc, func(p *server.Process) error {
 		srv, err := meta.NewServer(context.Background(), meta.Deps{Clock: p.Clock, Net: p.Net, Store: store, Rand: p.Rand, Log: p.Log}, cfg)
 		if err != nil {
@@ -67,8 +77,18 @@ func main() {
 		gcDeleted := p.Metrics.Counter("chunkd_gc_deleted_total", "Unreferenced copies nodes confirmed deleted.")
 		gcKept := p.Metrics.Counter("chunkd_gc_kept_total", "GC deletes nodes refused because the chunk was re-written after the decision.")
 		epoch := p.Metrics.Gauge("chunkd_meta_epoch", "Current GC epoch (logical time for retention and leases).")
+		term := p.Metrics.Gauge("chunkd_meta_raft_term", "This peer's Raft term; the fencing token its commands carry.")
+		leader := p.Metrics.Gauge("chunkd_meta_raft_leader", "1 while this peer is the leader and has heard from a quorum.")
+		commit := p.Metrics.Gauge("chunkd_meta_raft_commit_index", "Highest log index known committed.")
 		var refresh func()
 		refresh = func() {
+			rs := srv.Raft()
+			term.Set(float64(rs.Term))
+			commit.Set(float64(rs.Commit))
+			leader.Set(0)
+			if rs.Ready {
+				leader.Set(1)
+			}
 			n := 0
 			for _, ns := range srv.Cluster().Nodes() {
 				if srv.Cluster().Alive(ns.ID) {
