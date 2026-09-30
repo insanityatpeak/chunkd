@@ -16,7 +16,7 @@ Dedup through logged chunk claims, compare-and-swap versioned commits with opt-i
 | Scenario links still replay; the new `gc` scenario replays | Playwright (Edge locally, Chromium in CI): `kill-node`, `corrupt-chunk` and `gc` match `TestScenarioGolden` event for event; the older goldens are unchanged |
 | Dashboard works in sim and LIVE | Headless Edge: the sim `gc` scenario shows dedup, versions, undelete and collection; against `docker compose up`, delete and undelete round-trip through the gateway (bugs-found #11 fixed on the way) |
 
-Bugs found: #10 (upload lease shorter than GC grace plus two sweeps), #11 (undelete not routed when the gateway serves the dashboard).
+Bugs found: #10 (upload lease shorter than GC grace plus two sweeps), #11 (undelete not routed when the gateway serves the dashboard), #12 (gRPC dial backoff kept a returning node unreachable from the gateway, so the real-mode blip scenario committed chunks a copy short and repaired them).
 
 ## Ship v0.1.0 checklist
 

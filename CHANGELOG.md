@@ -16,7 +16,7 @@
 ### Proof
 - 1,000 chaos seeds on every push (was 500), each ending with GC settled and no orphan copy on any node.
 - GC chaos scenarios: concurrent writers on one path, delete while another upload shares its chunks, uploads stalled past a GC cycle, a node returning with long-deleted chunks.
-- Two more bugs in `docs/bugs-found.md`: an upload lease shorter than the GC grace, and undelete unreachable through the compose gateway.
+- Three more bugs in `docs/bugs-found.md`: an upload lease shorter than the GC grace, undelete unreachable through the compose gateway, and a node back from a long outage unreachable from the gateway for up to 120 s of gRPC dial backoff.
 
 ### Demo
 - Dashboard: dedup savings, GC counters and epoch, each file's versions with restore, deleted files with undelete, gc and write events in the timeline.

@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"google.golang.org/grpc"
+	"google.golang.org/grpc/backoff"
 	"google.golang.org/grpc/credentials/insecure"
 
 	"github.com/insanityatpeak/chunkd/internal/iface"
@@ -256,6 +257,12 @@ func (p *pool) get(addr string) (*grpc.ClientConn, error) {
 	// SIMPLIFIED: plaintext. Production clusters use mTLS between nodes.
 	c, err := grpc.NewClient(addr,
 		grpc.WithTransportCredentials(insecure.NewCredentials()),
+		// Redial a lost peer at least every 2 s. gRPC's default backoff grows
+		// to 120 s, so a node back from a long outage stayed unreachable here
+		// while the metadata server, hearing its heartbeats, placed chunks on
+		// it: those writes failed fast and committed a copy short.
+		grpc.WithConnectParams(grpc.ConnectParams{Backoff: backoff.Config{BaseDelay: 250 * time.Millisecond, Multiplier: 1.6, Jitter: 0.2, MaxDelay: 2 * time.Second},
+			MinConnectTimeout: 5 * time.Second}),
 		grpc.WithDefaultCallOptions(grpc.MaxCallRecvMsgSize(MaxUnary), grpc.MaxCallSendMsgSize(MaxUnary)))
 	if err != nil {
 		return nil, err

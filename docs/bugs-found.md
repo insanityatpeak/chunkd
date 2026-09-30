@@ -113,3 +113,13 @@ Related: with 1% message loss a copy command or its completion report can be los
 | Root cause | `gateway.WithUI` puts the API and the dashboard's static files on one mux and forwards an explicit list of API prefixes. The undelete route was added to `Handler` but not to that list, so it fell through to `http.FileServer`. The gateway tests used `Handler`; the one `WithUI` test only covered `GET` routes. |
 | Fix | `/undelete/` added to the forwarded prefixes, with a comment that every `Handler` route must be listed. Found by checking the dashboard's new undelete button in live mode. |
 | Regression test | `gateway.TestGatewayServesUI` posts to `/undelete/` and requires the API's JSON `not_found`. |
+
+## 12. A node back from a long outage was unreachable from clients for seconds
+
+| | |
+|---|---|
+| Symptom | The real-mode suite's `transient-blip-no-repair` failed in CI about half the time with 1 to 6 repair copies, although the blipped node came back well inside the repair delay. The copies started exactly 10 s (the upload grace) after the scenario's first uploads, not after the blip. |
+| Repro | `docker compose up -d --wait`, then `go run ./tools/task chaos --mode=real --short`; failed 2 of 3 local runs. Polling the blip's files showed the first uploads committing on 2 nodes without node-3, the only node in rack r3. |
+| Root cause | The previous scenario kept node-3 down for 85 s while reads kept dialing it, so the gateway's gRPC channel backed off exponentially (gRPC's default grows to 120 s). node-3's heartbeats reach the metadata server on a different connection, so it was marked alive within 2 s of returning and placed on at once. The gateway's channel only redialed when its backoff timer fired, about 10 s after node-3 was back (gRPC channel log: READY at 12:42:36 for a node started at 12:42:26). Until then, calls failed immediately with `unavailable`, both write rounds missed node-3, the chunks committed with 2 copies, and repair topped them up after the grace. |
+| Fix | The connection pool caps the dial backoff at 2 s (base 250 ms). |
+| Regression test | `grpcnet.TestCallerReconnectsSoonAfterLongOutage`: 20 s of failed calls, then the peer returns and must answer within 4 s (10+ s before the fix, 0.7 s after). The real-mode suite passes on repeated runs. |
