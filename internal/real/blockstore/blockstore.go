@@ -6,6 +6,7 @@ import (
 	"bytes"
 	"context"
 	"crypto/sha256"
+	"encoding/binary"
 	"encoding/hex"
 	"errors"
 	"io/fs"
@@ -21,6 +22,7 @@ import (
 const (
 	tmpDir        = "tmp"
 	quarantineDir = "quarantine"
+	termFile      = "term"
 )
 
 // Store implements iface.BlockStore on a local directory. Safe for
@@ -176,6 +178,45 @@ func (s *Store) Quarantine(_ context.Context, id iface.ChunkID) error {
 	s.usage.Chunks--
 	s.usage.Bytes -= fi.Size()
 	return nil
+}
+
+// Term returns the recorded metadata term, or 0 if none was saved.
+func (s *Store) Term(context.Context) (uint64, error) {
+	b, err := os.ReadFile(filepath.Join(s.root, termFile))
+	if errors.Is(err, fs.ErrNotExist) {
+		return 0, nil
+	}
+	if err != nil {
+		return 0, err
+	}
+	if len(b) != 8 {
+		return 0, iface.Errorf(iface.CodeInternal, "%s holds %d bytes, want 8", termFile, len(b))
+	}
+	return binary.LittleEndian.Uint64(b), nil
+}
+
+// SaveTerm records term the way a chunk is stored: temp file, fsync, rename,
+// fsync the directory. Raised rarely (once per election), so the cost is
+// irrelevant; losing it would let a deposed leader's command through.
+func (s *Store) SaveTerm(_ context.Context, term uint64) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	tmp, err := os.CreateTemp(filepath.Join(s.root, tmpDir), "term-*")
+	if err != nil {
+		return err
+	}
+	name := tmp.Name()
+	_, werr := tmp.Write(binary.LittleEndian.AppendUint64(nil, term))
+	serr := tmp.Sync()
+	if err := errors.Join(werr, serr, tmp.Close()); err != nil {
+		os.Remove(name)
+		return err
+	}
+	if err := os.Rename(name, filepath.Join(s.root, termFile)); err != nil {
+		os.Remove(name)
+		return err
+	}
+	return fsutil.SyncDir(s.root)
 }
 
 // Delete removes a chunk; deleting a missing chunk succeeds.

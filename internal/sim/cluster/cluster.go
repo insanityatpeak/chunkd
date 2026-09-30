@@ -100,7 +100,11 @@ func New(seed uint64, cfg Config, w io.Writer) *Cluster {
 func (c *Cluster) startNode(id iface.NodeID, nd *Node) {
 	cfg := node.DefaultConfig(id, MetaID, nd.Rack)
 	cfg.Scrub = c.cfg.Scrub
-	nd.Node = node.New(node.Deps{Clock: c.clock, Net: c.net, Async: c.net.AsyncCaller(id, c.cfg.CallTimeout), Store: nd.Store, Rand: c.rng, Log: c.logger(id)}, cfg)
+	n, err := node.New(node.Deps{Clock: c.clock, Net: c.net, Async: c.net.AsyncCaller(id, c.cfg.CallTimeout), Store: nd.Store, Rand: c.rng, Log: c.logger(id)}, cfg)
+	if err != nil {
+		panic(err) // an in-memory disk cannot fail to read its term
+	}
+	nd.Node = n
 	nd.Node.Start()
 }
 

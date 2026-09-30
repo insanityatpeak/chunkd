@@ -72,7 +72,10 @@ func TestNodeAndMetaOverGRPC(t *testing.T) {
 	})
 	cfg := node.DefaultConfig("n1", "meta", "r1")
 	cfg.Heartbeat, cfg.Addr = 50*time.Millisecond, np.addr
-	n := node.New(node.Deps{Clock: np.clock, Net: np.net, Async: NewCaller(nil, time.Second).Async(np.loop), Store: sim.NewBlockStore(), Rand: np.rng, Log: np.log}, cfg)
+	n, err := node.New(node.Deps{Clock: np.clock, Net: np.net, Async: NewCaller(nil, time.Second).Async(np.loop), Store: sim.NewBlockStore(), Rand: np.rng, Log: np.log}, cfg)
+	if err != nil {
+		t.Fatal(err)
+	}
 	np.loop.Do(n.Start)
 
 	waitFor(t, func() bool {

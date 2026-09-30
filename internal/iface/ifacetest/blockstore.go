@@ -164,6 +164,30 @@ func BlockStore(t *testing.T, open func(t *testing.T) iface.BlockStore) {
 		}
 	})
 
+	t.Run("term", func(t *testing.T) {
+		s := open(t)
+		if got, err := s.Term(ctx); err != nil || got != 0 {
+			t.Fatalf("Term of a new store = %d, %v; want 0", got, err)
+		}
+		for _, want := range []uint64{3, 3, 900} {
+			if err := s.SaveTerm(ctx, want); err != nil {
+				t.Fatal(err)
+			}
+			if got, err := s.Term(ctx); err != nil || got != want {
+				t.Fatalf("Term after SaveTerm(%d) = %d, %v", want, got, err)
+			}
+		}
+		// The term is not a chunk: it must not show up in listings or usage.
+		if u, _ := s.Usage(ctx); u != (iface.Usage{}) {
+			t.Fatalf("usage after SaveTerm = %+v", u)
+		}
+		n := 0
+		_ = s.List(ctx, func(iface.ChunkID) error { n++; return nil })
+		if n != 0 {
+			t.Fatalf("List after SaveTerm returned %d chunks", n)
+		}
+	})
+
 	t.Run("concurrent puts", func(t *testing.T) {
 		s := open(t)
 		var wg sync.WaitGroup

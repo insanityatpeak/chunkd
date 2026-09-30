@@ -32,8 +32,11 @@ func TestGCDeleteFence(t *testing.T) {
 		}
 	})
 	store := sim.NewBlockStore()
-	n := node.New(node.Deps{Clock: clock, Net: net, Async: net.AsyncCaller("n1", time.Second), Store: store, Rand: rng, Log: slog.New(slog.NewTextHandler(io.Discard, nil))},
+	n, err := node.New(node.Deps{Clock: clock, Net: net, Async: net.AsyncCaller("n1", time.Second), Store: store, Rand: rng, Log: slog.New(slog.NewTextHandler(io.Discard, nil))},
 		node.DefaultConfig("n1", "meta", "r1"))
+	if err != nil {
+		t.Fatal(err)
+	}
 	n.Start()
 	caller := net.NewCaller("client", time.Second)
 	data := []byte("chunk")

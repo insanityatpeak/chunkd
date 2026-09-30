@@ -16,6 +16,7 @@ type BlockStore struct {
 	mu          sync.Mutex
 	chunks      map[iface.ChunkID][]byte
 	quarantined map[iface.ChunkID][]byte
+	term        uint64
 }
 
 var _ iface.BlockStore = (*BlockStore)(nil)
@@ -48,6 +49,19 @@ func (s *BlockStore) Corrupt(id iface.ChunkID) bool {
 		b[0] ^= 0xff
 	}
 	return ok
+}
+
+func (s *BlockStore) Term(context.Context) (uint64, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.term, nil
+}
+
+func (s *BlockStore) SaveTerm(_ context.Context, term uint64) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.term = term
+	return nil
 }
 
 func (s *BlockStore) Usage(context.Context) (iface.Usage, error) {

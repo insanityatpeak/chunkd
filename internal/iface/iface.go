@@ -154,6 +154,12 @@ type BlockStore interface {
 	// intact chunk stores it again. Quarantining a missing chunk succeeds.
 	Quarantine(ctx context.Context, id ChunkID) error
 	Usage(ctx context.Context) (Usage, error)
+	// Term returns the highest metadata term SaveTerm recorded, or 0. It is
+	// the node's fencing memory and lives on the node's disk, so it survives
+	// a restart exactly as the chunks do (and is lost with a wiped disk).
+	Term(ctx context.Context) (uint64, error)
+	// SaveTerm records term durably. The caller only ever raises it.
+	SaveTerm(ctx context.Context, term uint64) error
 }
 
 // Index is a position in the metadata log. The first entry has index 1.

@@ -7,6 +7,7 @@ import (
 	"context"
 	"crypto/sha256"
 	"errors"
+	"fmt"
 	"log/slog"
 	"sync"
 	"sync/atomic"
@@ -31,8 +32,11 @@ type Deps struct {
 
 // Config identifies the node and sets its timers.
 type Config struct {
-	ID         iface.NodeID
-	Meta       iface.NodeID
+	ID iface.NodeID
+	// Metas are every metadata peer. Heartbeats and block reports go to all of
+	// them, so a follower already knows every location when it becomes leader;
+	// commands are honoured only from the current leader (see fenced).
+	Metas      []iface.NodeID
 	Rack       string
 	Addr       string // advertised to clients for chunk transfers; empty in sim
 	Heartbeat  time.Duration
@@ -44,7 +48,7 @@ type Config struct {
 // DefaultConfig fills timers: 1 s heartbeats, full block report every 30 s,
 // the default scrub rate and pass interval.
 func DefaultConfig(id, meta iface.NodeID, rack string) Config {
-	return Config{ID: id, Meta: meta, Rack: rack, Heartbeat: time.Second, FullReport: 30 * time.Second, Scrub: scrub.DefaultConfig()}
+	return Config{ID: id, Metas: []iface.NodeID{meta}, Rack: rack, Heartbeat: time.Second, FullReport: 30 * time.Second, Scrub: scrub.DefaultConfig()}
 }
 
 // Stats counts a node's control traffic. Loop-owned.
@@ -61,6 +65,9 @@ type Stats struct {
 	GCKept    uint64 `json:"gcKept"`
 	// Corrupt counts chunks that failed verification and were quarantined.
 	Corrupt uint64 `json:"corrupt"`
+	// Fenced counts commands refused because their term was below the highest
+	// this node has seen: a deposed leader still talking.
+	Fenced uint64 `json:"fenced"`
 }
 
 // Node is one storage node.
@@ -72,6 +79,10 @@ type Node struct {
 	// restarted node (seq back at 1) from replayed old heartbeats.
 	incarnation uint64
 	stopped     bool
+	// maxTerm is the highest metadata term this node has obeyed or heard a
+	// leader announce, persisted with the chunks. A command below it comes
+	// from a deposed leader. Loop-owned: only handle and heartbeatAck touch it.
+	maxTerm uint64
 
 	// reportMu orders store changes against full reports: puts and deletes
 	// hold it shared while they change the store and take a seq; a full
@@ -132,7 +143,36 @@ func (n *Node) report(seq uint64, added, deleted, corrupt []iface.ChunkID) {
 	for _, id := range corrupt {
 		r.CorruptIds = append(r.CorruptIds, id[:])
 	}
-	n.d.Net.Send(n.cfg.Meta, iface.Message{From: n.cfg.ID, Kind: wire.KindBlockReport, Body: wire.Marshal(r)})
+	n.toMetas(wire.KindBlockReport, wire.Marshal(r))
+}
+
+// toMetas sends one message to every metadata peer.
+func (n *Node) toMetas(kind string, body []byte) {
+	for _, m := range n.cfg.Metas {
+		n.d.Net.Send(m, iface.Message{From: n.cfg.ID, Kind: kind, Body: body})
+	}
+}
+
+// fenced reports whether a command carrying term must be refused: the node
+// has already heard from a leader of a later term, so this one was deposed.
+// A newer term is recorded first, durably, so the refusal outlives a restart;
+// if it cannot be recorded the command is refused too.
+func (n *Node) fenced(kind string, term uint64) bool {
+	if term < n.maxTerm {
+		n.stats.Fenced++
+		n.d.Log.Warn("refused a command from a deposed leader", "kind", kind, "term", term, "current", n.maxTerm)
+		return true
+	}
+	return term > n.maxTerm && !n.raiseTerm(term)
+}
+
+func (n *Node) raiseTerm(term uint64) bool {
+	if err := n.d.Store.SaveTerm(context.Background(), term); err != nil {
+		n.d.Log.Error("cannot record the metadata term", "term", term, "err", err)
+		return false
+	}
+	n.maxTerm = term
+	return true
 }
 
 // Stop halts timers and ignores further messages, like a killed process.
@@ -142,14 +182,22 @@ func (n *Node) Stop() {
 	n.scrub.Stop()
 }
 
-// New returns a stopped node.
-func New(d Deps, cfg Config) *Node {
+// New returns a stopped node, with the fencing term it recorded before it
+// last stopped. A node that cannot read its own disk does not run.
+func New(d Deps, cfg Config) (*Node, error) {
 	if d.Clock == nil || d.Net == nil || d.Async == nil || d.Store == nil || d.Rand == nil || d.Log == nil {
 		panic("node: missing dependency")
 	}
-	n := &Node{d: d, cfg: cfg, incarnation: d.Rand.Uint64(), lastWrite: map[iface.ChunkID]uint64{}}
+	if len(cfg.Metas) == 0 {
+		return nil, fmt.Errorf("node %s: no metadata peers", cfg.ID)
+	}
+	term, err := d.Store.Term(context.Background())
+	if err != nil {
+		return nil, fmt.Errorf("node %s: read term: %w", cfg.ID, err)
+	}
+	n := &Node{d: d, cfg: cfg, incarnation: d.Rand.Uint64(), lastWrite: map[iface.ChunkID]uint64{}, maxTerm: term}
 	n.scrub = scrub.New(cfg.Scrub, d.Clock, d.Store, n.quarantine)
-	return n
+	return n, nil
 }
 
 // Scrub returns the scrubber's counters and pass progress. Loop-owned.
@@ -235,7 +283,7 @@ func (n *Node) getChunk(m iface.Message, respond iface.Responder) {
 // client saw bad bytes from here) and quarantines it if it fails.
 func (n *Node) verifyChunk(m iface.Message) {
 	var cmd chunkdv1.VerifyChunk
-	if err := wire.Decode(m.Body, &cmd); err != nil {
+	if err := wire.Decode(m.Body, &cmd); err != nil || n.fenced(m.Kind, cmd.GetTerm()) {
 		return
 	}
 	id, err := wire.ChunkID(cmd.GetChunkId())
@@ -286,7 +334,7 @@ func (n *Node) handle(m iface.Message) {
 // completes (repair.retryTrim).
 func (n *Node) deleteReplica(m iface.Message) {
 	var cmd chunkdv1.DeleteReplica
-	if err := wire.Decode(m.Body, &cmd); err != nil {
+	if err := wire.Decode(m.Body, &cmd); err != nil || n.fenced(m.Kind, cmd.GetTerm()) {
 		return
 	}
 	id, err := wire.ChunkID(cmd.GetChunkId())
@@ -344,7 +392,7 @@ func (n *Node) gcDelete(id iface.ChunkID, fenceInc, fenceSeq uint64) {
 		n.stats.GCDeleted++
 		r.DeletedIds = [][]byte{id[:]}
 	}
-	n.d.Net.Send(n.cfg.Meta, iface.Message{From: n.cfg.ID, Kind: wire.KindBlockReport, Body: wire.Marshal(r)})
+	n.toMetas(wire.KindBlockReport, wire.Marshal(r))
 }
 
 // replicate pulls one chunk from a peer and stores it. Put verifies the
@@ -359,6 +407,9 @@ func (n *Node) replicate(m iface.Message) {
 		n.d.Log.Warn("bad replicate command", "err", err)
 		return
 	}
+	if n.fenced(m.Kind, cmd.GetTerm()) {
+		return
+	}
 	id, err := wire.ChunkID(cmd.GetChunkId())
 	if err != nil {
 		return
@@ -366,8 +417,8 @@ func (n *Node) replicate(m iface.Message) {
 	fail := func(err error) {
 		n.stats.RepairFailed++
 		n.d.Log.Warn("repair copy failed", "copy", cmd.GetCopyId(), "chunk", id.String()[:12], "source", cmd.GetSource(), "err", err)
-		n.d.Net.Send(n.cfg.Meta, iface.Message{From: n.cfg.ID, Kind: wire.KindReplicateFailed,
-			Body: wire.Marshal(&chunkdv1.ReplicateFailed{CopyId: cmd.GetCopyId(), ChunkId: id[:], Node: string(n.cfg.ID), Error: err.Error()})})
+		n.toMetas(wire.KindReplicateFailed,
+			wire.Marshal(&chunkdv1.ReplicateFailed{CopyId: cmd.GetCopyId(), ChunkId: id[:], Node: string(n.cfg.ID), Error: err.Error()}))
 	}
 	call := iface.Call{To: iface.NodeID(cmd.GetSource()), Addr: cmd.GetSourceAddr(), Kind: wire.KindGetChunk, Body: wire.Marshal(&chunkdv1.GetChunkRequest{Id: id[:]})}
 	n.d.Async.Go(call, func(r iface.Result) {
@@ -400,8 +451,15 @@ func (n *Node) heartbeatAck(m iface.Message) {
 		return
 	}
 	n.stats.Acks++
+	// The leader's ack announces the current term, so a deposed leader's
+	// commands are refused from the first heartbeat after an election, not
+	// only after the new leader's first command.
+	if ack.GetLeader() && ack.GetTerm() > n.maxTerm {
+		n.raiseTerm(ack.GetTerm())
+	}
 	if ack.GetNeedFullReport() {
-		n.fullReport()
+		// Only the peer that asked: the others already have this node's state.
+		n.fullReport(m.From)
 	}
 }
 
@@ -418,7 +476,7 @@ func (n *Node) heartbeat() {
 	hb := &chunkdv1.Heartbeat{Node: string(n.cfg.ID), Rack: n.cfg.Rack, Addr: n.cfg.Addr,
 		UsedBytes: u.Bytes, ChunkCount: u.Chunks, Draining: n.cfg.Draining, Seq: n.stats.Heartbeats, Incarnation: n.incarnation,
 		Corrupt: n.corrupt.Load(), ScrubDone: int64(sc.Done), ScrubTotal: int64(sc.Total), ScrubPasses: sc.Passes}
-	n.d.Net.Send(n.cfg.Meta, iface.Message{From: n.cfg.ID, Kind: wire.KindHeartbeat, Body: wire.Marshal(hb)})
+	n.toMetas(wire.KindHeartbeat, wire.Marshal(hb))
 	n.d.Clock.AfterFunc(n.cfg.Heartbeat, n.heartbeat)
 }
 
@@ -430,14 +488,15 @@ func (n *Node) periodicReport() {
 	n.d.Clock.AfterFunc(n.cfg.FullReport, n.periodicReport)
 }
 
-// fullReport sends every chunk the store holds. Periodic full reports repair
-// any incremental report the network dropped.
+// fullReport sends every chunk the store holds to to, or to every metadata
+// peer if none is named. Periodic full reports repair any incremental report
+// the network dropped.
 // SIMPLIFIED: one message for the whole report. HDFS splits reports per
 // storage volume and rate-limits them so a cluster restart does not flood
 // the NameNode.
 // SIMPLIFIED: listing blocks puts and deletes for its duration. HDFS
 // DataNodes snapshot the replica map in memory instead of scanning disk.
-func (n *Node) fullReport() {
+func (n *Node) fullReport(to ...iface.NodeID) {
 	var ids [][]byte
 	n.reportMu.Lock()
 	seq := n.reportSeq.Add(1)
@@ -451,8 +510,13 @@ func (n *Node) fullReport() {
 		return
 	}
 	n.stats.FullReports++
-	n.d.Net.Send(n.cfg.Meta, iface.Message{From: n.cfg.ID, Kind: wire.KindBlockReport,
-		Body: wire.Marshal(&chunkdv1.BlockReport{Node: string(n.cfg.ID), Full: true, ChunkIds: ids, Incarnation: n.incarnation, Seq: seq})})
+	body := wire.Marshal(&chunkdv1.BlockReport{Node: string(n.cfg.ID), Full: true, ChunkIds: ids, Incarnation: n.incarnation, Seq: seq})
+	if len(to) == 0 {
+		to = n.cfg.Metas
+	}
+	for _, m := range to {
+		n.d.Net.Send(m, iface.Message{From: n.cfg.ID, Kind: wire.KindBlockReport, Body: body})
+	}
 }
 
 // Config returns the node's configuration.

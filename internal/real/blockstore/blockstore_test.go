@@ -129,3 +129,23 @@ func TestRotFlipsChosenChunks(t *testing.T) {
 		t.Fatalf("%d chunks fail verification, want 2", bad)
 	}
 }
+
+// The fencing term is on the node's disk: it survives a restart.
+func TestTermSurvivesReopen(t *testing.T) {
+	root := t.TempDir()
+	s := open(t, root)
+	if err := s.SaveTerm(context.Background(), 41); err != nil {
+		t.Fatal(err)
+	}
+	if got, err := open(t, root).Term(context.Background()); err != nil || got != 41 {
+		t.Fatalf("Term after reopen = %d, %v; want 41", got, err)
+	}
+	// A truncated file is an error, not a silent 0 that would readmit a
+	// deposed leader.
+	if err := os.WriteFile(filepath.Join(root, termFile), []byte{1, 2, 3}, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := open(t, root).Term(context.Background()); err == nil {
+		t.Fatal("a corrupt term file read as valid")
+	}
+}

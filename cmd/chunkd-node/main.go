@@ -43,13 +43,16 @@ func main() {
 
 	sc := server.Config{
 		ID: cfg.ID, GRPCAddr: *grpcAddr, Advertise: *advertise, AdminAddr: *adminAddr,
-		Peers: map[iface.NodeID]string{cfg.Meta: *metaAddr},
+		Peers: map[iface.NodeID]string{cfg.Metas[0]: *metaAddr},
 	}
 	err = server.Run("node", sc, func(p *server.Process) error {
 		// Repair pulls chunks from peers: a 4 MiB stream per copy.
 		// Lives as long as the process.
 		peers := grpcnet.NewCaller(nil, 30*time.Second)
-		n := node.New(node.Deps{Clock: p.Clock, Net: p.Net, Async: peers.Async(p.Loop), Store: store, Rand: p.Rand, Log: p.Log}, cfg)
+		n, err := node.New(node.Deps{Clock: p.Clock, Net: p.Net, Async: peers.Async(p.Loop), Store: store, Rand: p.Rand, Log: p.Log}, cfg)
+		if err != nil {
+			return err
+		}
 		n.Start()
 
 		heartbeats := p.Metrics.Gauge("chunkd_node_heartbeats_sent", "Heartbeats sent to the metadata server.")
