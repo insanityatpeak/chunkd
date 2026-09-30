@@ -21,6 +21,9 @@ const (
 
 	// Integrity: the metadata server asks a node to re-check one chunk.
 	KindVerifyChunk = "node.verify_chunk"
+
+	// Consensus traffic between metadata peers: one encoded raft message.
+	KindRaft = "raft.msg"
 )
 
 // RPCs. Kinds starting with "chunk." carry chunk data and are streamed in

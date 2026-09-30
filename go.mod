@@ -1,9 +1,10 @@
 module github.com/insanityatpeak/chunkd
 
-go 1.25.0
+go 1.26
 
 require (
 	go.etcd.io/bbolt v1.5.0
+	go.etcd.io/raft/v3 v3.7.0
 	google.golang.org/grpc v1.84.0
 	google.golang.org/protobuf v1.36.12
 )

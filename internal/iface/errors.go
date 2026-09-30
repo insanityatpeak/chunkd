@@ -18,9 +18,10 @@ const (
 	CodeRetry            // state not ready yet (replicas not reported); retry shortly
 	CodeInternal         // a bug
 	CodeCorrupt          // stored data does not match its hash; no intact copy was served
+	CodeNotLeader        // this metadata peer is not the leader; Msg names the leader, or is empty if unknown
 )
 
-var codeNames = [...]string{"unknown", "not_found", "conflict", "invalid", "unavailable", "retry", "internal", "corrupt"}
+var codeNames = [...]string{"unknown", "not_found", "conflict", "invalid", "unavailable", "retry", "internal", "corrupt", "not_leader"}
 
 func (c Code) String() string {
 	if int(c) < len(codeNames) {
