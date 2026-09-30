@@ -2,7 +2,8 @@ name: chaos
 
 # Long sim chaos run, on demand: every seed is an independent fault schedule
 # over the same core code the binaries run. A failing seed replays locally
-# with go run ./tools/task chaos --seed=N.
+# with the replay command it prints (go run ./tools/task chaos --seed=N, plus
+# --metas=3 for a metadata-group run).
 on:
   workflow_dispatch:
     inputs:
@@ -11,6 +12,9 @@ on:
         default: '20000'
       from:
         description: first seed
+        default: '1'
+      metas:
+        description: metadata peers (3 adds leader faults)
         default: '1'
 
 permissions:
@@ -30,7 +34,8 @@ jobs:
         env:
           SEEDS: ${{ inputs.seeds }}
           FROM: ${{ inputs.from }}
-        run: go run ./tools/task chaos --seeds="$SEEDS" --from="$FROM" --artifacts=chaos-artifacts
+          METAS: ${{ inputs.metas }}
+        run: go run ./tools/task chaos --seeds="$SEEDS" --from="$FROM" --metas="$METAS" --artifacts=chaos-artifacts
       - name: upload non-linearizable histories
         if: failure()
         uses: actions/upload-artifact@v4

@@ -31,6 +31,8 @@ jobs:
         run: go run ./tools/task test
       - name: chaos, 1000 sim seeds, each history checked for linearizability (failures print a replay command)
         run: go run ./tools/task chaos --seeds=1000 --artifacts=chaos-artifacts
+      - name: chaos, 500 sim seeds over a 3-peer metadata group (leader kills, freezes, partitions, repeated elections), histories checked
+        run: go run ./tools/task chaos --seeds=500 --metas=3 --artifacts=chaos-artifacts/meta
       - name: upload non-linearizable histories
         if: failure()
         uses: actions/upload-artifact@v4
