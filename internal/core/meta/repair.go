@@ -66,7 +66,7 @@ func (s *Server) sendCopy(c repair.Copy) {
 	s.copyStarted(c)
 	s.d.Log.Info("repair copy", "copy", c.ID, "chunk", c.Chunk.String()[:12], "from", c.Source, "to", c.Target, "bytes", c.Size)
 	s.d.Net.Send(c.Target, iface.Message{From: s.cfg.ID, Kind: wire.KindReplicate,
-		Body: wire.Marshal(&chunkdv1.ReplicateChunk{CopyId: c.ID, ChunkId: c.Chunk[:], Source: string(c.Source), SourceAddr: src.Addr})})
+		Body: wire.Marshal(&chunkdv1.ReplicateChunk{CopyId: c.ID, ChunkId: c.Chunk[:], Source: string(c.Source), SourceAddr: src.Addr, Term: s.raft.Status().Term})})
 }
 
 // sendTrim tells a node to drop its copy of an over-replicated chunk.
@@ -74,7 +74,7 @@ func (s *Server) sendTrim(t repair.Trim) {
 	s.trimSent(t)
 	s.d.Log.Info("trim replica", "trim", t.ID, "chunk", t.Chunk.String()[:12], "node", t.Node)
 	s.d.Net.Send(t.Node, iface.Message{From: s.cfg.ID, Kind: wire.KindDeleteReplica,
-		Body: wire.Marshal(&chunkdv1.DeleteReplica{TrimId: t.ID, ChunkId: t.Chunk[:]})})
+		Body: wire.Marshal(&chunkdv1.DeleteReplica{TrimId: t.ID, ChunkId: t.Chunk[:], Term: s.raft.Status().Term})})
 }
 
 // corrupted handles copies a node quarantined after they failed
@@ -117,7 +117,7 @@ func (s *Server) suspect(m iface.Message, respond iface.Responder) {
 	node := iface.NodeID(req.GetNode())
 	if _, known := s.cluster.Node(node); known {
 		s.event("corrupt", node, "client saw bad bytes for chunk %s: node asked to re-check", id.String()[:12])
-		s.d.Net.Send(node, iface.Message{From: s.cfg.ID, Kind: wire.KindVerifyChunk, Body: wire.Marshal(&chunkdv1.VerifyChunk{ChunkId: id[:]})})
+		s.d.Net.Send(node, iface.Message{From: s.cfg.ID, Kind: wire.KindVerifyChunk, Body: wire.Marshal(&chunkdv1.VerifyChunk{ChunkId: id[:], Term: s.raft.Status().Term})})
 	}
 	respond(wire.Marshal(&chunkdv1.SuspectResponse{}), nil)
 }

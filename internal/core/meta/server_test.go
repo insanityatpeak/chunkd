@@ -25,6 +25,7 @@ type env struct {
 	srv    *meta.Server
 	caller *sim.Caller
 	log    *slog.Logger
+	disks  []*sim.BlockStore // each node's disk, in node order
 }
 
 func newEnv(t *testing.T, nodes int) *env {
@@ -34,7 +35,9 @@ func newEnv(t *testing.T, nodes int) *env {
 	e.startMeta(t)
 	for i := 1; i <= nodes; i++ {
 		id := iface.NodeID(fmt.Sprintf("n%d", i))
-		n, err := node.New(node.Deps{Clock: e.clock, Net: e.net, Async: e.net.AsyncCaller(id, 10*time.Second), Store: sim.NewBlockStore(), Rand: e.rng, Log: e.log},
+		disk := sim.NewBlockStore()
+		e.disks = append(e.disks, disk)
+		n, err := node.New(node.Deps{Clock: e.clock, Net: e.net, Async: e.net.AsyncCaller(id, 10*time.Second), Store: disk, Rand: e.rng, Log: e.log},
 			node.DefaultConfig(id, "meta", fmt.Sprintf("r%d", i)))
 		if err != nil {
 			t.Fatal(err)
@@ -463,5 +466,60 @@ func TestMetadataGroupRedirectsReplicatesAndFailsOver(t *testing.T) {
 	}
 	if string(srvs[rest[0]].State().Snapshot()) != string(srvs[rest[1]].State().Snapshot()) {
 		t.Fatal("surviving peers' states differ")
+	}
+}
+
+// The leader's heartbeat acks announce its term: after a few seconds every
+// node has it on its disk, so a deposed leader's commands are refused.
+func TestLeaderAnnouncesItsTermToNodes(t *testing.T) {
+	e := newEnv(t, 3)
+	want := e.srv.Raft().Term
+	if want == 0 {
+		t.Fatal("the leader has no term")
+	}
+	for i, d := range e.disks {
+		if got, _ := d.Term(context.Background()); got != want {
+			t.Fatalf("node %d recorded term %d, leader is at %d", i+1, got, want)
+		}
+	}
+}
+
+// A retried Begin (a lost response, a leader change) opens one upload.
+func TestBeginRetryReturnsTheSameUpload(t *testing.T) {
+	e := newEnv(t, 3)
+	begin := func(id string) *chunkdv1.BeginUploadResponse {
+		t.Helper()
+		body, err := e.rpc(t, "meta", wire.KindBegin, wire.Marshal(&chunkdv1.BeginUploadRequest{Path: "/f", Size: 12, RequestId: []byte(id)}))
+		if err != nil {
+			t.Fatal(err)
+		}
+		var resp chunkdv1.BeginUploadResponse
+		if err := wire.Decode(body, &resp); err != nil {
+			t.Fatal(err)
+		}
+		return &resp
+	}
+	first, again := begin("req-1"), begin("req-1")
+	if first.GetUploadId() != again.GetUploadId() || e.srv.State().PendingUploads() != 1 {
+		t.Fatalf("uploads %d and %d, %d pending; want one upload", first.GetUploadId(), again.GetUploadId(), e.srv.State().PendingUploads())
+	}
+	if len(first.GetPlacement()) != len(again.GetPlacement()) || len(first.GetPlacement()) == 0 {
+		t.Fatalf("placements differ in length: %d vs %d", len(first.GetPlacement()), len(again.GetPlacement()))
+	}
+	for i := range first.GetPlacement() {
+		for j, r := range first.GetPlacement()[i].GetReplicas() {
+			if again.GetPlacement()[i].GetReplicas()[j].GetNode() != r.GetNode() {
+				t.Fatalf("chunk %d replica %d moved between attempts", i, j)
+			}
+		}
+	}
+	if other := begin("req-2"); other.GetUploadId() == first.GetUploadId() {
+		t.Fatal("a different request shared the upload")
+	}
+	// Without a request ID nothing is deduplicated.
+	a, _ := e.rpc(t, "meta", wire.KindBegin, wire.Marshal(&chunkdv1.BeginUploadRequest{Path: "/g", Size: 4}))
+	b, _ := e.rpc(t, "meta", wire.KindBegin, wire.Marshal(&chunkdv1.BeginUploadRequest{Path: "/h", Size: 4}))
+	if string(a) == string(b) {
+		t.Fatal("two anonymous begins answered identically")
 	}
 }

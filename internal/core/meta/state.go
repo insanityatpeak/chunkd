@@ -388,6 +388,16 @@ func (s *State) apply(op *chunkdv1.Op) Result {
 	panic("unreachable")
 }
 
+// UploadByRequest returns the pending upload a Begin with this request ID
+// opened.
+func (s *State) UploadByRequest(rid []byte) (uint64, bool) {
+	if len(rid) == 0 {
+		return 0, false
+	}
+	id, ok := s.requests[string(rid)]
+	return id, ok
+}
+
 // GCPending returns the authorized, unanswered GC delete of id on n.
 func (s *State) GCPending(id iface.ChunkID, n iface.NodeID) (GCTarget, bool) {
 	t, ok := s.gcPending[id][n]

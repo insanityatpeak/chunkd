@@ -384,8 +384,11 @@ func (s *Server) handle(m iface.Message) {
 			s.transition(tr)
 			s.repair.Scan()
 		}
+		// Every peer acks: each keeps its own view of the node. The leader's
+		// ack also announces the term, the fencing token for its commands.
+		st := s.raft.Status()
 		s.d.Net.Send(m.From, iface.Message{From: s.cfg.ID, Kind: wire.KindHeartbeatAck,
-			Body: wire.Marshal(&chunkdv1.HeartbeatAck{Seq: hb.GetSeq(), NeedFullReport: need})})
+			Body: wire.Marshal(&chunkdv1.HeartbeatAck{Seq: hb.GetSeq(), NeedFullReport: need, Leader: st.Ready, Term: st.Term})})
 	case wire.KindBlockReport:
 		var r chunkdv1.BlockReport
 		if err := wire.Decode(m.Body, &r); err != nil {
@@ -472,6 +475,14 @@ func (s *Server) begin(m iface.Message, respond iface.Responder) {
 		respond(nil, iface.Errorf(iface.CodeInvalid, "negative size"))
 		return
 	}
+	// A client retrying a Begin (a lost response, a leader change) gets the
+	// upload its first attempt opened, with the placement chosen then.
+	if id, ok := s.state.UploadByRequest(req.GetRequestId()); ok {
+		if resp, ok := s.beginResponse(id); ok {
+			respond(wire.Marshal(resp), nil)
+			return
+		}
+	}
 	n := chunk.Count(req.GetSize(), s.cfg.ChunkSize)
 	sizes := make([]int64, n)
 	for i := range sizes {
@@ -483,22 +494,46 @@ func (s *Server) begin(m iface.Message, respond iface.Responder) {
 		return
 	}
 	op := &chunkdv1.BeginUploadOp{Path: req.GetPath(), ExpectedVersion: req.GetExpectedVersion(), Size: req.GetSize(), ChunkSize: int32(s.cfg.ChunkSize),
-		Claims: true, LastWriterWins: req.GetLastWriterWins()}
-	resp := &chunkdv1.BeginUploadResponse{ChunkSize: int32(s.cfg.ChunkSize), MinReplicas: int32(s.cfg.MinReplicas)}
+		Claims: true, LastWriterWins: req.GetLastWriterWins(), RequestId: req.GetRequestId()}
 	for _, nodes := range pl {
 		r := &chunkdv1.Replicas{}
-		cp := &chunkdv1.ChunkPlacement{}
 		for _, id := range nodes {
 			r.Nodes = append(r.Nodes, string(id))
-			cp.Replicas = append(cp.Replicas, s.replica(id))
 		}
 		op.Placement = append(op.Placement, r)
-		resp.Placement = append(resp.Placement, cp)
 	}
 	s.propose(&chunkdv1.Op{Op: &chunkdv1.Op_Begin{Begin: op}}, func(res Result, err error) {
-		resp.UploadId = res.UploadID
-		wire.Respond(respond, resp, err)
+		if err != nil {
+			respond(nil, err)
+			return
+		}
+		// Answered from the applied upload, not from this attempt's placement:
+		// if a repeat of the request raced this one, the first applied.
+		resp, ok := s.beginResponse(res.UploadID)
+		if !ok {
+			respond(nil, iface.Errorf(iface.CodeNotFound, "upload %d", res.UploadID))
+			return
+		}
+		respond(wire.Marshal(resp), nil)
 	})
+}
+
+// beginResponse describes an open upload: its placement is the one logged
+// with the Begin.
+func (s *Server) beginResponse(id uint64) (*chunkdv1.BeginUploadResponse, bool) {
+	u, ok := s.state.Upload(id)
+	if !ok {
+		return nil, false
+	}
+	resp := &chunkdv1.BeginUploadResponse{UploadId: id, ChunkSize: int32(u.ChunkSize), MinReplicas: int32(s.cfg.MinReplicas)}
+	for _, nodes := range u.Placement {
+		cp := &chunkdv1.ChunkPlacement{}
+		for _, n := range nodes {
+			cp.Replicas = append(cp.Replicas, s.replica(n))
+		}
+		resp.Placement = append(resp.Placement, cp)
+	}
+	return resp, true
 }
 
 // claim logs that an upload will reference these chunks, then tells the
