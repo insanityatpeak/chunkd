@@ -86,7 +86,7 @@ func TestKillLeaderMidUpload(t *testing.T) {
 // Cut off from both other peers, the old leader reports itself deposed and
 // refuses requests; a write sent to it before it noticed never commits; and
 // after the partition heals it follows the new leader with nothing extra.
-func TestMinorityLeaderRejectsAndStaleWriteNeverCommits(t *testing.T) {
+func TestMinorityPartitionRejectsWrites(t *testing.T) {
 	c := newMetaGroup(t, 3)
 	if _, _, err := c.UploadRandom("/before", 1<<20); err != nil {
 		t.Fatal(err)
@@ -131,6 +131,74 @@ func TestMinorityLeaderRejectsAndStaleWriteNeverCommits(t *testing.T) {
 		if _, err := st.Stat("/stale"); err == nil {
 			t.Fatalf("%s has the stale file", id)
 		}
+	}
+}
+
+// A paused leader wakes up stale: meanwhile a new leader of a higher term
+// took over and the nodes heard its term. The consensus test of the same name
+// covers the log (a stale entry never commits); this one covers the service:
+// a write through the old leader fails and leaves nothing, and a command it
+// sends a node carrying its old term is refused, so a deposed leader cannot
+// trim or collect a copy.
+func TestStaleLeaderCannotCommit(t *testing.T) {
+	for seed := uint64(1); seed <= 4; seed++ {
+		t.Run(fmt.Sprint(seed), func(t *testing.T) {
+			c := newMetaGroup(t, seed)
+			if _, _, err := c.UploadRandom("/before", 1<<20); err != nil {
+				t.Fatal(err)
+			}
+			old := c.MetaLeader()
+			oldTerm := c.MetaPeer(old).Raft().Term
+			pin := c.Pinned(old)
+
+			c.Net().Freeze(old)
+			c.Tick(4 * time.Second)
+			nl := c.MetaLeader()
+			if nl == "" || nl == old {
+				t.Fatalf("leader %q while %s is frozen", nl, old)
+			}
+			if term := c.MetaPeer(nl).Raft().Term; term <= oldTerm {
+				t.Fatalf("new leader's term %d, old %d", term, oldTerm)
+			}
+			if _, _, err := c.UploadRandom("/after", 1<<20); err != nil {
+				t.Fatalf("upload under the new leader: %v", err)
+			}
+			c.Net().Thaw(old)
+			if _, _, err := pin.Upload("/stale", c.RandomData("/stale", 1<<20)); err == nil {
+				t.Fatal("the thawed old leader acknowledged a write")
+			}
+
+			// A trim from the old leader: it would delete a live copy if obeyed.
+			e, err := c.Meta().State().Stat("/before")
+			if err != nil {
+				t.Fatal(err)
+			}
+			ch := e.Chunks[0]
+			var holder *Node
+			for _, n := range c.Nodes() {
+				if c.Intact(n.ID(), ch) {
+					holder = n
+					break
+				}
+			}
+			fenced := holder.Stats().Fenced
+			c.Net().Send(holder.ID(), iface.Message{From: old, To: holder.ID(), Kind: wire.KindDeleteReplica,
+				Body: wire.Marshal(&chunkdv1.DeleteReplica{TrimId: 1, ChunkId: ch[:], Term: oldTerm})})
+			c.Tick(time.Second)
+			if holder.Stats().Fenced != fenced+1 {
+				t.Fatalf("%s did not refuse a term-%d command (fenced %d → %d)", holder.ID(), oldTerm, fenced, holder.Stats().Fenced)
+			}
+			if !c.Intact(holder.ID(), ch) {
+				t.Fatalf("%s obeyed a deposed leader's trim", holder.ID())
+			}
+
+			mustAgree(t, c)
+			for _, id := range c.MetaIDs() {
+				if _, err := c.MetaPeer(id).State().Stat("/stale"); err == nil {
+					t.Fatalf("%s has the stale file", id)
+				}
+			}
+		})
 	}
 }
 
