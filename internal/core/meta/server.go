@@ -107,7 +107,8 @@ func NewServer(ctx context.Context, d Deps, cfg Config) (*Server, error) {
 		if err := proto.Unmarshal(b, &op); err != nil {
 			return fmt.Errorf("entry %d: %w", i, err)
 		}
-		s.state.Apply(&op)
+		// A logged op that was rejected is rejected again, identically.
+		_, _ = s.state.Apply(&op)
 		s.applied = i
 		return nil
 	})
@@ -304,8 +305,11 @@ func (s *Server) apply(op *chunkdv1.Op) (Result, error) {
 	if err != nil {
 		return Result{}, iface.Errorf(iface.CodeUnavailable, "log append: %v", err)
 	}
-	res := s.state.Apply(op)
+	res, err := s.state.Apply(op)
 	s.applied = idx
+	if err != nil {
+		return Result{}, err
+	}
 	if s.sinceSnap++; s.sinceSnap >= s.cfg.SnapshotEvery {
 		s.sinceSnap = 0
 		if err := s.d.Store.SaveSnapshot(context.Background(), s.applied, s.state.Snapshot()); err != nil {

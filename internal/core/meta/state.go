@@ -131,8 +131,8 @@ func (s *State) liveVersion(p string) uint64 {
 	return f.Versions[len(f.Versions)-1].V
 }
 
-// Validate reports whether op would apply cleanly. The server validates
-// before logging, so the log only ever holds ops that apply.
+// Validate reports whether op would apply cleanly. Apply runs it again, so
+// a logged op that stopped being valid is rejected, not applied.
 func (s *State) Validate(op *chunkdv1.Op) error {
 	switch o := op.GetOp().(type) {
 	case *chunkdv1.Op_Begin:
@@ -232,12 +232,18 @@ func (s *State) Validate(op *chunkdv1.Op) error {
 	return nil
 }
 
-// Apply applies a validated op. An op that fails validation here means the
-// log and the state have diverged, which is unrecoverable: it panics.
-func (s *State) Apply(op *chunkdv1.Op) Result {
+// Apply applies op, or rejects it with Validate's error and leaves the state
+// unchanged. The leader validates before proposing, but ops proposed
+// together can invalidate each other (two commits on one expected version):
+// the loser is logged and rejected here, identically on every replica.
+func (s *State) Apply(op *chunkdv1.Op) (Result, error) {
 	if err := s.Validate(op); err != nil {
-		panic("meta: applying invalid op: " + err.Error())
+		return Result{}, err
 	}
+	return s.apply(op), nil
+}
+
+func (s *State) apply(op *chunkdv1.Op) Result {
 	switch o := op.GetOp().(type) {
 	case *chunkdv1.Op_Begin:
 		b := o.Begin

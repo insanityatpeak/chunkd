@@ -47,14 +47,18 @@ type step struct {
 func run(t *testing.T, s *State, steps []step) {
 	t.Helper()
 	for i, st := range steps {
-		err := s.Validate(st.op)
+		verr := s.Validate(st.op)
+		got, err := s.Apply(st.op)
 		if iface.CodeOf(err) != st.code || (st.code != iface.CodeUnknown) != (err != nil) {
 			t.Fatalf("step %d: err = %v, want code %v", i, err, st.code)
+		}
+		if iface.CodeOf(verr) != iface.CodeOf(err) {
+			t.Fatalf("step %d: Validate says %v, Apply says %v", i, verr, err)
 		}
 		if err != nil {
 			continue
 		}
-		if got := s.Apply(st.op); got != st.res {
+		if got != st.res {
 			t.Fatalf("step %d: result %+v, want %+v", i, got, st.res)
 		}
 	}
@@ -196,13 +200,53 @@ func TestSnapshotRoundTrip(t *testing.T) {
 	}
 }
 
-func TestApplyInvalidPanics(t *testing.T) {
-	defer func() {
-		if recover() == nil {
-			t.Fatal("Apply of an invalid op did not panic")
-		}
-	}()
-	New().Apply(abort(99))
+// Ops proposed together are each valid against the state they were
+// proposed on, but the log applies them in order: a later one can find the
+// state moved. It must be rejected with the state untouched, never applied.
+func TestApplyRejectsOpsInvalidatedByEarlierOps(t *testing.T) {
+	ok := iface.CodeUnknown
+	tests := []struct {
+		name     string
+		setup    []*chunkdv1.Op
+		together []*chunkdv1.Op
+		want     []iface.Code
+	}{
+		{"two commits on one expected version", []*chunkdv1.Op{begin("/f", 0, 4), begin("/f", 0, 4)},
+			[]*chunkdv1.Op{commit(1, 1, 'a'), commit(2, 1, 'b')}, []iface.Code{ok, iface.CodeConflict}},
+		{"two deletes of one version", []*chunkdv1.Op{begin("/f", 0, 4), commit(1, 1, 'a')},
+			[]*chunkdv1.Op{del("/f", 1), del("/f", 1)}, []iface.Code{ok, iface.CodeNotFound}},
+		{"commit then abort of one upload", []*chunkdv1.Op{begin("/f", 0, 4)},
+			[]*chunkdv1.Op{commit(1, 1, 'a'), abort(1)}, []iface.Code{ok, iface.CodeNotFound}},
+		{"delete then undelete expecting the old version", []*chunkdv1.Op{begin("/f", 0, 4), commit(1, 1, 'a'), begin("/f", 1, 4), commit(2, 1, 'b')},
+			[]*chunkdv1.Op{del("/f", 2), undel("/f", 1, 2)}, []iface.Code{ok, iface.CodeConflict}},
+		{"begins on one expected version both open", nil,
+			[]*chunkdv1.Op{begin("/f", 0, 4), begin("/f", 0, 4)}, []iface.Code{ok, ok}},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			s := New()
+			for i, op := range tt.setup {
+				if _, err := s.Apply(op); err != nil {
+					t.Fatalf("setup %d: %v", i, err)
+				}
+			}
+			for i, op := range tt.together {
+				if err := s.Validate(op); err != nil {
+					t.Fatalf("op %d invalid when proposed: %v", i, err)
+				}
+			}
+			for i, op := range tt.together {
+				before := s.Snapshot()
+				_, err := s.Apply(op)
+				if iface.CodeOf(err) != tt.want[i] || (tt.want[i] != ok) != (err != nil) {
+					t.Fatalf("op %d: err = %v, want code %v", i, err, tt.want[i])
+				}
+				if err != nil && !bytes.Equal(before, s.Snapshot()) {
+					t.Fatalf("op %d: rejected but changed the state", i)
+				}
+			}
+		})
+	}
 }
 
 func beginClaims(path string, expected uint64, size int64) *chunkdv1.Op {
