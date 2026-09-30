@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"github.com/insanityatpeak/chunkd/internal/core/wire"
+	"github.com/insanityatpeak/chunkd/internal/history/check"
 	"github.com/insanityatpeak/chunkd/internal/iface"
 	chunkdv1 "github.com/insanityatpeak/chunkd/proto/gen/chunkd/v1"
 )
@@ -173,4 +174,66 @@ func TestMetaGroupRestarts(t *testing.T) {
 		t.Fatalf("upload after a full restart: %v", err)
 	}
 	mustAgree(t, c)
+}
+
+// A client pinned to a deposed leader never sees stale data: its reads are
+// refused (NotLeader or Unavailable) rather than served from the old log.
+// The recorded history passes the checker. The same history with one read
+// served locally by the deposed leader, as a leader without a read-index
+// check would serve it, fails: that is the mutation the checker must catch.
+func TestPinnedClientOnDeposedLeaderIsLinearizable(t *testing.T) {
+	c := newMetaGroup(t, 7)
+	rec := c.RecordHistory()
+	old := c.MetaLeader()
+	var rest []iface.NodeID
+	for _, id := range c.MetaIDs() {
+		if id != old {
+			rest = append(rest, id)
+		}
+	}
+	pin := c.Pinned(old)
+	if _, _, err := pin.Upload("/x", c.RandomData("/x", 1<<20)); err != nil {
+		t.Fatal(err)
+	}
+	if _, _, err := pin.Download("/x"); err != nil {
+		t.Fatal(err)
+	}
+
+	c.Net().Partition([]iface.NodeID{old}, rest)
+	// Before the old leader notices: a write it can never commit.
+	if _, _, err := pin.Upload("/x", c.RandomData("/x-lost", 1<<20)); err == nil {
+		t.Fatal("the cut-off leader acknowledged a write")
+	}
+	c.Tick(3 * time.Second)
+	if _, _, err := c.Upload("/x", c.RandomData("/x-new", 1<<20)); err != nil {
+		t.Fatalf("majority write: %v", err)
+	}
+	if data, _, err := pin.Download("/x"); err == nil {
+		t.Fatalf("the deposed leader served a read of %d bytes", len(data))
+	}
+	c.Net().Heal()
+	c.Tick(10 * time.Second)
+	if _, _, err := pin.Download("/x"); err == nil {
+		t.Fatal("a follower served the pinned client's read")
+	}
+	if _, _, err := c.Download("/x"); err != nil {
+		t.Fatal(err)
+	}
+
+	ops := rec.Ops()
+	if res := check.Check(ops); !res.OK {
+		t.Fatal(res)
+	}
+
+	// Mutation: the old leader answers from its own state, which stopped at
+	// the first version.
+	st, err := c.MetaPeer(old).State().StatVersion("/x", 1)
+	if err != nil {
+		t.Fatal(err)
+	}
+	now := int64(c.Now())
+	rec.Read(pin.id, "/x", now, now+1, st.V, st.SHA256, nil)
+	if res := check.Check(rec.Ops()); res.OK {
+		t.Fatal("the checker accepted a read served from a deposed leader's stale state")
+	}
 }

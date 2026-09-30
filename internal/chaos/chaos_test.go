@@ -26,6 +26,9 @@ func TestChaosSeeds(t *testing.T) {
 			t.Fatal(r.Err)
 		}
 		deleted += r.GC.Deleted
+		if r.History == 0 {
+			t.Fatalf("seed %d: no history was checked", seed)
+		}
 	}
 	// Overwrites and deletes in the workload leave garbage; a run where GC
 	// never deleted anything did not exercise the orphan check.

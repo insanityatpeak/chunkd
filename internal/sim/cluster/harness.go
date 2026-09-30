@@ -14,6 +14,7 @@ import (
 	"time"
 
 	"github.com/insanityatpeak/chunkd/internal/client"
+	"github.com/insanityatpeak/chunkd/internal/history"
 	"github.com/insanityatpeak/chunkd/internal/iface"
 	"github.com/insanityatpeak/chunkd/internal/sim"
 )
@@ -60,17 +61,86 @@ type acked struct {
 	gone bool
 }
 
+// Session is one client of the cluster. When history is recording, its calls
+// are recorded under its client number. Like the cluster it is single-threaded.
+type Session struct {
+	c  *Cluster
+	cl *client.Direct
+	id int
+}
+
+// Session returns the default client's session (client 1).
+func (c *Cluster) Session() *Session { return &Session{c: c, cl: c.Client(), id: 1} }
+
+// RecordHistory turns on recording of every session's calls and returns the
+// recorder. It draws nothing from the RNG, so a recorded run replays a
+// recorded-off one exactly.
+func (c *Cluster) RecordHistory() *history.Recorder {
+	if c.rec == nil {
+		c.rec = &history.Recorder{}
+	}
+	return c.rec
+}
+
+// Pinned returns a client that talks to metadata peer id only: it follows no
+// hint to another peer, so a deposed leader that still answered a read would
+// be seen. Its calls are recorded as client 100 plus the peer's index.
+func (c *Cluster) Pinned(id iface.NodeID) *Session {
+	p := c.metaPeer(id)
+	if s := c.pinned[id]; s != nil {
+		return s
+	}
+	caller := c.NewCaller("client-" + id)
+	h := fnv.New64a()
+	h.Write([]byte(id))
+	cl := client.New(caller, client.Options{Peers: []client.MetaPeer{{ID: id}}, Sleep: caller.Sleep, Rand: sim.NewRand(c.seed ^ h.Sum64())})
+	s := &Session{c: c, cl: cl, id: 100 + slices.Index(c.MetaIDs(), p.id)}
+	if c.pinned == nil {
+		c.pinned = map[iface.NodeID]*Session{}
+	}
+	c.pinned[id] = s
+	return s
+}
+
 // UploadRandom writes size random bytes to path (overwriting). On success
 // the harness remembers the content: AssertInvariants checks it stays
 // readable.
 func (c *Cluster) UploadRandom(path string, size int64) (client.Manifest, []byte, error) {
-	return c.Upload(path, c.RandomData(path, size))
+	return c.Session().UploadRandom(path, size)
 }
 
 // Upload writes data to path, overwriting, and records it as UploadRandom does.
 func (c *Cluster) Upload(path string, data []byte) (client.Manifest, []byte, error) {
-	m, err := c.Client().Put(context.Background(), path, bytes.NewReader(data), int64(len(data)), client.PutOptions{Overwrite: true})
+	return c.Session().Upload(path, data)
+}
+
+// Download reads path through the client (which verifies every chunk). A
+// successful read is also checked here, independently of the client: its
+// bytes must be something written to that path (AssertInvariants, 5).
+func (c *Cluster) Download(path string) ([]byte, client.Manifest, error) {
+	return c.Session().Download(path)
+}
+
+// Delete removes path and forgets it in the acknowledged set.
+func (c *Cluster) Delete(path string) error { return c.Session().Delete(path) }
+
+// List returns the live files under prefix, recorded when history is on.
+func (c *Cluster) List(prefix string) ([]client.FileInfo, error) { return c.Session().List(prefix) }
+
+// UploadRandom is Cluster.UploadRandom through this client.
+func (s *Session) UploadRandom(path string, size int64) (client.Manifest, []byte, error) {
+	return s.Upload(path, s.c.RandomData(path, size))
+}
+
+// Upload is Cluster.Upload through this client.
+func (s *Session) Upload(path string, data []byte) (client.Manifest, []byte, error) {
+	c := s.c
+	call := int64(c.clock.Now())
+	m, err := s.cl.Put(context.Background(), path, bytes.NewReader(data), int64(len(data)), client.PutOptions{Overwrite: true})
 	sum := sha256.Sum256(data)
+	if c.rec != nil {
+		c.rec.Put(s.id, path, sum, call, int64(c.clock.Now()), m.Version, err)
+	}
 	c.written[path] = append(c.written[path], sum)
 	switch a := c.acked[path]; {
 	case err == nil:
@@ -81,16 +151,55 @@ func (c *Cluster) Upload(path string, data []byte) (client.Manifest, []byte, err
 	return m, data, err
 }
 
-// Download reads path through the client (which verifies every chunk). A
-// successful read is also checked here, independently of the client: its
-// bytes must be something written to that path (AssertInvariants, 5).
-func (c *Cluster) Download(path string) ([]byte, client.Manifest, error) {
+// Download is Cluster.Download through this client.
+func (s *Session) Download(path string) ([]byte, client.Manifest, error) {
+	c := s.c
 	var buf bytes.Buffer
-	m, err := c.Client().Get(context.Background(), path, &buf)
+	call := int64(c.clock.Now())
+	m, err := s.cl.Get(context.Background(), path, &buf)
+	if c.rec != nil {
+		c.rec.Read(s.id, path, call, int64(c.clock.Now()), m.Version, sha256.Sum256(buf.Bytes()), err)
+	}
 	if err == nil {
 		c.checkRead(path, buf.Bytes())
 	}
 	return buf.Bytes(), m, err
+}
+
+// Delete is Cluster.Delete through this client.
+func (s *Session) Delete(path string) error {
+	c := s.c
+	call := int64(c.clock.Now())
+	v, err := s.cl.Delete(context.Background(), path, 0)
+	if c.rec != nil {
+		c.rec.Delete(s.id, path, call, int64(c.clock.Now()), v, err)
+	}
+	switch a := c.acked[path]; {
+	case err == nil:
+		delete(c.acked, path)
+	case a != nil:
+		a.gone = true
+	}
+	return err
+}
+
+// List is Cluster.List through this client.
+func (s *Session) List(prefix string) ([]client.FileInfo, error) {
+	c := s.c
+	call := int64(c.clock.Now())
+	fs, err := s.cl.List(context.Background(), prefix)
+	if c.rec != nil {
+		var es []history.Entry
+		for _, f := range fs {
+			e := history.Entry{Path: f.Path, Version: f.Version}
+			if b, herr := hex.DecodeString(f.SHA256); herr == nil {
+				copy(e.Hash[:], b)
+			}
+			es = append(es, e)
+		}
+		c.rec.List(s.id, prefix, call, int64(c.clock.Now()), es, err)
+	}
+	return fs, err
 }
 
 // checkRead records a read that returned bytes nobody wrote to path. Only
@@ -102,18 +211,6 @@ func (c *Cluster) checkRead(path string, data []byte) {
 		c.badReads = append(c.badReads, fmt.Errorf("a read of %s at t=%v returned %d bytes (sha256 %x) that were never written there",
 			path, c.clock.Now(), len(data), sum[:8]))
 	}
-}
-
-// Delete removes path and forgets it in the acknowledged set.
-func (c *Cluster) Delete(path string) error {
-	_, err := c.Client().Delete(context.Background(), path, 0)
-	switch a := c.acked[path]; {
-	case err == nil:
-		delete(c.acked, path)
-	case a != nil:
-		a.gone = true
-	}
-	return err
 }
 
 // AssertInvariants checks:

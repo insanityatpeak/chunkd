@@ -7,11 +7,14 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"os"
+	"path/filepath"
 	"time"
 
 	"github.com/insanityatpeak/chunkd/internal/core/meta"
 	"github.com/insanityatpeak/chunkd/internal/core/repair"
 	"github.com/insanityatpeak/chunkd/internal/core/scrub"
+	"github.com/insanityatpeak/chunkd/internal/history/check"
 	"github.com/insanityatpeak/chunkd/internal/iface"
 	"github.com/insanityatpeak/chunkd/internal/sim/cluster"
 )
@@ -34,7 +37,10 @@ type Report struct {
 	Repair   repair.Stats   `json:"repair"`
 	Rotted   int            `json:"rotted"` // chunk copies corrupted by Corrupt faults
 	GC       meta.GCStats   `json:"gc"`
-	Err      error          `json:"-"`
+	// History is how many recorded client operations the linearizability
+	// check covered.
+	History int   `json:"history"`
+	Err     error `json:"-"`
 }
 
 // ScrubPass is the scrub interval chaos runs use.
@@ -53,11 +59,22 @@ func Config(nodes int) cluster.Config {
 	return cfg
 }
 
+// Options tune a run.
+type Options struct {
+	// Artifacts is a directory that receives porcupine's HTML visualization
+	// of a history that fails the linearizability check, as seed-N.html.
+	Artifacts string
+}
+
 // Run executes s in the sim and checks every invariant. Logs go to w.
-func Run(s Scenario, w io.Writer) Report {
+func Run(s Scenario, w io.Writer) Report { return RunOpts(s, w, Options{}) }
+
+// RunOpts is Run with options.
+func RunOpts(s Scenario, w io.Writer, opts Options) Report {
 	r := Report{Seed: s.Seed, Ops: map[string]int{}}
 	cfg := Config(s.Nodes)
 	c := cluster.New(s.Seed, cfg, w)
+	rec := c.RecordHistory()
 	base := c.Net().Faults()
 	wipes := map[iface.NodeID]bool{} // nodes this scenario wipes at some point
 	for _, f := range s.Faults {
@@ -186,6 +203,21 @@ func Run(s Scenario, w io.Writer) Report {
 			errs = append(errs, fmt.Errorf("after GC: %w", err))
 		}
 	}
+	// Every client call of the run, the final read-back included, must fit one
+	// sequential history of the namespace.
+	res := check.Check(rec.Ops())
+	r.History = res.Ops
+	if err := res.Err(); err != nil {
+		if opts.Artifacts != "" {
+			art := filepath.Join(opts.Artifacts, fmt.Sprintf("seed-%d.html", s.Seed))
+			if werr := writeArtifact(art, res); werr != nil {
+				err = fmt.Errorf("%w (visualization not written: %v)", err, werr)
+			} else {
+				err = fmt.Errorf("%w (visualization: %s)", err, art)
+			}
+		}
+		errs = append(errs, err)
+	}
 	h := c.Meta().Health()
 	if h.Lost > 0 {
 		errs = append(errs, fmt.Errorf("%d chunks have no live copy", h.Lost))
@@ -209,4 +241,11 @@ func Run(s Scenario, w io.Writer) Report {
 		r.Err = fmt.Errorf("chaos seed %d: %w\n%s\nreplay: %s", s.Seed, err, s, Replay(s.Seed))
 	}
 	return r
+}
+
+func writeArtifact(path string, res check.Result) error {
+	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+		return err
+	}
+	return res.WriteHTML(path)
 }

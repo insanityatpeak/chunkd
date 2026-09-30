@@ -29,8 +29,15 @@ jobs:
         run: go run ./tools/task lint-imports
       - name: test (race)
         run: go run ./tools/task test
-      - name: chaos, 1000 sim seeds (failures print a replay command)
-        run: go run ./tools/task chaos --seeds=1000
+      - name: chaos, 1000 sim seeds, each history checked for linearizability (failures print a replay command)
+        run: go run ./tools/task chaos --seeds=1000 --artifacts=chaos-artifacts
+      - name: upload non-linearizable histories
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: chaos-histories
+          path: chaos-artifacts
+          if-no-files-found: ignore
       - name: wasm size budget
         run: go run ./tools/task wasm
       - name: generated code is up to date

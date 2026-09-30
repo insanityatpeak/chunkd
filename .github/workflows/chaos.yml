@@ -30,4 +30,11 @@ jobs:
         env:
           SEEDS: ${{ inputs.seeds }}
           FROM: ${{ inputs.from }}
-        run: go run ./tools/task chaos --seeds="$SEEDS" --from="$FROM"
+        run: go run ./tools/task chaos --seeds="$SEEDS" --from="$FROM" --artifacts=chaos-artifacts
+      - name: upload non-linearizable histories
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: chaos-histories
+          path: chaos-artifacts
+          if-no-files-found: ignore

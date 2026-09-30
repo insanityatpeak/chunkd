@@ -57,6 +57,7 @@ func main() {
 	gateway := flag.String("gateway", "http://localhost:8080", "real mode: gateway URL")
 	project := flag.String("project", "chunkd", "real mode: compose project name")
 	bound := flag.Duration("bound", 90*time.Second, "real mode: longest allowed under-replication, and settle time after quiet")
+	artifacts := flag.String("artifacts", "", "sim mode: directory for the visualization of a history that is not linearizable")
 	flag.Parse()
 
 	if *mode == "real" {
@@ -74,7 +75,7 @@ func main() {
 		if *verbose {
 			logs = os.Stderr
 		}
-		r := chaos.Run(s, logs)
+		r := chaos.RunOpts(s, logs, chaos.Options{Artifacts: *artifacts})
 		if r.Err != nil {
 			fmt.Fprintln(os.Stderr, r.Err)
 			os.Exit(1)
@@ -97,7 +98,7 @@ func main() {
 			defer wg.Done()
 			for sd := range jobs {
 				s := chaos.Generate(sd, chaos.DefaultShape())
-				r := chaos.Run(s, io.Discard)
+				r := chaos.RunOpts(s, io.Discard, chaos.Options{Artifacts: *artifacts})
 				mu.Lock()
 				if r.Err != nil {
 					failed = append(failed, r)

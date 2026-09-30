@@ -15,6 +15,7 @@ import (
 	"github.com/insanityatpeak/chunkd/internal/core/meta"
 	"github.com/insanityatpeak/chunkd/internal/core/node"
 	"github.com/insanityatpeak/chunkd/internal/core/scrub"
+	"github.com/insanityatpeak/chunkd/internal/history"
 	"github.com/insanityatpeak/chunkd/internal/iface"
 	"github.com/insanityatpeak/chunkd/internal/obs"
 	"github.com/insanityatpeak/chunkd/internal/sim"
@@ -61,6 +62,8 @@ type Cluster struct {
 	metas  []*metaPeer
 	nodes  []*Node
 	client *client.Direct
+	rec    *history.Recorder
+	pinned map[iface.NodeID]*Session
 	acked  map[string]*acked
 	// written holds every content ever sent to a path, acknowledged or
 	// not; badReads are successful reads that returned anything else.
