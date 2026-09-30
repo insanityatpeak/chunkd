@@ -35,7 +35,7 @@ var commands = map[string]command{
 	"demo":         {"start the compose cluster, kill a node, narrate the repair, verify the download", demo},
 	"diagram":      {"render docs/assets/architecture.svg from its D2 source, in Docker", diagram},
 	"gif":          {"render docs/assets/demo.gif from deploy/demo.tape with vhs in Docker", gif},
-	"chaos":        {"randomized fault scenarios with invariant checks (--seed=N replays one; --seeds=N)", chaos},
+	"chaos":        {"randomized fault scenarios with invariant checks (--seed=N replays one; --seeds=N; --metas=3 adds leader faults)", chaos},
 	"e2e":          {"put and get 20 MiB via the compose gateway (--up to start, --down to clean up)", e2e},
 	"trace-check":  {"fail if tracked files or outgoing commits carry attribution text (--all: every commit in history)", func(args []string) error { return traceCheck(slices.Contains(args, "--all")) }},
 	"ci":           {"run every check CI runs, in CI order", ci},

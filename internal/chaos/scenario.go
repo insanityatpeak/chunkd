@@ -29,7 +29,26 @@ const (
 	Lossy   Kind = "lossy"   // raise message drop and duplicate rates cluster-wide
 	Clean   Kind = "clean"   // restore the base network
 	Corrupt Kind = "corrupt" // flip a byte in Count chunks on Node's disk (bit rot)
+
+	// Metadata-group faults. The victim is the leader when the fault fires,
+	// so the schedule stays a pure function of the seed. An end fault acts on
+	// the peer its start fault hit, and does nothing if that one never fired.
+	KillLeader   Kind = "kill-leader"   // stop the leader's process; the log survives
+	ReviveLeader Kind = "revive-leader" // start the killed leader over its log
+	FreezeLeader Kind = "freeze-leader" // pause the leader: it wakes as a stale leader
+	ThawLeader   Kind = "thaw-leader"
+	CutLeader    Kind = "cut-leader"  // partition {leader} from the other peers
+	HealLeader   Kind = "heal-leader" // rejoin it
 )
+
+// metaKind reports whether k acts on the metadata group.
+func metaKind(k Kind) bool {
+	switch k {
+	case KillLeader, ReviveLeader, FreezeLeader, ThawLeader, CutLeader, HealLeader:
+		return true
+	}
+	return false
+}
 
 // Fault is one scheduled action.
 type Fault struct {
@@ -50,7 +69,7 @@ func (f Fault) String() string {
 		s += fmt.Sprintf(" %s +%v", f.Node, f.Delay)
 	case Lossy:
 		s += fmt.Sprintf(" drop %.1f%% dup %.1f%%", f.Drop*100, f.Dup*100)
-	case Clean:
+	case Clean, KillLeader, ReviveLeader, FreezeLeader, ThawLeader, CutLeader, HealLeader:
 	case Corrupt:
 		s += fmt.Sprintf(" %s ×%d from #%d", f.Node, f.Count, f.Pick%1000)
 	default:
@@ -74,6 +93,9 @@ type Op struct {
 	Kind OpKind
 	Path string
 	Size int64 // Put
+	// Minority sends the op from a client pinned to the peer a CutLeader
+	// fault has partitioned off, when one is: the client on the small side.
+	Minority bool
 }
 
 // Scenario is a fault schedule plus a workload over a fixed cluster shape.
@@ -81,6 +103,7 @@ type Scenario struct {
 	Name   string // set for hand-written scenarios
 	Seed   uint64
 	Nodes  int
+	Metas  int // metadata peers; 0 or 1 is a single server
 	Length time.Duration
 	Faults []Fault
 	Ops    []Op
@@ -96,7 +119,11 @@ func (s Scenario) String() string {
 	if s.Name != "" {
 		b.WriteString(s.Name + ", ")
 	}
-	fmt.Fprintf(&b, "seed %d: %d nodes, %v, %d ops\n", s.Seed, s.Nodes, s.Length, len(s.Ops))
+	fmt.Fprintf(&b, "seed %d: %d nodes, ", s.Seed, s.Nodes)
+	if s.Metas > 1 {
+		fmt.Fprintf(&b, "%d metas, ", s.Metas)
+	}
+	fmt.Fprintf(&b, "%v, %d ops\n", s.Length, len(s.Ops))
 	for _, f := range s.Faults {
 		b.WriteString("  " + f.String() + "\n")
 	}
@@ -106,6 +133,7 @@ func (s Scenario) String() string {
 // Shape bounds what Generate may produce.
 type Shape struct {
 	Nodes    int
+	Metas    int // 3 adds metadata-group faults; below that the schedule is the node-only one
 	Length   time.Duration
 	Ops      int
 	Paths    int
@@ -119,10 +147,23 @@ func DefaultShape() Shape {
 	return Shape{Nodes: 5, Length: 2 * time.Minute, Ops: 40, Paths: 12, MaxSize: 512 << 10, Episodes: 6}
 }
 
+// MetaShape is DefaultShape over a 3-peer metadata group, with room for the
+// leader faults.
+func MetaShape() Shape {
+	sh := DefaultShape()
+	sh.Metas, sh.Episodes = 3, 8
+	return sh
+}
+
+// elections is the episode kind for repeated leader kills; it has no Fault
+// kind of its own.
+const elections Kind = "elections"
+
 type episode struct {
 	kind       Kind
 	node       iface.NodeID
 	start, end time.Duration
+	downs      [][2]time.Duration // elections: each kill and its revive
 }
 
 // Generate builds a scenario from seed. Safety rules keep every invariant
@@ -133,6 +174,8 @@ type episode struct {
 //     disk; two lost disks can destroy an acknowledged chunk by design);
 //   - one lossy window at a time;
 //   - every impairment ends 10 s before the scenario does;
+//   - with a metadata group, at most one peer is down, frozen or cut off at
+//     once (a majority of 3 always stands), so leader faults never overlap;
 //   - rot (applied by the runner) only hits a chunk that keeps 2 intact
 //     copies on other nodes this scenario never wipes: rot on the last
 //     copies is detected loudly by design (TestAllReplicasCorrupt), not
@@ -140,6 +183,9 @@ type episode struct {
 func Generate(seed uint64, sh Shape) Scenario {
 	rng := sim.NewRand(seed ^ 0x9e3779b97f4a7c15) // independent of the cluster's stream
 	s := Scenario{Seed: seed, Nodes: sh.Nodes, Length: sh.Length}
+	if sh.Metas > 1 {
+		s.Metas = sh.Metas
+	}
 	span := func(lo, hi time.Duration) time.Duration { return lo + time.Duration(rng.IntN(int(hi-lo)+1)) }
 	node := func() iface.NodeID { return iface.NodeID(fmt.Sprintf("node-%d", 1+rng.IntN(sh.Nodes))) }
 	last := sh.Length - 10*time.Second
@@ -156,10 +202,15 @@ func Generate(seed uint64, sh Shape) Scenario {
 	}
 	down := func(e episode) bool { return e.kind == Kill || e.kind == Freeze }
 	wiped := false
+	var cuts []episode
 	for range 1 + rng.IntN(sh.Episodes) {
 		start := span(5*time.Second, last-5*time.Second)
 		var e episode
-		switch k := rng.IntN(12); {
+		kinds := 12 // shapes without a group draw exactly as before
+		if s.Metas >= 3 {
+			kinds = 18
+		}
+		switch k := rng.IntN(kinds); {
 		case k < 4:
 			e = episode{kind: Kill, node: node(), start: start, end: min(start+span(time.Second, time.Minute), last)}
 		case k < 6:
@@ -168,15 +219,37 @@ func Generate(seed uint64, sh Shape) Scenario {
 			e = episode{kind: Slow, node: node(), start: start, end: min(start+span(5*time.Second, 40*time.Second), last)}
 		case k < 10:
 			e = episode{kind: Lossy, start: start, end: min(start+span(5*time.Second, 20*time.Second), last)}
-		default:
+		case k < 12:
 			// Instantaneous; the scrubber or a reader finds it later.
 			e = episode{kind: Corrupt, node: node(), start: start, end: start}
+		case k < 14:
+			e = episode{kind: KillLeader, start: start, end: min(start+span(3*time.Second, 30*time.Second), last)}
+		case k < 15:
+			e = episode{kind: FreezeLeader, start: start, end: min(start+span(2*time.Second, 20*time.Second), last)}
+		case k < 17:
+			e = episode{kind: CutLeader, start: start, end: min(start+span(5*time.Second, 30*time.Second), last)}
+		default:
+			// Repeated elections: 2-3 leader kills, each revived before the next.
+			e = episode{kind: elections, start: start, end: start}
+			for t, n := start, 2+rng.IntN(2); n > 0; n-- {
+				down := span(2*time.Second, 5*time.Second)
+				if t+down > last {
+					break
+				}
+				e.downs = append(e.downs, [2]time.Duration{t, t + down})
+				e.end = t + down
+				t += down + span(8*time.Second, 14*time.Second)
+			}
 		}
 		sameNode := func(o episode) bool { return e.node != "" && o.node == e.node }
 		if overlapping(e.start, e.end, sameNode) > 0 {
 			continue
 		}
 		if down(e) && overlapping(e.start, e.end, down) >= 2 {
+			continue
+		}
+		isMeta := func(o episode) bool { return metaKind(o.kind) || o.kind == elections }
+		if isMeta(e) && overlapping(e.start, e.end, isMeta) > 0 {
 			continue
 		}
 		if e.kind == Lossy && overlapping(e.start, e.end, func(o episode) bool { return o.kind == Lossy }) > 0 {
@@ -201,6 +274,17 @@ func Generate(seed uint64, sh Shape) Scenario {
 			s.Faults = append(s.Faults, Fault{At: e.start, Kind: Lossy, Drop: drop, Dup: dup}, Fault{At: e.end, Kind: Clean})
 		case Corrupt:
 			s.Faults = append(s.Faults, Fault{At: e.start, Kind: Corrupt, Node: e.node, Count: 1 + rng.IntN(3), Pick: rng.Uint64()})
+		case KillLeader:
+			s.Faults = append(s.Faults, Fault{At: e.start, Kind: KillLeader}, Fault{At: e.end, Kind: ReviveLeader})
+		case FreezeLeader:
+			s.Faults = append(s.Faults, Fault{At: e.start, Kind: FreezeLeader}, Fault{At: e.end, Kind: ThawLeader})
+		case CutLeader:
+			s.Faults = append(s.Faults, Fault{At: e.start, Kind: CutLeader}, Fault{At: e.end, Kind: HealLeader})
+			cuts = append(cuts, e)
+		case elections:
+			for _, d := range e.downs {
+				s.Faults = append(s.Faults, Fault{At: d[0], Kind: KillLeader}, Fault{At: d[1], Kind: ReviveLeader})
+			}
 		}
 	}
 	// Stable: a wipe must stay before the restart scheduled at the same time.
@@ -219,5 +303,11 @@ func Generate(seed uint64, sh Shape) Scenario {
 		s.Ops = append(s.Ops, op)
 	}
 	slices.SortStableFunc(s.Ops, func(a, b Op) int { return cmp.Compare(a.At, b.At) })
+	// Half the ops issued while a leader is cut off come from the client on its side.
+	for i, op := range s.Ops {
+		if slices.ContainsFunc(cuts, func(e episode) bool { return op.At >= e.start && op.At < e.end }) {
+			s.Ops[i].Minority = rng.IntN(2) == 0
+		}
+	}
 	return s
 }

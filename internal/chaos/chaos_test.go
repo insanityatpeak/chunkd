@@ -38,6 +38,38 @@ func TestChaosSeeds(t *testing.T) {
 	t.Logf("%d seeds: GC deleted %d unreferenced copies", n, deleted)
 }
 
+// Over a 3-peer metadata group, with leader kills, freezes, partitions (a
+// client on each side) and repeated elections. CI runs 500 of these through
+// the chaos command.
+func TestChaosMetaSeeds(t *testing.T) {
+	n := min(*seeds, 10)
+	if testing.Short() {
+		n = min(n, 3)
+	}
+	faults := 0
+	for seed := uint64(1); seed <= uint64(n); seed++ {
+		r := Run(Generate(seed, MetaShape()), io.Discard)
+		if r.Err != nil {
+			t.Fatal(r.Err)
+		}
+		faults += r.LeaderFaults
+	}
+	if faults == 0 {
+		t.Fatalf("%d seeds hit no leader", n)
+	}
+}
+
+func TestSameSeedSameTraceMetaGroup(t *testing.T) {
+	a := Run(Generate(12, MetaShape()), io.Discard)
+	b := Run(Generate(12, MetaShape()), io.Discard)
+	if a.Trace != b.Trace || a.LeaderFaults != b.LeaderFaults || a.LeaderFaults == 0 {
+		t.Fatalf("seed 12 replayed differently: %s/%d vs %s/%d", a.Trace, a.LeaderFaults, b.Trace, b.LeaderFaults)
+	}
+	if !strings.Contains(Replay(Generate(12, MetaShape())), "--metas=3") {
+		t.Fatal("the replay command drops --metas")
+	}
+}
+
 func TestSameSeedSameTrace(t *testing.T) {
 	for _, seed := range []uint64{3, 17} {
 		a := Run(Generate(seed, DefaultShape()), io.Discard)
@@ -74,6 +106,83 @@ func TestGenerateRespectsSafetyRules(t *testing.T) {
 		}
 		if len(down) != 0 || wipes > 1 {
 			t.Fatalf("seed %d: unhealed %v, %d wipes\n%s", seed, down, wipes, s)
+		}
+	}
+}
+
+// With a metadata group: at most one peer impaired at a time, every leader
+// fault ended 10 s before the end, and each new kind drawn by some seed.
+func TestGenerateMetaSafetyRules(t *testing.T) {
+	ends := map[Kind]Kind{KillLeader: ReviveLeader, FreezeLeader: ThawLeader, CutLeader: HealLeader}
+	seen := map[Kind]int{}
+	minority := 0
+	for seed := uint64(0); seed < 2000; seed++ {
+		s := Generate(seed, MetaShape())
+		if s.Metas != 3 {
+			t.Fatalf("seed %d: %d metas", seed, s.Metas)
+		}
+		var open Kind
+		kills := 0
+		for _, f := range s.Faults {
+			seen[f.Kind]++
+			if !metaKind(f.Kind) {
+				continue
+			}
+			if f.At > s.Length-10*time.Second {
+				t.Fatalf("seed %d: %v after the heal deadline\n%s", seed, f, s)
+			}
+			if end, start := ends[f.Kind]; start {
+				if open != "" {
+					t.Fatalf("seed %d: %v while %s is open\n%s", seed, f, open, s)
+				}
+				open = end
+				if f.Kind == KillLeader {
+					kills++
+				}
+				continue
+			}
+			if f.Kind != open {
+				t.Fatalf("seed %d: %v closes %q\n%s", seed, f, open, s)
+			}
+			open = ""
+		}
+		if open != "" {
+			t.Fatalf("seed %d: %s never came\n%s", seed, open, s)
+		}
+		if kills >= 2 {
+			seen[elections]++
+		}
+		for _, op := range s.Ops {
+			if op.Minority {
+				minority++
+			}
+		}
+	}
+	for _, k := range []Kind{KillLeader, FreezeLeader, CutLeader, elections} {
+		if seen[k] == 0 {
+			t.Errorf("no seed drew %s", k)
+		}
+	}
+	if minority == 0 {
+		t.Error("no op ran on the minority side")
+	}
+}
+
+// Shapes without a metadata group must generate what they did before the
+// group's faults existed: those seeds' traces are pinned elsewhere.
+func TestGenerateWithoutGroupUnchanged(t *testing.T) {
+	for seed := uint64(0); seed < 500; seed++ {
+		sh := DefaultShape()
+		a := Generate(seed, sh)
+		sh.Metas = 1
+		b := Generate(seed, sh)
+		if a.String() != b.String() || a.Metas != 0 || b.Metas != 0 {
+			t.Fatalf("seed %d: Metas 1 changed the schedule\n%s\n%s", seed, a, b)
+		}
+		for _, f := range a.Faults {
+			if metaKind(f.Kind) {
+				t.Fatalf("seed %d: leader fault without a group: %v", seed, f)
+			}
 		}
 	}
 }

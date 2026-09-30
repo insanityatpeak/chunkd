@@ -36,7 +36,11 @@ type Report struct {
 	Ops      map[string]int `json:"ops"` // "put ok", "get failed", ...
 	Repair   repair.Stats   `json:"repair"`
 	Rotted   int            `json:"rotted"` // chunk copies corrupted by Corrupt faults
-	GC       meta.GCStats   `json:"gc"`
+	// LeaderFaults counts leader kills, freezes and cuts that found a leader
+	// to hit; MinorityOps, ops sent from the cut-off leader's side.
+	LeaderFaults int          `json:"leaderFaults"`
+	MinorityOps  int          `json:"minorityOps"`
+	GC           meta.GCStats `json:"gc"`
 	// History is how many recorded client operations the linearizability
 	// check covered.
 	History int   `json:"history"`
@@ -46,8 +50,14 @@ type Report struct {
 // ScrubPass is the scrub interval chaos runs use.
 const ScrubPass = 20 * time.Second
 
-// Replay is the command that reruns one seed.
-func Replay(seed uint64) string { return fmt.Sprintf("go run ./tools/task chaos --seed=%d", seed) }
+// Replay is the command that reruns one generated scenario.
+func Replay(s Scenario) string {
+	cmd := fmt.Sprintf("go run ./tools/task chaos --seed=%d", s.Seed)
+	if s.Metas > 1 {
+		cmd += fmt.Sprintf(" --metas=%d", s.Metas)
+	}
+	return cmd
+}
 
 // Config returns the cluster configuration chaos runs use.
 func Config(nodes int) cluster.Config {
@@ -73,6 +83,7 @@ func Run(s Scenario, w io.Writer) Report { return RunOpts(s, w, Options{}) }
 func RunOpts(s Scenario, w io.Writer, opts Options) Report {
 	r := Report{Seed: s.Seed, Ops: map[string]int{}}
 	cfg := Config(s.Nodes)
+	cfg.Metas = s.Metas
 	c := cluster.New(s.Seed, cfg, w)
 	rec := c.RecordHistory()
 	base := c.Net().Faults()
@@ -82,10 +93,70 @@ func RunOpts(s Scenario, w io.Writer, opts Options) Report {
 			wipes[f.Node] = true
 		}
 	}
-	c.Tick(3 * time.Second)
+	if s.Metas >= 3 {
+		c.Tick(6 * time.Second) // the group needs its first election
+	} else {
+		c.Tick(3 * time.Second)
+	}
 
+	var errs []error
+	// held is the peer the running leader fault hit; cut is set while it is
+	// partitioned off. Leader faults never overlap, so one slot is enough.
+	var held, cut iface.NodeID
+	others := func(id iface.NodeID) []iface.NodeID {
+		var rest []iface.NodeID
+		for _, p := range c.MetaIDs() {
+			if p != id {
+				rest = append(rest, p)
+			}
+		}
+		return rest
+	}
+	// hit picks the current leader as the victim; "" during an election.
+	hit := func() iface.NodeID {
+		if held == "" {
+			if held = c.MetaLeader(); held != "" {
+				r.LeaderFaults++
+			}
+			return held
+		}
+		return ""
+	}
 	apply := func(f Fault) {
 		switch f.Kind {
+		case KillLeader:
+			if id := hit(); id != "" {
+				c.KillMeta(id)
+			}
+		case ReviveLeader:
+			if held != "" {
+				if err := c.ReviveMeta(held); err != nil {
+					errs = append(errs, fmt.Errorf("revive %s: %w", held, err))
+				}
+				held = ""
+			}
+		case FreezeLeader:
+			if id := hit(); id != "" {
+				c.Net().Freeze(id)
+			}
+		case ThawLeader:
+			if held != "" {
+				c.Net().Thaw(held)
+				held = ""
+			}
+		case CutLeader:
+			if id := hit(); id != "" {
+				c.Net().Partition([]iface.NodeID{id}, others(id))
+				cut = id
+			}
+		case HealLeader:
+			if cut != "" {
+				for _, p := range others(cut) {
+					c.Net().Unblock(cut, p)
+					c.Net().Unblock(p, cut)
+				}
+				held, cut = "", ""
+			}
 		case Kill:
 			c.KillNode(f.Node)
 		case Restart:
@@ -121,13 +192,18 @@ func RunOpts(s Scenario, w io.Writer, opts Options) Report {
 	}
 	do := func(op Op) {
 		var err error
+		sess := c.Session()
+		if op.Minority && cut != "" {
+			sess = c.Pinned(cut)
+			r.MinorityOps++
+		}
 		switch op.Kind {
 		case Put:
-			_, _, err = c.UploadRandom(op.Path, op.Size)
+			_, _, err = sess.UploadRandom(op.Path, op.Size)
 		case Get:
-			_, _, err = c.Download(op.Path)
+			_, _, err = sess.Download(op.Path)
 		case Delete:
-			err = c.Delete(op.Path)
+			err = sess.Delete(op.Path)
 		}
 		outcome := "ok"
 		switch {
@@ -170,7 +246,6 @@ func RunOpts(s Scenario, w io.Writer, opts Options) Report {
 		live += e.Size
 	}
 	r.Bound = c.RepairBound(live)
-	var errs []error
 	at(quiet)
 	for {
 		r.Restored = c.Now().Sub(start) - quiet
@@ -201,6 +276,13 @@ func RunOpts(s Scenario, w io.Writer, opts Options) Report {
 		}
 		if err := c.AssertInvariants(); err != nil {
 			errs = append(errs, fmt.Errorf("after GC: %w", err))
+		}
+	}
+	// Quiet for 10 s, every peer must hold byte-identical state.
+	if s.Metas >= 3 {
+		c.Tick(10 * time.Second)
+		if err := c.AssertMetaAgree(); err != nil {
+			errs = append(errs, err)
 		}
 	}
 	// Every client call of the run, the final read-back included, must fit one
@@ -238,7 +320,7 @@ func RunOpts(s Scenario, w io.Writer, opts Options) Report {
 	sum := sha256.Sum256(st)
 	r.Trace = hex.EncodeToString(sum[:8])
 	if err := errors.Join(errs...); err != nil {
-		r.Err = fmt.Errorf("chaos seed %d: %w\n%s\nreplay: %s", s.Seed, err, s, Replay(s.Seed))
+		r.Err = fmt.Errorf("chaos seed %d: %w\n%s\nreplay: %s", s.Seed, err, s, Replay(s))
 	}
 	return r
 }

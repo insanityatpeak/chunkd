@@ -3,6 +3,7 @@
 //
 //	chunkd-chaos -seeds 500            seeds 1..500 in parallel (sim)
 //	chunkd-chaos -seed 63 -v           one seed, with its schedule and logs
+//	chunkd-chaos -seeds 500 -metas 3   over a 3-peer metadata group, with leader faults
 //	chunkd-chaos -mode real -short     the real-mode suite against docker compose
 //
 // Every failure prints the command that replays it.
@@ -57,6 +58,7 @@ func main() {
 	gateway := flag.String("gateway", "http://localhost:8080", "real mode: gateway URL")
 	project := flag.String("project", "chunkd", "real mode: compose project name")
 	bound := flag.Duration("bound", 90*time.Second, "real mode: longest allowed under-replication, and settle time after quiet")
+	metas := flag.Int("metas", 1, "sim mode: metadata peers; 3 adds leader kills, freezes, partitions and repeated elections")
 	artifacts := flag.String("artifacts", "", "sim mode: directory for the visualization of a history that is not linearizable")
 	flag.Parse()
 
@@ -68,8 +70,14 @@ func main() {
 		os.Exit(runReal(*gateway, *project, *bound))
 	}
 
+	shape := chaos.DefaultShape()
+	if *metas > 1 {
+		shape = chaos.MetaShape()
+		shape.Metas = *metas
+	}
+
 	if *seed != 0 {
-		s := chaos.Generate(*seed, chaos.DefaultShape())
+		s := chaos.Generate(*seed, shape)
 		fmt.Print(s)
 		var logs io.Writer = io.Discard
 		if *verbose {
@@ -80,8 +88,8 @@ func main() {
 			fmt.Fprintln(os.Stderr, r.Err)
 			os.Exit(1)
 		}
-		fmt.Printf("ok: trace %s, RF restored %v after quiet (bound %v), %d repair copies, %d trims, ops %v\n",
-			r.Trace, r.Restored, r.Bound, r.Repair.Completed, r.Repair.Trimmed, r.Ops)
+		fmt.Printf("ok: trace %s, RF restored %v after quiet (bound %v), %d repair copies, %d trims, %d leader faults, %d minority-side ops, ops %v\n",
+			r.Trace, r.Restored, r.Bound, r.Repair.Completed, r.Repair.Trimmed, r.LeaderFaults, r.MinorityOps, r.Ops)
 		return
 	}
 
@@ -90,14 +98,14 @@ func main() {
 	var mu sync.Mutex
 	var failed []chaos.Report
 	var worst time.Duration
-	rotted := 0
+	rotted, leaderFaults, minorityOps := 0, 0, 0
 	var wg sync.WaitGroup
 	for range max(*parallel, 1) {
 		wg.Add(1)
 		go func() {
 			defer wg.Done()
 			for sd := range jobs {
-				s := chaos.Generate(sd, chaos.DefaultShape())
+				s := chaos.Generate(sd, shape)
 				r := chaos.RunOpts(s, io.Discard, chaos.Options{Artifacts: *artifacts})
 				mu.Lock()
 				if r.Err != nil {
@@ -105,6 +113,8 @@ func main() {
 				}
 				worst = max(worst, r.Restored)
 				rotted += r.Rotted
+				leaderFaults += r.LeaderFaults
+				minorityOps += r.MinorityOps
 				if *verbose {
 					fmt.Printf("seed %d: trace %s restored %v\n", sd, r.Trace, r.Restored)
 				}
@@ -118,8 +128,12 @@ func main() {
 	close(jobs)
 	wg.Wait()
 
-	fmt.Printf("chaos: %d seeds from %d in %v, %d failed, slowest RF restore %v, %d copies rotted\n",
+	summary := fmt.Sprintf("chaos: %d seeds from %d in %v, %d failed, slowest RF restore %v, %d copies rotted",
 		*seeds, *from, time.Since(start).Round(time.Millisecond), len(failed), worst, rotted)
+	if shape.Metas > 1 {
+		summary += fmt.Sprintf(", %d leader faults, %d minority-side ops", leaderFaults, minorityOps)
+	}
+	fmt.Println(summary)
 	for _, r := range failed {
 		fmt.Fprintln(os.Stderr, r.Err)
 	}
