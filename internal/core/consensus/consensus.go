@@ -107,6 +107,9 @@ type Status struct {
 	// Ready: IsLeader, and the FSM has applied an entry of this term, so it
 	// holds everything committed by earlier leaders. Serve nothing before it.
 	Ready bool
+	// SnapshotsInstalled counts snapshots this process took from the leader
+	// because the entries it lacked were compacted away.
+	SnapshotsInstalled uint64
 }
 
 type pending struct {
@@ -144,6 +147,7 @@ type Node struct {
 	voters      []uint64
 	confState   pb.ConfState
 	sinceSnap   int
+	installed   uint64 // snapshots received from the leader
 
 	proposals map[uint64]*pending
 	nextProp  uint64
@@ -392,7 +396,8 @@ func (n *Node) quorumActive(now iface.Instant) bool {
 func (n *Node) Status() Status {
 	now := n.d.Clock.Now()
 	st := n.rn.BasicStatus()
-	s := Status{ID: n.cfg.ID, Term: st.GetTerm(), Leader: st.Lead, Commit: st.GetCommit(), Applied: n.applied, Voters: slices.Clone(n.voters)}
+	s := Status{ID: n.cfg.ID, Term: st.GetTerm(), Leader: st.Lead, Commit: st.GetCommit(), Applied: n.applied, Voters: slices.Clone(n.voters),
+		SnapshotsInstalled: n.installed}
 	if s.Leader != raft.None {
 		s.LeaderNode = n.cfg.Node(s.Leader)
 	}
@@ -585,6 +590,7 @@ func (n *Node) installSnapshot(ctx context.Context, snap *pb.Snapshot, hs []byte
 	n.confState = *snap.GetMetadata().GetConfState()
 	n.voters = slices.Clone(n.confState.Voters)
 	n.sinceSnap = 0
+	n.installed++
 }
 
 func (n *Node) send(m *pb.Message) {

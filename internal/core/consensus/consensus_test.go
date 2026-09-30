@@ -376,6 +376,9 @@ func TestSnapshotBoundsLogAndCatchesUp(t *testing.T) {
 	if len(g.fsms[lag].log) != n {
 		t.Fatalf("lagging peer applied %d of %d", len(g.fsms[lag].log), n)
 	}
+	if g.nodes[lag].Status().SnapshotsInstalled == 0 {
+		t.Fatal("lagging peer caught up without a snapshot")
+	}
 	// Restart every peer: each recovers from its snapshot plus tail.
 	for id := range g.nodes {
 		g.kill(id)
