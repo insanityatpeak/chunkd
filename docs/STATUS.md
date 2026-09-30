@@ -15,6 +15,8 @@ Dedup through logged chunk claims, compare-and-swap versioned commits with opt-i
 | Chaos over 1,000 sim seeds, green, with GC invariants | `task chaos --seeds=1000`: 0 failed in 36 s. Every seed ends with `GCSettle` then `AssertCollected` (no orphan, no refcount or claim drift). CI runs 1,000 per push |
 | Scenario links still replay; the new `gc` scenario replays | Playwright (Edge locally, Chromium in CI): `kill-node`, `corrupt-chunk` and `gc` match `TestScenarioGolden` event for event; the older goldens are unchanged |
 | Dashboard works in sim and LIVE | Headless Edge: the sim `gc` scenario shows dedup, versions, undelete and collection; against `docker compose up`, delete and undelete round-trip through the gateway (bugs-found #11 fixed on the way) |
+| Lighthouse on the Pages URL still ≥ 80 performance, ≥ 90 accessibility | Performance 100, accessibility 100, best practices 96 (LCP 1.2 s, TBT 30 ms, CLS 0), Lighthouse 12.8 in headless Edge against the live URL at `9523e65` |
+| Real-mode suite green in CI | The compose job passes at `9523e65`, first time since before Phase 4; `transient-blip-no-repair` had failed about half the runs (bugs-found #12) |
 
 Bugs found: #10 (upload lease shorter than GC grace plus two sweeps), #11 (undelete not routed when the gateway serves the dashboard), #12 (gRPC dial backoff kept a returning node unreachable from the gateway, so the real-mode blip scenario committed chunks a copy short and repaired them).
 
