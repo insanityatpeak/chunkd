@@ -301,8 +301,8 @@ func (s *Server) apply(op *chunkdv1.Op) (Result, error) {
 	if err := s.state.Validate(op); err != nil {
 		return Result{}, err
 	}
-	idx, err := s.d.Store.Append(context.Background(), wire.Marshal(op))
-	if err != nil {
+	idx := s.applied + 1
+	if err := s.d.Store.Save(context.Background(), idx, [][]byte{wire.Marshal(op)}, nil); err != nil {
 		return Result{}, iface.Errorf(iface.CodeUnavailable, "log append: %v", err)
 	}
 	res, err := s.state.Apply(op)

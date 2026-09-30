@@ -117,13 +117,13 @@ func (s *BlockStore) List(_ context.Context, fn func(iface.ChunkID) error) error
 	return nil
 }
 
-// MetaStore is an in-memory iface.MetaStore.
-// SIMPLIFIED: entries are never truncated after a snapshot. HDFS and etcd
-// compact the log up to the snapshot index to bound disk and replay time.
+// MetaStore is an in-memory iface.MetaStore. Everything saved survives a
+// simulated restart, which reuses the same MetaStore.
 type MetaStore struct {
 	mu      sync.Mutex
+	base    iface.Index // index of the entry before entries[0]: the snapshot's
 	entries [][]byte
-	snapAt  iface.Index
+	state   []byte
 	snap    []byte
 }
 
@@ -132,23 +132,37 @@ var _ iface.MetaStore = (*MetaStore)(nil)
 // NewMetaStore returns an empty log.
 func NewMetaStore() *MetaStore { return &MetaStore{} }
 
-func (s *MetaStore) Append(_ context.Context, entry []byte) (iface.Index, error) {
+func (s *MetaStore) Save(_ context.Context, first iface.Index, entries [][]byte, state []byte) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	s.entries = append(s.entries, bytes.Clone(entry))
-	return iface.Index(len(s.entries)), nil
+	if first <= s.base || first > s.base+iface.Index(len(s.entries))+1 {
+		return iface.Errorf(iface.CodeInvalid, "save at %d: log holds %d..%d", first, s.base+1, s.base+iface.Index(len(s.entries)))
+	}
+	s.entries = s.entries[:first-s.base-1]
+	for _, e := range entries {
+		s.entries = append(s.entries, bytes.Clone(e))
+	}
+	if state != nil {
+		s.state = bytes.Clone(state)
+	}
+	return nil
+}
+
+func (s *MetaStore) State(context.Context) ([]byte, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return bytes.Clone(s.state), nil
 }
 
 func (s *MetaStore) Replay(_ context.Context, from iface.Index, fn func(iface.Index, []byte) error) error {
 	s.mu.Lock()
-	entries := slices.Clone(s.entries)
+	base, entries := s.base, slices.Clone(s.entries)
 	s.mu.Unlock()
-	if from < 1 {
-		from = 1
-	}
-	for i := int(from) - 1; i < len(entries); i++ {
-		if err := fn(iface.Index(i+1), bytes.Clone(entries[i])); err != nil {
-			return err
+	for k, e := range entries {
+		if i := base + iface.Index(k+1); i >= from {
+			if err := fn(i, bytes.Clone(e)); err != nil {
+				return err
+			}
 		}
 	}
 	return nil
@@ -157,12 +171,20 @@ func (s *MetaStore) Replay(_ context.Context, from iface.Index, fn func(iface.In
 func (s *MetaStore) SaveSnapshot(_ context.Context, at iface.Index, data []byte) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	s.snapAt, s.snap = at, bytes.Clone(data)
+	if at <= s.base {
+		return nil
+	}
+	if keep := at - s.base; int(keep) < len(s.entries) {
+		s.entries = slices.Clone(s.entries[keep:])
+	} else {
+		s.entries = nil
+	}
+	s.base, s.snap = at, bytes.Clone(data)
 	return nil
 }
 
-func (s *MetaStore) LoadSnapshot(_ context.Context) (iface.Index, []byte, error) {
+func (s *MetaStore) LoadSnapshot(context.Context) (iface.Index, []byte, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	return s.snapAt, bytes.Clone(s.snap), nil
+	return s.base, bytes.Clone(s.snap), nil
 }

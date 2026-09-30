@@ -1,9 +1,13 @@
 // Package metastore is the real-mode iface.MetaStore: an append-only WAL for
-// ops and bbolt for snapshots.
+// log entries and the consensus state, and bbolt for snapshots.
 //
-// WAL layout: 16-byte header ("CHWAL001" + base index, little endian), then
-// records of [len u32][crc32c u32][payload]. Entry k in the file has index
-// base+k. A record is durable once Append's fsync returns.
+// WAL layout: 16-byte header ("CHWAL002" + base index, little endian), then
+// one record per Save: [len u32][crc32c u32][payload], payload = [first u64]
+// [count u32][has state u8], count × ([len u32][entry]), then the state.
+// Nothing is rewritten in place: a record drops every earlier entry at or
+// after its first index, then appends its own, and the last state wins
+// (etcd's WAL works the same way). One record per Save means a crash can
+// only tear the last record, however the disk orders the unsynced writes.
 package metastore
 
 import (
@@ -25,12 +29,13 @@ import (
 )
 
 const (
-	walName    = "meta.wal"
-	dbName     = "snapshot.db"
-	magic      = "CHWAL001"
-	headerSize = 16
-	recHeader  = 8
-	maxRecord  = 64 << 20
+	walName     = "meta.wal"
+	dbName      = "snapshot.db"
+	magic       = "CHWAL002"
+	headerSize  = 16
+	recHeader   = 8
+	batchHeader = 13 // first u64, count u32, has state u8
+	maxRecord   = 64 << 20
 )
 
 var (
@@ -39,19 +44,27 @@ var (
 	keyIndex   = []byte("index")
 	keyData    = []byte("data")
 
-	// ErrCorrupt means a record before the tail failed its checksum. A torn
-	// tail is expected after a crash and repaired; corruption in the middle
-	// is not, because truncating there would silently drop acknowledged ops.
+	// ErrCorrupt means a record before the tail failed its checksum or
+	// breaks the log's order. A torn tail is expected after a crash and
+	// repaired; corruption in the middle is not, because truncating there
+	// would silently drop acknowledged entries.
 	ErrCorrupt = errors.New("metastore: WAL corrupt before tail")
 )
+
+// span locates one entry's or state's bytes in the WAL.
+type span struct {
+	off int64
+	n   int
+}
 
 // Store implements iface.MetaStore. Safe for concurrent use.
 type Store struct {
 	mu      sync.Mutex
 	dir     string
 	wal     *os.File
-	base    iface.Index
-	offsets []int64 // file offset of each record
+	base    iface.Index // the snapshot index the WAL starts after
+	entries []span      // entries[k] has index base+k+1
+	state   *span
 	end     int64
 	db      *bolt.DB
 }
@@ -89,14 +102,14 @@ func (s *Store) openWAL() error {
 		f.Close()
 		return err
 	}
+	at, _, err := s.loadSnapshot()
+	if err != nil {
+		f.Close()
+		return err
+	}
 	if fi.Size() < headerSize {
 		// New, or crashed while writing the header: start empty at the
 		// snapshot index so indexes stay continuous.
-		at, _, err := s.loadSnapshot()
-		if err != nil {
-			f.Close()
-			return err
-		}
 		if err := writeHeader(f, at); err != nil {
 			f.Close()
 			return err
@@ -107,7 +120,15 @@ func (s *Store) openWAL() error {
 		}
 	}
 	s.wal = f
-	return s.scan()
+	if err := s.scan(); err != nil {
+		return err
+	}
+	// A crash between committing a snapshot and rewriting the WAL leaves
+	// entries the snapshot covers: finish the rewrite.
+	if at > s.base {
+		return s.compact(at)
+	}
+	return nil
 }
 
 func writeHeader(f *os.File, base iface.Index) error {
@@ -130,7 +151,7 @@ func (s *Store) scan() error {
 		return err
 	}
 	if string(h[:8]) != magic {
-		return fmt.Errorf("metastore: %s: bad magic", walName)
+		return fmt.Errorf("metastore: %s: bad magic %q (an older WAL format; start with an empty data directory)", walName, h[:8])
 	}
 	s.base = iface.Index(binary.LittleEndian.Uint64(h[8:]))
 	fi, err := s.wal.Stat()
@@ -138,17 +159,16 @@ func (s *Store) scan() error {
 		return err
 	}
 	size := fi.Size()
-	s.offsets = s.offsets[:0]
+	s.entries, s.state = s.entries[:0], nil
 	off := int64(headerSize)
 	r := bufio.NewReaderSize(io.NewSectionReader(s.wal, off, size-off), 1<<20)
 	for off < size {
-		n, ok, err := readRecord(r, size-off)
+		payload, n, ok, err := readRecord(r, size-off)
 		if err != nil {
 			return err
 		}
 		if !ok {
-			last := off+recHeader+int64(n) >= size
-			if !last {
+			if last := off+recHeader+int64(n) >= size; !last {
 				return fmt.Errorf("%w at offset %d", ErrCorrupt, off)
 			}
 			// Torn write: the crash hit mid-record. Everything before it was
@@ -161,79 +181,161 @@ func (s *Store) scan() error {
 			}
 			break
 		}
-		s.offsets = append(s.offsets, off)
+		if err := s.index(payload, off+recHeader); err != nil {
+			return fmt.Errorf("%w at offset %d: %v", ErrCorrupt, off, err)
+		}
 		off += recHeader + int64(n)
 	}
 	s.end = off
 	return nil
 }
 
+// index applies one record, whose payload starts at file offset at, to the
+// in-memory view of the log.
+func (s *Store) index(p []byte, at int64) error {
+	if len(p) < batchHeader {
+		return fmt.Errorf("record of %d bytes", len(p))
+	}
+	first := iface.Index(binary.LittleEndian.Uint64(p))
+	count := int(binary.LittleEndian.Uint32(p[8:]))
+	hasState := p[12] == 1
+	if first <= s.base || first > s.last()+1 {
+		return fmt.Errorf("record at index %d, log holds %d..%d", first, s.base+1, s.last())
+	}
+	var add []span
+	pos := batchHeader
+	for range count {
+		if pos+4 > len(p) {
+			return fmt.Errorf("entry header past the record")
+		}
+		n := int(binary.LittleEndian.Uint32(p[pos:]))
+		pos += 4
+		if pos+n > len(p) {
+			return fmt.Errorf("entry of %d bytes past the record", n)
+		}
+		add = append(add, span{off: at + int64(pos), n: n})
+		pos += n
+	}
+	s.entries = append(s.entries[:first-s.base-1], add...)
+	if hasState {
+		s.state = &span{off: at + int64(pos), n: len(p) - pos}
+	}
+	return nil
+}
+
+func (s *Store) last() iface.Index { return s.base + iface.Index(len(s.entries)) }
+
 // readRecord reads one record. ok is false if it is truncated or fails its
 // checksum; n is the length the header claims (0 if the header is torn).
-func readRecord(r io.Reader, remaining int64) (n uint32, ok bool, err error) {
+func readRecord(r io.Reader, remaining int64) (payload []byte, n uint32, ok bool, err error) {
 	if remaining < recHeader {
-		return 0, false, nil
+		return nil, 0, false, nil
 	}
 	var hdr [recHeader]byte
 	if _, err := io.ReadFull(r, hdr[:]); err != nil {
-		return 0, false, err
+		return nil, 0, false, err
 	}
 	n = binary.LittleEndian.Uint32(hdr[:4])
 	if n > maxRecord || int64(n) > remaining-recHeader {
-		return n, false, nil
+		return nil, n, false, nil
 	}
-	payload := make([]byte, n)
+	payload = make([]byte, n)
 	if _, err := io.ReadFull(r, payload); err != nil {
-		return n, false, err
+		return nil, n, false, err
 	}
-	return n, crc32.Checksum(payload, castagnoli) == binary.LittleEndian.Uint32(hdr[4:]), nil
+	return payload, n, crc32.Checksum(payload, castagnoli) == binary.LittleEndian.Uint32(hdr[4:]), nil
 }
 
-// Append writes entry and fsyncs before returning its index.
-func (s *Store) Append(_ context.Context, entry []byte) (iface.Index, error) {
-	if len(entry) > maxRecord {
-		return 0, iface.Errorf(iface.CodeInvalid, "entry of %d bytes exceeds %d", len(entry), maxRecord)
+// encode builds one record: the record header, then the payload.
+func encode(first iface.Index, entries [][]byte, state []byte) []byte {
+	n := batchHeader + len(state)
+	for _, e := range entries {
+		n += 4 + len(e)
+	}
+	buf := make([]byte, recHeader, recHeader+n)
+	buf = binary.LittleEndian.AppendUint64(buf, uint64(first))
+	buf = binary.LittleEndian.AppendUint32(buf, uint32(len(entries)))
+	if state != nil {
+		buf = append(buf, 1)
+	} else {
+		buf = append(buf, 0)
+	}
+	for _, e := range entries {
+		buf = binary.LittleEndian.AppendUint32(buf, uint32(len(e)))
+		buf = append(buf, e...)
+	}
+	buf = append(buf, state...)
+	binary.LittleEndian.PutUint32(buf[:4], uint32(n))
+	binary.LittleEndian.PutUint32(buf[4:8], crc32.Checksum(buf[recHeader:], castagnoli))
+	return buf
+}
+
+// Save writes entries and state as one record and one fsync.
+func (s *Store) Save(_ context.Context, first iface.Index, entries [][]byte, state []byte) error {
+	n := batchHeader + len(state)
+	for _, e := range entries {
+		n += 4 + len(e)
+	}
+	if n > maxRecord {
+		return iface.Errorf(iface.CodeInvalid, "save of %d bytes exceeds %d", n, maxRecord)
 	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	buf := make([]byte, recHeader+len(entry))
-	binary.LittleEndian.PutUint32(buf[:4], uint32(len(entry)))
-	binary.LittleEndian.PutUint32(buf[4:8], crc32.Checksum(entry, castagnoli))
-	copy(buf[recHeader:], entry)
+	if first <= s.base || first > s.last()+1 {
+		return iface.Errorf(iface.CodeInvalid, "save at %d: log holds %d..%d", first, s.base+1, s.last())
+	}
+	buf := encode(first, entries, state)
 	if _, err := s.wal.WriteAt(buf, s.end); err != nil {
-		return 0, err
+		return err
 	}
-	// SIMPLIFIED: one fsync per op. etcd and HDFS's edit log batch
-	// concurrent appends into one fsync (group commit).
+	// SIMPLIFIED: one fsync per Save. The consensus layer already batches a
+	// round's entries into one Save; etcd also pipelines fsyncs with sends.
 	if err := s.wal.Sync(); err != nil {
-		return 0, err
+		return err
 	}
-	s.offsets = append(s.offsets, s.end)
+	// Validated above, so indexing cannot fail.
+	_ = s.index(buf[recHeader:], s.end+recHeader)
 	s.end += int64(len(buf))
-	return s.base + iface.Index(len(s.offsets)), nil
+	return nil
 }
 
-// Replay calls fn for each WAL entry with index >= from. Entries covered by
-// the snapshot are gone; callers load the snapshot first.
+func (s *Store) read(sp span) ([]byte, error) {
+	b := make([]byte, sp.n)
+	_, err := s.wal.ReadAt(b, sp.off)
+	return b, err
+}
+
+// State returns the last state saved, or nil.
+func (s *Store) State(context.Context) ([]byte, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.state == nil {
+		return nil, nil
+	}
+	return s.read(*s.state)
+}
+
+// Replay calls fn for each entry with index >= from. Entries covered by the
+// snapshot are gone; callers load the snapshot first.
 func (s *Store) Replay(_ context.Context, from iface.Index, fn func(iface.Index, []byte) error) error {
 	s.mu.Lock()
-	offsets := append([]int64(nil), s.offsets...)
-	base := s.base
-	s.mu.Unlock()
-	for k, off := range offsets {
-		idx := base + iface.Index(k+1)
-		if idx < from {
+	var idx []iface.Index
+	var data [][]byte
+	for k, sp := range s.entries {
+		i := s.base + iface.Index(k+1)
+		if i < from {
 			continue
 		}
-		var hdr [recHeader]byte
-		if _, err := s.wal.ReadAt(hdr[:], off); err != nil {
+		b, err := s.read(sp)
+		if err != nil {
+			s.mu.Unlock()
 			return err
 		}
-		payload := make([]byte, binary.LittleEndian.Uint32(hdr[:4]))
-		if _, err := s.wal.ReadAt(payload, off+recHeader); err != nil {
-			return err
-		}
-		if err := fn(idx, payload); err != nil {
+		idx, data = append(idx, i), append(data, b)
+	}
+	s.mu.Unlock()
+	for k := range idx {
+		if err := fn(idx[k], data[k]); err != nil {
 			return err
 		}
 	}
@@ -242,8 +344,14 @@ func (s *Store) Replay(_ context.Context, from iface.Index, fn func(iface.Index,
 
 // SaveSnapshot stores data as covering every entry up to at, then drops those
 // entries from the WAL. The snapshot is committed first: a crash between the
-// two steps leaves extra WAL entries that replay skips, never a gap.
+// two steps leaves extra WAL entries that Open drops, never a gap. A
+// snapshot at or below the current one is ignored.
 func (s *Store) SaveSnapshot(_ context.Context, at iface.Index, data []byte) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if at <= s.base {
+		return nil
+	}
 	err := s.db.Update(func(tx *bolt.Tx) error {
 		b, err := tx.CreateBucketIfNotExists(bucket)
 		if err != nil {
@@ -262,28 +370,36 @@ func (s *Store) SaveSnapshot(_ context.Context, at iface.Index, data []byte) err
 	return s.compact(at)
 }
 
-// compact rewrites the WAL keeping entries after at: temp file, fsync,
-// rename over the old WAL, fsync the directory.
+// compact rewrites the WAL as base at, the entries after at and the state:
+// temp file, fsync, rename over the old WAL, fsync the directory.
 func (s *Store) compact(at iface.Index) error {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	if at <= s.base {
-		return nil
+	var keep [][]byte
+	for k := int(at - s.base); k < len(s.entries); k++ {
+		b, err := s.read(s.entries[k])
+		if err != nil {
+			return err
+		}
+		keep = append(keep, b)
+	}
+	var state []byte
+	if s.state != nil {
+		b, err := s.read(*s.state)
+		if err != nil {
+			return err
+		}
+		state = b
 	}
 	tmpPath := filepath.Join(s.dir, walName+".tmp")
 	tmp, err := os.OpenFile(tmpPath, os.O_RDWR|os.O_CREATE|os.O_TRUNC, 0o644)
 	if err != nil {
 		return err
 	}
-	newBase := min(at, s.base+iface.Index(len(s.offsets)))
-	if err := writeHeader(tmp, newBase); err != nil {
+	if err := writeHeader(tmp, at); err != nil {
 		tmp.Close()
 		return err
 	}
-	keepFrom := int(newBase - s.base)
-	if keepFrom < len(s.offsets) {
-		start := s.offsets[keepFrom]
-		if _, err := io.Copy(io.NewOffsetWriter(tmp, headerSize), io.NewSectionReader(s.wal, start, s.end-start)); err != nil {
+	if len(keep) > 0 || state != nil {
+		if _, err := tmp.WriteAt(encode(at+1, keep, state), headerSize); err != nil {
 			tmp.Close()
 			return err
 		}
@@ -327,7 +443,9 @@ func (s *Store) loadSnapshot() (iface.Index, []byte, error) {
 		if v := b.Get(keyIndex); len(v) == 8 {
 			at = iface.Index(binary.LittleEndian.Uint64(v))
 		}
-		data = append([]byte(nil), b.Get(keyData)...)
+		if v := b.Get(keyData); v != nil {
+			data = append([]byte(nil), v...)
+		}
 		return nil
 	})
 	return at, data, err
@@ -337,7 +455,7 @@ func (s *Store) loadSnapshot() (iface.Index, []byte, error) {
 func (s *Store) LastIndex() iface.Index {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	return s.base + iface.Index(len(s.offsets))
+	return s.last()
 }
 
 // Close closes the WAL and the snapshot database.

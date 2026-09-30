@@ -54,40 +54,11 @@ func TestBlockStoreListIsSorted(t *testing.T) {
 	}
 }
 
-func TestMetaStore(t *testing.T) {
-	ctx := context.Background()
-	s := NewMetaStore()
-	for i, e := range []string{"a", "b", "c"} {
-		idx, err := s.Append(ctx, []byte(e))
-		if err != nil || idx != iface.Index(i+1) {
-			t.Fatalf("Append(%s) = %d, %v; want %d", e, idx, err, i+1)
-		}
-	}
-
-	tests := []struct {
-		from iface.Index
-		want []string
-	}{
-		{0, []string{"a", "b", "c"}},
-		{1, []string{"a", "b", "c"}},
-		{3, []string{"c"}},
-		{4, nil},
-	}
-	for _, tt := range tests {
-		var got []string
-		_ = s.Replay(ctx, tt.from, func(_ iface.Index, b []byte) error { got = append(got, string(b)); return nil })
-		if !slices.Equal(got, tt.want) {
-			t.Errorf("Replay(%d) = %v, want %v", tt.from, got, tt.want)
-		}
-	}
-
-	if at, snap, _ := s.LoadSnapshot(ctx); at != 0 || snap != nil {
-		t.Fatalf("empty snapshot = %d %q, want 0 nil", at, snap)
-	}
-	_ = s.SaveSnapshot(ctx, 2, []byte("state"))
-	if at, snap, _ := s.LoadSnapshot(ctx); at != 2 || string(snap) != "state" {
-		t.Fatalf("snapshot = %d %q, want 2 state", at, snap)
-	}
+func TestMetaStoreConformance(t *testing.T) {
+	ifacetest.MetaStore(t, func(*testing.T) (iface.MetaStore, func() iface.MetaStore) {
+		s := NewMetaStore()
+		return s, func() iface.MetaStore { return s }
+	})
 }
 
 func TestBlockStoreConformance(t *testing.T) {

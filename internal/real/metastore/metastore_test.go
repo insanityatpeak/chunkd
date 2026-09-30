@@ -2,14 +2,19 @@ package metastore
 
 import (
 	"context"
+	"encoding/binary"
 	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
 	"slices"
+	"strings"
 	"testing"
 
+	bolt "go.etcd.io/bbolt"
+
 	"github.com/insanityatpeak/chunkd/internal/iface"
+	"github.com/insanityatpeak/chunkd/internal/iface/ifacetest"
 )
 
 var ctx = context.Background()
@@ -20,13 +25,14 @@ func open(t *testing.T, dir string) *Store {
 	if err != nil {
 		t.Fatal(err)
 	}
+	t.Cleanup(func() { s.Close() })
 	return s
 }
 
-func entries(t *testing.T, s *Store, from iface.Index) []string {
+func entries(t *testing.T, s *Store) []string {
 	t.Helper()
 	var out []string
-	err := s.Replay(ctx, from, func(i iface.Index, b []byte) error {
+	err := s.Replay(ctx, 0, func(i iface.Index, b []byte) error {
 		out = append(out, fmt.Sprintf("%d:%s", i, b))
 		return nil
 	})
@@ -36,61 +42,71 @@ func entries(t *testing.T, s *Store, from iface.Index) []string {
 	return out
 }
 
-func appendAll(t *testing.T, s *Store, es ...string) {
+func save(t *testing.T, s *Store, first iface.Index, state string, es ...string) {
 	t.Helper()
+	var bs [][]byte
 	for _, e := range es {
-		if _, err := s.Append(ctx, []byte(e)); err != nil {
+		bs = append(bs, []byte(e))
+	}
+	var st []byte
+	if state != "" {
+		st = []byte(state)
+	}
+	if err := s.Save(ctx, first, bs, st); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestConformance(t *testing.T) {
+	ifacetest.MetaStore(t, func(t *testing.T) (iface.MetaStore, func() iface.MetaStore) {
+		dir := t.TempDir()
+		s, err := Open(dir)
+		if err != nil {
 			t.Fatal(err)
 		}
-	}
+		cur := s
+		t.Cleanup(func() { cur.Close() })
+		return s, func() iface.MetaStore {
+			cur.Close()
+			n, err := Open(dir)
+			if err != nil {
+				t.Fatal(err)
+			}
+			cur = n
+			return n
+		}
+	})
 }
 
-func TestAppendReplayAcrossReopen(t *testing.T) {
-	dir := t.TempDir()
-	s := open(t, dir)
-	appendAll(t, s, "a", "b", "c")
-	s.Close()
-
-	s = open(t, dir)
-	defer s.Close()
-	if got, want := entries(t, s, 1), []string{"1:a", "2:b", "3:c"}; !slices.Equal(got, want) {
-		t.Fatalf("replay = %v, want %v", got, want)
-	}
-	if got := entries(t, s, 3); !slices.Equal(got, []string{"3:c"}) {
-		t.Fatalf("replay from 3 = %v", got)
-	}
-	if i, _ := s.Append(ctx, []byte("d")); i != 4 {
-		t.Fatalf("next index %d, want 4", i)
-	}
-}
-
-// Crash mid-write: the last record is cut at every possible byte. Recovery
-// must keep every complete record and accept new appends after them.
+// Crash mid-write: the last record, a batch of three entries plus a state,
+// is cut at every possible byte. Recovery keeps every earlier record whole
+// and none of the torn one, and accepts saves after it.
 func TestTornTailRecovers(t *testing.T) {
 	base := t.TempDir()
 	s := open(t, base)
-	appendAll(t, s, "first", "second", "third")
+	save(t, s, 1, "hs1", "first", "second")
+	save(t, s, 3, "hs2", "third", "fourth", "fifth")
 	s.Close()
 	full, err := os.ReadFile(filepath.Join(base, walName))
 	if err != nil {
 		t.Fatal(err)
 	}
-	thirdLen := recHeader + len("third")
-	for cut := 1; cut <= thirdLen; cut++ {
+	lastLen := len(encode(3, [][]byte{[]byte("third"), []byte("fourth"), []byte("fifth")}, []byte("hs2")))
+	for cut := 1; cut <= lastLen; cut++ {
 		t.Run(fmt.Sprintf("cut %d bytes", cut), func(t *testing.T) {
 			dir := t.TempDir()
 			if err := os.WriteFile(filepath.Join(dir, walName), full[:len(full)-cut], 0o644); err != nil {
 				t.Fatal(err)
 			}
 			s := open(t, dir)
-			defer s.Close()
-			if got, want := entries(t, s, 1), []string{"1:first", "2:second"}; !slices.Equal(got, want) {
+			if got, want := entries(t, s), []string{"1:first", "2:second"}; !slices.Equal(got, want) {
 				t.Fatalf("replay = %v, want %v", got, want)
 			}
-			if i, _ := s.Append(ctx, []byte("after")); i != 3 {
-				t.Fatalf("append after repair got index %d, want 3", i)
+			if st, _ := s.State(ctx); string(st) != "hs1" {
+				t.Fatalf("state = %q, want hs1", st)
 			}
-			if got := entries(t, s, 3); !slices.Equal(got, []string{"3:after"}) {
+			save(t, s, 3, "", "after")
+			if got := entries(t, s); !slices.Equal(got, []string{"1:first", "2:second", "3:after"}) {
 				t.Fatalf("replay after repair = %v", got)
 			}
 		})
@@ -100,16 +116,15 @@ func TestTornTailRecovers(t *testing.T) {
 func TestBadChecksumOnLastRecordIsTorn(t *testing.T) {
 	dir := t.TempDir()
 	s := open(t, dir)
-	appendAll(t, s, "ok", "bad")
+	save(t, s, 1, "", "ok")
+	save(t, s, 2, "", "bad")
 	s.Close()
 	path := filepath.Join(dir, walName)
 	b, _ := os.ReadFile(path)
 	b[len(b)-1] ^= 0xff // sector of the last record never reached disk
 	os.WriteFile(path, b, 0o644)
 
-	s = open(t, dir)
-	defer s.Close()
-	if got := entries(t, s, 1); !slices.Equal(got, []string{"1:ok"}) {
+	if got := entries(t, open(t, dir)); !slices.Equal(got, []string{"1:ok"}) {
 		t.Fatalf("replay = %v, want only the first record", got)
 	}
 }
@@ -117,22 +132,23 @@ func TestBadChecksumOnLastRecordIsTorn(t *testing.T) {
 func TestCorruptionBeforeTailIsAnError(t *testing.T) {
 	dir := t.TempDir()
 	s := open(t, dir)
-	appendAll(t, s, "one", "two", "three")
+	save(t, s, 1, "", "one")
+	save(t, s, 2, "", "two")
 	s.Close()
 	path := filepath.Join(dir, walName)
 	b, _ := os.ReadFile(path)
-	b[headerSize+recHeader] ^= 0xff // first payload byte
+	b[headerSize+recHeader+batchHeader+4] ^= 0xff // first entry's first byte
 	os.WriteFile(path, b, 0o644)
 
 	if _, err := Open(dir); !errors.Is(err, ErrCorrupt) {
-		t.Fatalf("Open err = %v, want ErrCorrupt (never truncate acknowledged ops)", err)
+		t.Fatalf("Open err = %v, want ErrCorrupt (never truncate acknowledged entries)", err)
 	}
 }
 
-func TestSnapshotTruncatesWAL(t *testing.T) {
+func TestSnapshotShrinksWAL(t *testing.T) {
 	dir := t.TempDir()
 	s := open(t, dir)
-	appendAll(t, s, "a", "b", "c", "d", "e")
+	save(t, s, 1, "hs", "a", "b", "c", "d", "e")
 	walBefore, _ := os.Stat(filepath.Join(dir, walName))
 	if err := s.SaveSnapshot(ctx, 3, []byte("state@3")); err != nil {
 		t.Fatal(err)
@@ -141,46 +157,63 @@ func TestSnapshotTruncatesWAL(t *testing.T) {
 	if walAfter.Size() >= walBefore.Size() {
 		t.Fatalf("WAL did not shrink: %d -> %d bytes", walBefore.Size(), walAfter.Size())
 	}
-	appendAll(t, s, "f")
-	s.Close()
-
-	s = open(t, dir)
-	defer s.Close()
-	at, snap, err := s.LoadSnapshot(ctx)
-	if err != nil || at != 3 || string(snap) != "state@3" {
-		t.Fatalf("snapshot = %d %q %v", at, snap, err)
-	}
-	if got, want := entries(t, s, at+1), []string{"4:d", "5:e", "6:f"}; !slices.Equal(got, want) {
-		t.Fatalf("replay after snapshot = %v, want %v", got, want)
+	if got := entries(t, s); !slices.Equal(got, []string{"4:d", "5:e"}) {
+		t.Fatalf("entries after snapshot = %v", got)
 	}
 }
 
-func TestSnapshotAtHeadThenReopenKeepsIndexes(t *testing.T) {
+func TestLostWALRestartsAtTheSnapshotIndex(t *testing.T) {
 	dir := t.TempDir()
 	s := open(t, dir)
-	appendAll(t, s, "a", "b")
+	save(t, s, 1, "", "a", "b")
 	if err := s.SaveSnapshot(ctx, 2, []byte("s")); err != nil {
 		t.Fatal(err)
 	}
 	s.Close()
-	// Losing the WAL entirely (e.g. deleted after the snapshot) restarts it
-	// at the snapshot index, not at 1.
 	os.Remove(filepath.Join(dir, walName))
 	s = open(t, dir)
-	defer s.Close()
-	if i, _ := s.Append(ctx, []byte("c")); i != 3 {
-		t.Fatalf("index after snapshot-only restart = %d, want 3", i)
+	if err := s.Save(ctx, 1, [][]byte{[]byte("x")}, nil); iface.CodeOf(err) != iface.CodeInvalid {
+		t.Fatalf("save at 1 below the snapshot: %v, want CodeInvalid", err)
+	}
+	save(t, s, 3, "", "c")
+	if got := entries(t, s); !slices.Equal(got, []string{"3:c"}) {
+		t.Fatalf("entries = %v", got)
 	}
 }
 
-func TestEmptyStore(t *testing.T) {
-	s := open(t, t.TempDir())
-	defer s.Close()
-	at, snap, err := s.LoadSnapshot(ctx)
-	if err != nil || at != 0 || len(snap) != 0 {
-		t.Fatalf("empty snapshot = %d %q %v", at, snap, err)
+// A crash after the snapshot commits and before the WAL is rewritten
+// leaves covered entries in the WAL; Open drops them.
+func TestCrashBetweenSnapshotAndCompaction(t *testing.T) {
+	dir := t.TempDir()
+	s := open(t, dir)
+	save(t, s, 1, "hs", "a", "b", "c")
+	err := s.db.Update(func(tx *bolt.Tx) error {
+		b, err := tx.CreateBucketIfNotExists(bucket)
+		if err != nil {
+			return err
+		}
+		b.Put(keyIndex, binary.LittleEndian.AppendUint64(nil, 2))
+		return b.Put(keyData, []byte("snap@2"))
+	})
+	if err != nil {
+		t.Fatal(err)
 	}
-	if got := entries(t, s, 1); len(got) != 0 {
-		t.Fatalf("empty replay = %v", got)
+	s.Close()
+
+	s = open(t, dir)
+	if got := entries(t, s); !slices.Equal(got, []string{"3:c"}) {
+		t.Fatalf("entries = %v, want only those after the snapshot", got)
+	}
+	if st, _ := s.State(ctx); string(st) != "hs" {
+		t.Fatalf("state = %q, want hs", st)
+	}
+	save(t, s, 4, "", "d")
+}
+
+func TestOldFormatIsRefused(t *testing.T) {
+	dir := t.TempDir()
+	os.WriteFile(filepath.Join(dir, walName), append([]byte("CHWAL001"), make([]byte, 8)...), 0o644)
+	if _, err := Open(dir); err == nil || !strings.Contains(err.Error(), "older WAL format") {
+		t.Fatalf("Open err = %v, want the older-format error", err)
 	}
 }

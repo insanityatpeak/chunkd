@@ -159,13 +159,23 @@ type BlockStore interface {
 // Index is a position in the metadata log. The first entry has index 1.
 type Index uint64
 
-// MetaStore is the durable, ordered metadata log plus snapshots. An entry is
-// durable once Append returns without error.
+// MetaStore is the durable metadata log of one consensus peer: entries, a
+// small state record (the consensus hard state: term, vote, commit) and a
+// snapshot. All three are opaque bytes to the store.
 type MetaStore interface {
-	Append(ctx context.Context, entry []byte) (Index, error)
+	// Save writes entries at indexes first, first+1, … replacing every stored
+	// entry at or after first (a follower's conflicting tail), then state if
+	// it is non-nil. With no entries it truncates the log to first-1. All of
+	// it is durable, in one sync, when Save returns. first must be above the
+	// snapshot index and at most the last index + 1 (CodeInvalid otherwise).
+	Save(ctx context.Context, first Index, entries [][]byte, state []byte) error
+	// State returns the last state saved, or nil.
+	State(ctx context.Context) ([]byte, error)
 	// Replay calls fn for every entry with index >= from, in order.
 	Replay(ctx context.Context, from Index, fn func(Index, []byte) error) error
-	// SaveSnapshot records state covering all entries up to and including at.
+	// SaveSnapshot records data as covering every entry up to and including
+	// at, and drops those entries. Later entries are kept; if at is past the
+	// last entry the log is empty and continues at at+1.
 	SaveSnapshot(ctx context.Context, at Index, data []byte) error
 	// LoadSnapshot returns the latest snapshot, or index 0 and nil data if none.
 	LoadSnapshot(ctx context.Context) (Index, []byte, error)
