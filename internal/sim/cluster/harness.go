@@ -364,11 +364,34 @@ func (c *Cluster) Settle(limit time.Duration) (time.Duration, bool) {
 	return c.clock.Now().Sub(start), false
 }
 
+// metaApplySame reports whether every live metadata peer has applied the same index.
+func (c *Cluster) metaApplySame() bool {
+	var at uint64
+	first := true
+	for _, p := range c.metas {
+		if c.net.Crashed(p.id) {
+			continue
+		}
+		if a := p.srv.Raft().Applied; first {
+			at, first = a, false
+		} else if a != at {
+			return false
+		}
+	}
+	return true
+}
+
 // AssertMetaAgree checks that every live metadata peer holds byte-identical
 // state: the same log applied gives the same namespace, refcounts, claims,
 // epoch and pending GC deletes. Call it after the group has been quiet for a
-// few seconds, so followers have applied what the leader committed.
+// few seconds. Periodic proposals (the epoch tick) mean the group is never
+// fully quiet, so it first advances the clock, up to 2 s, until every live
+// peer has applied the same index: state is compared at one index, not at
+// one instant, when a follower may not yet have heard the latest commit.
 func (c *Cluster) AssertMetaAgree() error {
+	for waited := time.Duration(0); waited < 2*time.Second && !c.metaApplySame(); waited += 10 * time.Millisecond {
+		c.Tick(10 * time.Millisecond)
+	}
 	var base []byte
 	var baseID iface.NodeID
 	var errs []error

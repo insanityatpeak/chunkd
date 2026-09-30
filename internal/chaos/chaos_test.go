@@ -59,6 +59,15 @@ func TestChaosMetaSeeds(t *testing.T) {
 	}
 }
 
+// Seed 260 ends with the 30 s epoch proposal committing at the very instant
+// of the agreement check: one follower has not yet heard the new commit
+// index. Peers must be compared at one applied index, not one instant.
+func TestChaosMetaAgreeAcrossEpochTick(t *testing.T) {
+	if r := Run(Generate(260, MetaShape()), io.Discard); r.Err != nil {
+		t.Fatal(r.Err)
+	}
+}
+
 func TestSameSeedSameTraceMetaGroup(t *testing.T) {
 	a := Run(Generate(12, MetaShape()), io.Discard)
 	b := Run(Generate(12, MetaShape()), io.Discard)
