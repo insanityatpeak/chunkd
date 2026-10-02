@@ -114,3 +114,49 @@ func TestECReadDecodesAroundARottedShard(t *testing.T) {
 		t.Fatalf("decoded %v, shard 2 rejected by %v", r.Decoded, r.Shards[2].Rejected)
 	}
 }
+
+// A dead node's shards are rebuilt elsewhere within the repair bound, each
+// from 4 siblings, and the stripe stays on distinct nodes.
+func TestECRepairRebuildsLostShards(t *testing.T) {
+	cfg := DefaultConfig()
+	cfg.Nodes = ec.TotalShards + 1
+	c := New(4, cfg, io.Discard)
+	c.Tick(3 * time.Second)
+	for i, size := range []int64{9 << 20, 3 << 20, 1} {
+		path := "/ec/" + string(rune('a'+i))
+		if _, _, err := c.Session().UploadAs(path, c.RandomData(path, size), client.EC42); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if _, ok := c.Settle(time.Minute); !ok {
+		t.Fatalf("%d stripes short before any fault", c.UnderReplicated())
+	}
+	victim := c.Nodes()[2].ID()
+	bytes := c.BytesOn(victim)
+	c.KillNode(victim)
+	c.Tick(c.Config().Meta.Detector.DeadAfter + time.Second)
+	if took, ok := c.Settle(2 * c.RepairBound(4*bytes)); !ok {
+		t.Fatalf("%d stripes short %v after killing %s", c.UnderReplicated(), took, victim)
+	}
+	st := c.Meta().Repair().Stats()
+	if st.Rebuilds == 0 || st.RebuildRead != ec.DataShards*st.Bytes {
+		t.Fatalf("stats %+v: want rebuilds reading 4 shards per shard written", st)
+	}
+	for _, e := range c.Meta().State().List("/") {
+		for _, id := range e.Chunks {
+			shards, _ := c.Meta().State().Stripe(id)
+			seen := map[iface.NodeID]bool{}
+			for _, sh := range shards {
+				for _, n := range c.Meta().Cluster().Locations(sh) {
+					if seen[n] && c.Meta().Cluster().Alive(n) {
+						t.Fatalf("%s: two shards of a stripe on %s", e.Path, n)
+					}
+					seen[n] = true
+				}
+			}
+		}
+	}
+	if err := c.AssertInvariants(); err != nil {
+		t.Fatal(err)
+	}
+}

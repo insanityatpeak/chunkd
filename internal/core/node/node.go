@@ -13,6 +13,7 @@ import (
 	"sync/atomic"
 	"time"
 
+	"github.com/insanityatpeak/chunkd/internal/core/ec"
 	"github.com/insanityatpeak/chunkd/internal/core/scrub"
 	"github.com/insanityatpeak/chunkd/internal/core/wire"
 	"github.com/insanityatpeak/chunkd/internal/iface"
@@ -94,6 +95,8 @@ type Node struct {
 	// corrupt is counted by concurrent read handlers, so not in stats.
 	corrupt atomic.Uint64
 	scrub   *scrub.Scrubber
+	// codec decodes shard rebuilds (ADR-0023); created on first use.
+	codec *ec.Codec
 
 	// chunkMu orders writes of a chunk against a GC delete of it: the delete
 	// checks lastWrite and removes the file under the same lock, so a write
@@ -319,6 +322,8 @@ func (n *Node) handle(m iface.Message) {
 	switch m.Kind {
 	case wire.KindHeartbeatAck:
 		n.heartbeatAck(m)
+	case wire.KindRebuildShard:
+		n.rebuildShard(m)
 	case wire.KindReplicate:
 		n.replicate(m)
 	case wire.KindDeleteReplica:

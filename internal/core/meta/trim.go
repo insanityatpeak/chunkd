@@ -180,15 +180,16 @@ func (s *Server) resendTrims() {
 	s.flushTrimDone()
 }
 
-// trimSafe: deleting n's copy of id now leaves the chunk RF confirmed, alive
-// copies on other nodes that are not leaving and not being deleted. A trim
-// is authorized against the holders when it is decided, but its delete may
+// trimSafe: deleting n's copy of id now leaves its target (RF, or 1 for a
+// shard) of confirmed, alive copies on other nodes that are not leaving and
+// not being deleted. A trim is authorized against the holders when it is decided, but its delete may
 // go out much later (the victim was down, or a new leader resends it); a
 // holder that died since must not be counted. Until repair has replaced
 // it, the delete waits: the pending copy does not count as a holder, so
 // repair tops the chunk up first.
 func (s *Server) trimSafe(id iface.ChunkID, n iface.NodeID) bool {
-	if ci, ok := s.state.Chunk(id); !ok || ci.Refcount == 0 {
+	b, ok := s.wanted(id)
+	if !ok {
 		return true
 	}
 	others := 0
@@ -197,5 +198,5 @@ func (s *Server) trimSafe(id iface.ChunkID, n iface.NodeID) bool {
 			others++
 		}
 	}
-	return others >= s.cfg.Replicas
+	return others >= b.Target
 }

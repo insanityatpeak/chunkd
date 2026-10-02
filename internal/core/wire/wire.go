@@ -17,6 +17,7 @@ const (
 	// Repair: metadata server to target node, and failures back.
 	KindReplicate       = "node.replicate"
 	KindReplicateFailed = "node.replicate_failed"
+	KindRebuildShard    = "node.rebuild_shard"
 	KindDeleteReplica   = "node.delete_replica"
 
 	// Integrity: the metadata server asks a node to re-check one chunk.

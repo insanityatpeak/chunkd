@@ -43,16 +43,17 @@ func (s *Server) nodeAdmin(m iface.Message, respond iface.Responder) {
 	})
 }
 
-// shortElsewhere counts the referenced chunks on n that do not have RF
-// confirmed, alive copies on other non-leaving nodes: what decommissioning n
-// now would leave short.
+// shortElsewhere counts the referenced blocks on n that do not have their
+// target (RF, or 1 for a shard) of confirmed, alive copies on other
+// non-leaving nodes: what decommissioning n now would leave short.
 // SIMPLIFIED: checked against the leader's location map, which is soft state;
 // a holder that dies after the check is a failure like any other, repaired
 // from the copies that remain. HDFS checks its block map the same way.
 func (s *Server) shortElsewhere(n iface.NodeID) int {
 	short := 0
 	for _, id := range s.cluster.ChunksOn(n) {
-		if ci, ok := s.state.Chunk(id); !ok || ci.Refcount == 0 {
+		b, ok := s.wanted(id)
+		if !ok {
 			continue
 		}
 		others := 0
@@ -61,7 +62,7 @@ func (s *Server) shortElsewhere(n iface.NodeID) int {
 				others++
 			}
 		}
-		if others < s.cfg.Replicas {
+		if others < b.Target {
 			short++
 		}
 	}

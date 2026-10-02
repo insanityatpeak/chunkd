@@ -3,6 +3,7 @@ package meta
 import (
 	"slices"
 
+	"github.com/insanityatpeak/chunkd/internal/core/ec"
 	"github.com/insanityatpeak/chunkd/internal/core/placement"
 	"github.com/insanityatpeak/chunkd/internal/core/repair"
 	"github.com/insanityatpeak/chunkd/internal/core/wire"
@@ -15,21 +16,49 @@ type repairView struct{ s *Server }
 
 var _ repair.View = repairView{}
 
-// Want: every chunk a committed or retained version references, until hard
-// delete drops the last reference. Pending uploads are the client's to
-// finish.
-func (v repairView) Want(id iface.ChunkID) (int64, bool) {
-	ci, ok := v.s.state.Chunk(id)
-	// A stripe record has no copies of its own: its shards are the blocks.
-	return ci.Size, ok && ci.Refcount > 0 && ci.Shards == nil
+// Want: every chunk a committed or retained version references, and every
+// shard of a referenced stripe, until hard delete drops the last reference.
+// Pending uploads are the client's to finish.
+func (v repairView) Want(id iface.ChunkID) (repair.Block, bool) {
+	return v.s.wanted(id)
 }
 
-func (v repairView) Chunks(fn func(iface.ChunkID, int64)) {
+// Chunks walks records in ID order; a stripe yields its shards in index
+// order. A stripe record has no copies of its own.
+func (v repairView) Chunks(fn func(iface.ChunkID, repair.Block)) {
 	v.s.state.Chunks(func(id iface.ChunkID, ci ChunkInfo) {
-		if ci.Refcount > 0 && ci.Shards == nil {
-			fn(id, ci.Size)
+		switch {
+		case ci.Refcount == 0:
+		case ci.Shards == nil:
+			fn(id, repair.Block{Size: ci.Size, Target: v.s.cfg.Replicas})
+		default:
+			for j, sh := range ci.Shards {
+				fn(sh, shardBlock(id, j, ci))
+			}
 		}
 	})
+}
+
+// wanted describes a block repair should keep at its target.
+func (s *Server) wanted(id iface.ChunkID) (repair.Block, bool) {
+	b, ok := s.state.Block(id)
+	if !ok {
+		return repair.Block{}, false
+	}
+	if !b.Shard {
+		ci, _ := s.state.Chunk(id)
+		return repair.Block{Size: b.Size, Target: s.cfg.Replicas}, ci.Refcount > 0
+	}
+	ci, ok := s.state.Chunk(b.Ref.Stripe)
+	if !ok || ci.Refcount == 0 {
+		return repair.Block{}, false
+	}
+	return shardBlock(b.Ref.Stripe, b.Ref.Index, ci), true
+}
+
+func shardBlock(stripe iface.ChunkID, j int, ci ChunkInfo) repair.Block {
+	return repair.Block{Size: ec.BlockSize(ci.Size), Target: 1,
+		Stripe: &repair.Stripe{ID: stripe, Index: j, ChunkSize: ci.Size, Shards: ci.Shards}}
 }
 
 func (v repairView) Holders(id iface.ChunkID) []repair.Holder {
@@ -69,8 +98,19 @@ func (v repairView) Target(size int64, exclude []iface.NodeID) (iface.NodeID, bo
 
 // sendCopy tells the target to pull the chunk from the source.
 func (s *Server) sendCopy(c repair.Copy) {
-	src, _ := s.cluster.Node(c.Source)
 	s.copyStarted(c)
+	if r := c.Rebuild; r != nil {
+		cmd := &chunkdv1.RebuildShard{CopyId: c.ID, ShardId: c.Chunk[:], Index: int32(r.Stripe.Index), LogicalId: r.Stripe.ID[:],
+			ChunkSize: r.Stripe.ChunkSize, Term: s.raft.Status().Term}
+		for _, src := range r.Sources {
+			n, _ := s.cluster.Node(src.Node)
+			cmd.Sources = append(cmd.Sources, &chunkdv1.ShardSource{Index: int32(src.Index), ShardId: src.Shard[:], Node: string(src.Node), Addr: n.Addr})
+		}
+		s.d.Log.Info("repair rebuild", "copy", c.ID, "shard", c.Chunk.String()[:12], "index", r.Stripe.Index, "to", c.Target, "sources", len(r.Sources))
+		s.d.Net.Send(c.Target, iface.Message{From: s.cfg.ID, Kind: wire.KindRebuildShard, Body: wire.Marshal(cmd)})
+		return
+	}
+	src, _ := s.cluster.Node(c.Source)
 	s.d.Log.Info("repair copy", "copy", c.ID, "chunk", c.Chunk.String()[:12], "from", c.Source, "to", c.Target, "bytes", c.Size)
 	s.d.Net.Send(c.Target, iface.Message{From: s.cfg.ID, Kind: wire.KindReplicate,
 		Body: wire.Marshal(&chunkdv1.ReplicateChunk{CopyId: c.ID, ChunkId: c.Chunk[:], Source: string(c.Source), SourceAddr: src.Addr, Term: s.raft.Status().Term})})

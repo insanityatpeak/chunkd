@@ -965,8 +965,14 @@ func (s *Server) ClusterView(eventsAfter uint64) *chunkdv1.ClusterResponse {
 		resp.Health.Replicas = append(resp.Health.Replicas, int64(n))
 	}
 	for _, c := range s.repair.InFlight() {
-		resp.Copies = append(resp.Copies, &chunkdv1.RepairCopy{Id: c.ID, ChunkId: c.Chunk[:], Source: string(c.Source), Target: string(c.Target),
-			Bytes: c.Size, StartedMs: ms(c.Started)})
+		rc := &chunkdv1.RepairCopy{Id: c.ID, ChunkId: c.Chunk[:], Source: string(c.Source), Target: string(c.Target),
+			Bytes: c.Size, StartedMs: ms(c.Started)}
+		if c.Rebuild != nil {
+			for _, src := range c.Rebuild.Sources[:ec.DataShards] {
+				rc.RebuildFrom = append(rc.RebuildFrom, string(src.Node))
+			}
+		}
+		resp.Copies = append(resp.Copies, rc)
 	}
 	evs, latest := s.Events(eventsAfter)
 	resp.EventSeq = latest

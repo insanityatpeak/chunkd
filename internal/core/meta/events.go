@@ -5,6 +5,7 @@ import (
 	"time"
 
 	"github.com/insanityatpeak/chunkd/internal/core/detector"
+	"github.com/insanityatpeak/chunkd/internal/core/ec"
 	"github.com/insanityatpeak/chunkd/internal/core/repair"
 	"github.com/insanityatpeak/chunkd/internal/iface"
 )
@@ -72,6 +73,10 @@ func (s *Server) copyStarted(c repair.Copy) {
 	tag := ""
 	if c.Class != repair.Repair {
 		tag = " (" + c.Class.String() + ")"
+	}
+	if r := c.Rebuild; r != nil {
+		s.event("copy", c.Target, "rebuild %d started%s: shard %d of stripe %s from %d shards, %d bytes", c.ID, tag, r.Stripe.Index, r.Stripe.ID.String()[:12], ec.DataShards, c.Size)
+		return
 	}
 	s.event("copy", c.Target, "copy %d started%s: chunk %s from %s, %d bytes", c.ID, tag, c.Chunk.String()[:12], c.Source, c.Size)
 }

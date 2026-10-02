@@ -51,12 +51,13 @@ func (c *Cluster) trimGrace() time.Duration {
 
 // checkTrim is the trim-safety invariant (ADR-0020), checked the moment a
 // trim removed node's copy of ch: a referenced chunk keeps at least RF
-// intact copies on running nodes. Exempt are chunks with a rotted copy, on
+// intact copies on running nodes, a referenced shard at least one. Exempt are chunks with a rotted copy, on
 // disk or since quarantined (the leader may have counted it before a read or
 // the scrubber found it), and chunks one of whose holders was killed or
 // wiped within trimGrace. A violation fails AssertInvariants.
 func (c *Cluster) checkTrim(node iface.NodeID, ch iface.ChunkID) {
-	if ci, ok := c.Meta().State().Chunk(ch); !ok || ci.Refcount == 0 {
+	want, ok := c.copyTarget(ch)
+	if !ok {
 		return
 	}
 	now := c.clock.Now()
@@ -76,8 +77,8 @@ func (c *Cluster) checkTrim(node iface.NodeID, ch iface.ChunkID) {
 			intact++
 		}
 	}
-	if intact < c.cfg.Meta.Replicas {
+	if intact < want {
 		c.badTrims = append(c.badTrims, fmt.Errorf("a trim on %s at t=%v left chunk %s with %d intact copies on running nodes, want >= %d",
-			node, now, ch.String()[:12], intact, c.cfg.Meta.Replicas))
+			node, now, ch.String()[:12], intact, want))
 	}
 }

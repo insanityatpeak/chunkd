@@ -24,6 +24,7 @@ type world struct {
 	members     map[iface.NodeID]bool
 	leaving     map[iface.NodeID]bool
 	racks       map[iface.NodeID]string
+	stripes     map[iface.ChunkID]*Stripe
 }
 
 func newWorld(nodes int) *world {
@@ -49,16 +50,40 @@ func (w *world) kill(n iface.NodeID, at iface.Instant) {
 	w.state[n], w.deadSince[n] = detector.Dead, at
 }
 
-func (w *world) Want(id iface.ChunkID) (int64, bool) {
+func (w *world) Want(id iface.ChunkID) (Block, bool) {
 	s, ok := w.sizes[id]
-	return s, ok
+	if st := w.stripes[id]; st != nil {
+		return Block{Size: s, Target: 1, Stripe: st}, ok
+	}
+	return Block{Size: s, Target: 3}, ok
 }
 
-func (w *world) Chunks(fn func(iface.ChunkID, int64)) {
+func (w *world) Chunks(fn func(iface.ChunkID, Block)) {
 	ids := slices.SortedFunc(maps.Keys(w.sizes), func(a, b iface.ChunkID) int { return cmp.Compare(a.String(), b.String()) })
 	for _, id := range ids {
-		fn(id, w.sizes[id])
+		b, _ := w.Want(id)
+		fn(id, b)
 	}
+}
+
+// addStripe adds a stripe whose shard j (1 MiB) is on node holders[j]; 0
+// means the shard has no copy.
+func (w *world) addStripe(base int, holders ...int) []iface.ChunkID {
+	if w.stripes == nil {
+		w.stripes = map[iface.ChunkID]*Stripe{}
+	}
+	shards := make([]iface.ChunkID, len(holders))
+	for j := range holders {
+		shards[j] = chunk(base + j)
+	}
+	for j, h := range holders {
+		w.sizes[shards[j]] = 1 << 20
+		if h > 0 {
+			w.holders[shards[j]] = []iface.NodeID{node(h)}
+		}
+		w.stripes[shards[j]] = &Stripe{ID: chunk(base + 100), Index: j, ChunkSize: 4 << 20, Shards: shards}
+	}
+	return shards
 }
 
 func (w *world) Holders(id iface.ChunkID) []Holder {

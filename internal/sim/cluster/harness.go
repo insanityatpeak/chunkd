@@ -447,3 +447,19 @@ func (c *Cluster) aliveShards(shards []iface.ChunkID) int {
 	}
 	return n
 }
+
+// copyTarget is the copies a referenced block must keep: RF for a chunk, 1
+// for a shard of a referenced stripe.
+func (c *Cluster) copyTarget(id iface.ChunkID) (int, bool) {
+	st := c.Meta().State()
+	b, ok := st.Block(id)
+	if !ok {
+		return 0, false
+	}
+	if !b.Shard {
+		ci, _ := st.Chunk(id)
+		return c.cfg.Meta.Replicas, ci.Refcount > 0
+	}
+	ci, ok := st.Chunk(b.Ref.Stripe)
+	return 1, ok && ci.Refcount > 0
+}

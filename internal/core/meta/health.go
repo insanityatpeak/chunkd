@@ -2,6 +2,7 @@ package meta
 
 import (
 	"github.com/insanityatpeak/chunkd/internal/core/detector"
+	"github.com/insanityatpeak/chunkd/internal/core/ec"
 	"github.com/insanityatpeak/chunkd/internal/core/repair"
 	"github.com/insanityatpeak/chunkd/internal/iface"
 )
@@ -29,10 +30,14 @@ func (s *Server) Health() Health {
 		h.Nodes[n.State.String()]++
 	}
 	s.state.Chunks(func(id iface.ChunkID, ci ChunkInfo) {
-		if ci.Refcount == 0 || ci.Shards != nil {
+		if ci.Refcount == 0 {
 			return
 		}
 		h.Chunks++
+		if ci.Shards != nil {
+			s.stripeHealth(&h, ci.Shards)
+			return
+		}
 		alive, readable := 0, 0
 		for _, n := range s.cluster.Locations(id) {
 			switch st, _ := s.cluster.Node(n); st.State {
@@ -58,4 +63,36 @@ func (s *Server) Health() Health {
 	h.DetectorStalls = s.cluster.Detector().Stalls()
 	h.CorruptReplicas = s.corruptReplicas
 	return h
+}
+
+// stripeHealth counts one stripe: under-replicated while a shard has no
+// alive copy, lost once fewer than 4 are readable, over-replicated while a
+// shard has more than one alive copy. Stripes stay out of the copies
+// histogram.
+func (s *Server) stripeHealth(h *Health, shards []iface.ChunkID) {
+	alive, readable, extra := 0, 0, false
+	for _, sh := range shards {
+		a, r := 0, 0
+		for _, n := range s.cluster.Locations(sh) {
+			switch st, _ := s.cluster.Node(n); st.State {
+			case detector.Alive:
+				a++
+				r++
+			case detector.Suspect:
+				r++
+			}
+		}
+		alive += min(a, 1)
+		readable += min(r, 1)
+		extra = extra || a > 1
+	}
+	switch {
+	case readable < ec.DataShards:
+		h.Lost++
+		h.UnderReplicated++
+	case alive < len(shards):
+		h.UnderReplicated++
+	case extra:
+		h.OverReplicated++
+	}
 }
