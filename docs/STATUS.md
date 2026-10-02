@@ -1,6 +1,22 @@
 # Status
 
-Current phase: **Phase 4 complete** (dedup, versioning, delete, GC), on top of v0.1.0. Next: Phase 5, Raft.
+Current phase: **Phase 5 complete** (Raft metadata group), to ship as v0.2.0 once CI is green. Next: Phase 6, rebalancing.
+
+## Phase 5 (complete, CI pending)
+
+The metadata service is a group of three Raft peers on etcd raft's `RawNode`, the same code in the sim, the browser and the real processes. Election timers are seeded and driven by the event loop; followers are never ticked, so the vote lease and the leader's quorum check are done in `core/consensus`. Writes commit through the log, reads are read-index reads, commands to nodes are fenced by the Raft term (kept on each node's disk), and GC deletes are logged intents sent only after they commit. ADRs 0017–0019. Dashboard: the group with roles, terms and log indexes, peer and leader faults, elections on the timeline, and a shareable `kill-leader` scenario; the browser runs three peers.
+
+| Criterion | Evidence |
+|---|---|
+| `TestKillLeaderMidUpload` (real, 3 meta): kill the leader between chunk writes and commit; every acknowledged upload reads back | Sim over 12 seeds; `e2e.TestKillLeaderMidUploadReal` against in-process real peers; `kill-meta-leader` in the compose short suite, with a failover required |
+| `TestStaleLeaderCannotCommit` | Sim (4 seeds) and consensus: the woken leader's write fails and leaves nothing, and a node refuses its old-term command (`Fenced` counter) |
+| `TestMinorityPartitionRejectsWrites` | Passes; the cut-off side refuses, a write sent before it noticed never commits |
+| Porcupine: 500 sim histories plus a real short suite, all linearizable; CI fails and uploads the visualization | CI runs `chaos --seeds=500 --metas=3` next to the 1,000-seed step; 3,000 meta seeds green locally. Every real-mode scenario records and checks its history |
+| Log bounded under 10k ops; a restarted follower catches up from a snapshot | `TestLogBoundedUnder10kOps`, `consensus.TestSnapshotBoundsLogAndCatchesUp`, `Status.SnapshotsInstalled` |
+| Dashboard: group view, kill and partition the leader, re-election on the timeline | Playwright replays `kill-node`, `corrupt-chunk`, `gc` and `kill-leader` against `TestScenarioGolden` (goldens regenerated for 3 peers); `TestDashboardLeaderCut`; checked by hand in LIVE mode against compose, killing the leader twice |
+| WASM under 15 MiB; Lighthouse on Pages ≥ 80 performance, ≥ 90 accessibility | 10.09 MiB. Lighthouse: after the push |
+
+Bugs found: #13 (a granted pre-vote renewed the voter's lease and dropped the real vote), #14 (a snapshot from before a membership change refused by a new voter), #15 (sim peers started before all existed), #16 (the agreement check compared peers at one instant), #17 (real-mode repair counts underflowed across a failover).
 
 ## Phase 4 (complete)
 
@@ -61,7 +77,9 @@ Chunked, replicated upload and download; see ADRs 0005–0009. `TestRoundTrip`, 
 
 ## Next
 
-- [ ] Phase 5: Raft for the metadata server (`07-phase5-raft`). `core/meta` State is the FSM; epochs, claims and leases are already logged ops. GC soft state (`orphanSince`, pending deletes) stays leader-local and resets on leader change. The dashboard's "Kill metadata leader" button becomes real.
+- [ ] Phase 6: rebalancing when nodes join or leave; ADRs start at 0020. The dashboard's "Add node" button becomes real.
+- [ ] A shorter per-attempt timeout (or a hedged call) for metadata RPCs, so a silently dead leader costs less than the 10 s call timeout
+- [ ] Membership change from the CLI (the consensus layer supports single-server changes), to replace a peer whose WAL is corrupt
 - [ ] Skip trims of chunks a pending upload has claimed (closes the trim-vs-dedup race in Known limitations)
 - [ ] Acknowledged incremental block reports (removes the up-to-30 s commit delay after a lost report)
 - [ ] Overlap chunk uploads (window of chunks in flight)
@@ -69,7 +87,7 @@ Chunked, replicated upload and download; see ADRs 0005–0009. `TestRoundTrip`, 
 
 ## Open decisions
 
-- `go.mod` declares `go 1.25` (grpc-go 1.84 requires it).
+- `go.mod` declares `go 1.26` (etcd raft v3.7.0 requires it; grpc-go 1.84 needs 1.25).
 - Compose racks are unbalanced (r1 ×2, r2 ×2, r3 ×1), so node-3 holds a replica of every chunk. Kept to show the rule; a sixth node would balance it.
 - Detector and repair timings (dead 10 s, delay 20 s) are demo-scale so a failure plays out in under a minute. HDFS waits 10.5 min and Ceph 10 min before re-replicating; the knobs are `detector.Config` and `repair.Config`.
 

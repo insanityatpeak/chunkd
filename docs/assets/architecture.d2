@@ -14,8 +14,13 @@ gateway: "Gateway\nHTTP API + dashboard\nverifies every chunk it reads" {
   style.font-size: 18
 }
 
-meta: "Metadata server\nnamespace + versions (WAL, bbolt)\nchunk locations from block reports\nfailure detector · repair scheduler" {
+meta: "Metadata group: 3 Raft peers, one log\nnamespace + versions · chunk locations from block reports\nthe leader runs the failure detector, repair and GC" {
   style.font-size: 18
+  grid-columns: 3
+  grid-gap: 24
+  m1: "meta-1\nleader" {style.font-size: 18; style.stroke-width: 3}
+  m2: "meta-2\nfollower" {style.font-size: 18}
+  m3: "meta-3\nfollower" {style.font-size: 18}
 }
 
 nodes: "Storage nodes: chunks by SHA-256, verified on read, scrubbed" {

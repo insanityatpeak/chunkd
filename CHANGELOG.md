@@ -1,6 +1,25 @@
 # Changelog
 
-## Unreleased
+## v0.2.0 (unreleased)
+
+### Metadata high availability
+- The metadata service is a group of three Raft peers (etcd raft's `RawNode`), one implementation in the simulator, the browser and the real processes. Election timers are seeded, so a failover replays from its seed. ADRs 0017–0019.
+- Writes commit through the log; reads are read-index reads confirmed by a quorum, so a deposed leader cannot serve a stale read. Followers answer with the leader's name and the client follows it.
+- Fencing: commands to nodes carry the Raft term. Nodes keep the highest term they have seen on disk and refuse lower ones, so a paused leader that wakes up deposed cannot trim or collect a copy.
+- GC deletes are logged intents, sent only after the intent commits. Begin carries a client request ID, so a retried upload opens once.
+- Snapshots bound the log; a follower that fell behind the compacted log catches up from one. Single-server membership changes are supported in the consensus layer.
+- **Upgrade:** a metadata volume from v0.1 (`CHWAL001`) cannot be read. Wipe it: `docker compose down -v`.
+
+### Proof: metadata group
+- `TestKillLeaderMidUpload` in the sim and against real processes, `TestStaleLeaderCannotCommit`, `TestMinorityPartitionRejectsWrites`, and the log bounded over 10,000 operations.
+- Client histories recorded and checked for linearizability with porcupine: 500 chaos seeds with leader kills, freezes, partitions and repeated elections per push, and every real-mode scenario. A failing history is written out as a visualization.
+- The real-mode suite kills the metadata leader under load.
+- Five more entries in `docs/bugs-found.md` (#13–#17), three in consensus and the sim group, two in the harness.
+
+### Demo: metadata group
+- Dashboard: the metadata group with each peer's role, term, commit index and a crown on the leader; kill, freeze and partition any peer, or the current leader; elections on the timeline (leader lost, new term, new leader). LIVE mode shows the same from the gateway's cluster view.
+- A "Kill the metadata leader" scenario, shareable as a link and replayed in CI. The simulated cluster now runs three metadata peers, so earlier scenario links replay the same story with slightly different timings.
+
 
 ### Dedup, versions and delete
 - A client claims each chunk before writing it; a chunk the cluster already holds with 2 copies is not sent again. The same base with ten small edits stores 220 MiB as 60 MiB.
@@ -13,12 +32,12 @@
 - Uploads hold leases; an abandoned upload expires and its chunks are collected.
 - Refcounts and claims are recounted every epoch; drift raises a metric, a log error and a timeline event, and is never corrected silently.
 
-### Proof
+### Proof: dedup and GC
 - 1,000 chaos seeds on every push (was 500), each ending with GC settled and no orphan copy on any node.
 - GC chaos scenarios: concurrent writers on one path, delete while another upload shares its chunks, uploads stalled past a GC cycle, a node returning with long-deleted chunks.
 - Three more bugs in `docs/bugs-found.md`: an upload lease shorter than the GC grace, undelete unreachable through the compose gateway, and a node back from a long outage unreachable from the gateway for up to 120 s of gRPC dial backoff.
 
-### Demo
+### Demo: dedup and GC
 - Dashboard: dedup savings, GC counters and epoch, each file's versions with restore, deleted files with undelete, gc and write events in the timeline.
 - A "Delete and collect" scenario, shareable as a link and replayed in CI like the others.
 

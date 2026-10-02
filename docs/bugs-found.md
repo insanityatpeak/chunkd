@@ -123,3 +123,53 @@ Related: with 1% message loss a copy command or its completion report can be los
 | Root cause | The previous scenario kept node-3 down for 85 s while reads kept dialing it, so the gateway's gRPC channel backed off exponentially (gRPC's default grows to 120 s). node-3's heartbeats reach the metadata server on a different connection, so it was marked alive within 2 s of returning and placed on at once. The gateway's channel only redialed when its backoff timer fired, about 10 s after node-3 was back (gRPC channel log: READY at 12:42:36 for a node started at 12:42:26). Until then, calls failed immediately with `unavailable`, both write rounds missed node-3, the chunks committed with 2 copies, and repair topped them up after the grace. |
 | Fix | The connection pool caps the dial backoff at 2 s (base 250 ms). |
 | Regression test | `grpcnet.TestCallerReconnectsSoonAfterLongOutage`: 20 s of failed calls, then the peer returns and must answer within 4 s (10+ s before the fix, 0.7 s after). The real-mode suite passes on repeated runs. |
+
+## 13. A granted pre-vote refreshed the voter's lease, so the real vote was dropped
+
+| | |
+|---|---|
+| Symptom | After the metadata leader was killed, a follower won its pre-vote but never the election that followed: its real vote requests were dropped, and the group stayed leaderless across election rounds. |
+| Repro | `go test ./internal/core/consensus -run TestLeaderKilledAndRestarted` with a pre-vote grant counted as leader contact. |
+| Root cause | The vote lease (ADR-0017) drops vote requests while a peer has heard from a leader within the election timeout. Granting a vote counted as contact, so the candidate gets time to win. A granted *pre*-vote counted too, which renewed the voter's own lease at the exact moment the candidate's real vote request arrived, and the lease dropped it. |
+| Fix | Only a granted real vote (`MsgVoteResp` without reject) refreshes `lastHeard`; a pre-vote response does not. Found before the consensus code was committed, in `9fd99eb`. |
+| Regression test | `consensus.TestLeaderKilledAndRestarted`, `TestIsolatedFollowerDoesNotDisruptTheLeader`; 500 chaos seeds with leader faults per push. |
+
+## 14. A snapshot from before a membership change could not catch up a new voter
+
+| | |
+|---|---|
+| Symptom | A voter added after the log had been compacted never caught up: the leader kept sending it the stored snapshot, and the new peer kept refusing it. |
+| Repro | `go test ./internal/core/consensus -run TestAddAndRemoveVoter` (120 entries with a snapshot every 50, then a fourth voter) with the stored snapshot sent as is. |
+| Root cause | etcd raft refuses a snapshot whose membership does not include the receiver. The stored snapshot was cut before the change that added the peer, so its membership listed only the old voters. |
+| Fix | The storage the library reads snapshots from compares the stored snapshot's membership with the current one, and cuts a fresh snapshot of the applied state when they differ. Found before the consensus code was committed, in `9fd99eb`. |
+| Regression test | `consensus.TestAddAndRemoveVoter`. |
+
+## 15. The sim started metadata peers before all of them existed
+
+| | |
+|---|---|
+| Symptom | With `Metas: 3`, the first peer started knowing only itself: it bootstrapped a group of one and led it, apart from the other two. |
+| Repro | `newMetaGroup` in `internal/sim/cluster/metagroup_test.go` with each peer started as it is created. |
+| Root cause | `cluster.New` created and started each peer in one loop, and the peer list a peer bootstraps from is read from the peers created so far. |
+| Fix | All peers are created first, then started; each one bootstraps from the full list. Found before the sim group was committed, in `ea8d5c6`. |
+| Regression test | `TestMetaGroupRoundTripAndAgreement` (one leader, `AssertMetaAgree`); every 3-meta chaos seed checks the same. |
+
+## 16. The metadata agreement check compared peers at one instant (harness)
+
+| | |
+|---|---|
+| Symptom | A `chunkd-chaos --metas=3` run failed seed 260 with a metadata divergence between peers, though no operation had been applied differently. |
+| Repro | `go run ./cmd/chunkd-chaos --seed=260 --metas=3` before `5c6f005`. |
+| Root cause | `AssertMetaAgree` compared every live peer's state at the same moment. Seed 260 ends with the 30 s epoch proposal committing at the very instant of the check: one follower had not yet heard the new commit index, so it was one entry behind. That is normal replication lag, not divergence. |
+| Fix | Compare at one applied index: advance the clock (up to 2 s) until every live peer has applied the same index, then compare. Different state at equal indexes is still reported. Commit `5c6f005`. |
+| Regression test | `chaos.TestChaosMetaAgreeAcrossEpochTick` (seed 260). |
+
+## 17. Real-mode repair counts underflowed across a leader change (harness)
+
+| | |
+|---|---|
+| Symptom | After the new `kill-meta-leader` real-mode scenario, the run reported 18446744073709551556 repair copies. A no-repair scenario with a leader change would have failed on that number. |
+| Repro | `go run ./tools/task chaos --mode=real --short` before `f4e9e58`. |
+| Root cause | `RunTarget` computed repair copies as the last poll's counter minus the first. The counters are the answering leader's, since its process started; after the failover the new leader's count started below the old one's, and the unsigned subtraction wrapped to 2^64 − 60. |
+| Fix | The health poll adds up deltas within one leader and starts again at each leader change (`leaderDeltas`). Copies made in the second before a new leader's first poll are not counted. Commit `f4e9e58`. |
+| Regression test | `chaos.TestLeaderDeltasAcrossFailover`; the real-mode short suite runs `kill-meta-leader` in CI. |
