@@ -88,7 +88,7 @@ func RunTarget(s Scenario, t Target, bound time.Duration, logf func(string, ...a
 	var polls, lost int
 	var last client.Health
 	counts := leaderDeltas{prev: h0, leader: c0.MetaLeader}
-	allAlive := false
+	allAlive, joined := false, false
 	stop := make(chan struct{})
 	polled := make(chan struct{})
 	go func() {
@@ -107,7 +107,8 @@ func RunTarget(s Scenario, t Target, bound time.Duration, logf func(string, ...a
 				if l := cl.MetaLeader; l != "" && (len(r.Leaders) == 0 || r.Leaders[len(r.Leaders)-1] != l) {
 					r.Leaders = append(r.Leaders, l)
 				}
-				allAlive = !slices.ContainsFunc(cl.Nodes, func(n client.NodeInfo) bool { return n.State != "alive" })
+				allAlive = !slices.ContainsFunc(cl.Nodes, func(n client.NodeInfo) bool { return n.State != "alive" && n.Admin != "decommissioned" })
+				joined = s.WantChunksOn == "" || slices.ContainsFunc(cl.Nodes, func(n client.NodeInfo) bool { return n.ID == string(s.WantChunksOn) && n.Chunks > 0 })
 				switch {
 				case h.UnderReplicated > 0 && underSince.IsZero():
 					underSince = now
@@ -214,17 +215,22 @@ func RunTarget(s Scenario, t Target, bound time.Duration, logf func(string, ...a
 	quiet := time.Now()
 	for {
 		mu.Lock()
-		h, alive, seen := last, allAlive, int(counts.found)
+		h, alive, seen, grew := last, allAlive, int(counts.found), joined
 		mu.Unlock()
 		// Settled also means every node is alive: a returning node is
 		// suspect first, and until then its extra copies do not count as
-		// over-replication, so the next scenario would start mid-reconcile.
-		if h.UnderReplicated == 0 && h.OverReplicated == 0 && alive && seen >= s.WantCorrupt && time.Since(quiet) > 2*time.Second {
+		// over-replication, so the next scenario would start mid-reconcile. A
+		// decommissioned node may be off for good.
+		if h.UnderReplicated == 0 && h.OverReplicated == 0 && alive && seen >= s.WantCorrupt && grew && time.Since(quiet) > 2*time.Second {
 			break
 		}
 		if time.Since(quiet) > bound {
-			errs = append(errs, fmt.Errorf("replication not settled %v after quiet: %d under, %d over, all nodes alive %v, %d of %d rotted copies found",
-				bound, h.UnderReplicated, h.OverReplicated, alive, seen, s.WantCorrupt))
+			err := fmt.Errorf("replication not settled %v after quiet: %d under, %d over, all nodes alive %v, %d of %d rotted copies found",
+				bound, h.UnderReplicated, h.OverReplicated, alive, seen, s.WantCorrupt)
+			if !grew {
+				err = fmt.Errorf("%w, no chunks on %s", err, s.WantChunksOn)
+			}
+			errs = append(errs, err)
 			break
 		}
 		time.Sleep(500 * time.Millisecond)
@@ -346,6 +352,25 @@ func ShortSuite() []Scenario {
 			Name: "kill-meta-leader", Seed: 105, Nodes: 5, Length: 60 * time.Second,
 			Ops:    sorted(append(append(preload(6), reads(8*time.Second, 55*time.Second, 6)...), writes(10*time.Second, 50*time.Second)...)),
 			Faults: []Fault{{At: 15 * time.Second, Kind: KillLeader}, {At: 35 * time.Second, Kind: ReviveLeader}},
+		},
+		{
+			// TestDrainNeverDropsRF, real mode: drain node-4 through the
+			// gateway while reads go on, decommission it as soon as every
+			// one of its chunks has RF copies elsewhere, then undrain it to
+			// restore the 5-node cluster. RF never drops.
+			Name: "drain-node", Seed: 106, Nodes: 5, Length: 60 * time.Second,
+			Ops: append(preload(6), reads(8*time.Second, 55*time.Second, 6)...),
+			Faults: []Fault{{At: 6 * time.Second, Kind: Drain, Node: "node-4"}, {At: 8 * time.Second, Kind: Decommission, Node: "node-4"},
+				{At: 30 * time.Second, Kind: Undrain, Node: "node-4"}},
+		},
+		{
+			// TestAddNodeConverges, real mode: start node-6 (rack r3, empty)
+			// and wait for balancing to move chunks onto it. Runs last: the
+			// runner then drains, decommissions and removes node-6 with its
+			// volume.
+			Name: "add-node", Seed: 107, Nodes: 5, Length: 45 * time.Second, WantChunksOn: "node-6",
+			Ops:    append(preload(6), reads(8*time.Second, 40*time.Second, 6)...),
+			Faults: []Fault{{At: 5 * time.Second, Kind: AddNode}},
 		},
 	}
 }

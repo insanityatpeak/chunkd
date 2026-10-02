@@ -23,7 +23,7 @@ import (
 )
 
 // runReal runs the short suite against the compose cluster, one scenario at a
-// time, and returns the exit code.
+// time, removes any node a scenario added, and returns the exit code.
 func runReal(gateway, project string, bound time.Duration, artifacts string) int {
 	t := compose.New(gateway, project)
 	logf := func(format string, args ...any) {
@@ -43,6 +43,10 @@ func runReal(gateway, project string, bound time.Duration, artifacts string) int
 		}
 		logf("ok %s: longest under-replication %v (bound %v), %d repair copies, %d ops linearizable, metadata leaders %v, ops %v",
 			s.Name, r.LongestUnder.Round(time.Second), r.Bound, r.RepairCopies, r.History, r.Leaders, r.Ops)
+	}
+	if err := t.Cleanup(); err != nil {
+		fmt.Fprintln(os.Stderr, "FAIL cleanup:", err)
+		code = 1
 	}
 	return code
 }

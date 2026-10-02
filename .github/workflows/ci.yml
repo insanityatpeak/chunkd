@@ -87,7 +87,7 @@ jobs:
           curl -fsS http://localhost:8080/healthz
       - name: e2e put and get 20 MiB through the gateway
         run: go run ./tools/task e2e
-      - name: real-mode chaos, short suite (kill, blip, rot, freeze, kill the metadata leader), histories checked
+      - name: real-mode chaos, short suite (kill, blip, rot, freeze, kill the metadata leader, drain and decommission, add a node), histories checked
         run: go run ./tools/task chaos --mode=real --short --artifacts=real-chaos-artifacts
       - name: upload non-linearizable real-mode histories
         if: failure()

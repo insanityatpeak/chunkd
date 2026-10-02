@@ -7,6 +7,7 @@ import (
 	"context"
 	"fmt"
 	"os/exec"
+	"slices"
 	"strconv"
 	"strings"
 	"time"
@@ -14,6 +15,7 @@ import (
 	"github.com/insanityatpeak/chunkd/internal/chaos"
 	"github.com/insanityatpeak/chunkd/internal/client"
 	"github.com/insanityatpeak/chunkd/internal/client/httpclient"
+	"github.com/insanityatpeak/chunkd/internal/iface"
 )
 
 // Target drives the compose project in the current directory.
@@ -21,7 +23,8 @@ type Target struct {
 	api     *httpclient.Client
 	project string
 	wiped   map[string]bool
-	killed  string // metadata peer KillLeader stopped, until ReviveLeader
+	added   []string // extra nodes AddNode started, for Cleanup
+	killed  string   // metadata peer KillLeader stopped, until ReviveLeader
 }
 
 var _ chaos.Target = (*Target)(nil)
@@ -92,6 +95,14 @@ func (t *Target) Apply(f chaos.Fault) error {
 		// its next read of those chunks, as with real bit rot.
 		return docker("compose", "exec", "-T", svc, "chunkd", "debug", "corrupt",
 			"-root", "/data", "-n", strconv.Itoa(f.Count), "-pick", strconv.FormatUint(f.Pick, 10))
+	case chaos.AddNode:
+		return t.addNode()
+	case chaos.Drain:
+		return t.admin(svc, "draining", time.Minute)
+	case chaos.Undrain:
+		return t.admin(svc, "active", time.Minute)
+	case chaos.Decommission:
+		return t.admin(svc, "decommissioned", 3*time.Minute)
 	}
 	return chaos.ErrUnsupported
 }
@@ -142,4 +153,64 @@ func (t *Target) Cluster() (client.Cluster, error) {
 	defer cancel()
 	cl, err := t.api.Cluster(c, 0)
 	return cl, err
+}
+
+// extra is the compose service AddNode starts: node-6, on rack r3, under the
+// extra profile. Commands name full too: --profile replaces COMPOSE_PROFILES.
+const extra = "node-6"
+
+// addNode starts node-6 on a fresh volume. A run that removed it leaves it
+// decommissioned in the metadata log, so it is returned to service too.
+func (t *Target) addNode() error {
+	if err := docker("compose", "--profile", "full", "--profile", "extra", "up", "-d", "--no-deps", "--wait", extra); err != nil {
+		return err
+	}
+	t.added = append(t.added, extra)
+	cl, err := t.Cluster()
+	if err == nil && slices.ContainsFunc(cl.Nodes, func(n client.NodeInfo) bool { return n.ID == extra && n.Admin == "active" }) {
+		return nil
+	}
+	return t.admin(extra, "active", time.Minute)
+}
+
+// admin sets node's admin state through the gateway, retrying for up to
+// limit while the leader is unknown or has not heard from the node since it
+// started, and, for a decommission, while the node's chunks are still short
+// elsewhere.
+func (t *Target) admin(node, state string, limit time.Duration) error {
+	deadline := time.Now().Add(limit)
+	for {
+		c, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+		_, err := t.api.NodeAdmin(c, node, state)
+		cancel()
+		code := iface.CodeOf(err)
+		retry := code == iface.CodeUnavailable || code == iface.CodeNotLeader || code == iface.CodeNotFound ||
+			(code == iface.CodeConflict && state == "decommissioned")
+		if err == nil || !retry || time.Now().After(deadline) {
+			return err
+		}
+		time.Sleep(time.Second)
+	}
+}
+
+// Cleanup drains, decommissions and removes every node AddNode started,
+// with its volume, so the cluster is back to its compose shape. The
+// metadata log keeps the node, decommissioned.
+func (t *Target) Cleanup() error {
+	for _, n := range t.added {
+		if err := t.admin(n, "draining", time.Minute); err != nil {
+			return fmt.Errorf("drain %s: %w", n, err)
+		}
+		if err := t.admin(n, "decommissioned", 5*time.Minute); err != nil {
+			return fmt.Errorf("decommission %s: %w", n, err)
+		}
+		if err := docker("compose", "--profile", "full", "--profile", "extra", "rm", "-f", "-s", n); err != nil {
+			return err
+		}
+		if err := docker("volume", "rm", t.project+"_"+n); err != nil {
+			return err
+		}
+	}
+	t.added = nil
+	return nil
 }

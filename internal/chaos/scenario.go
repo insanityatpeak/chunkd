@@ -45,6 +45,10 @@ const (
 	AddNode Kind = "add-node" // start node-(N+1), empty, on the next rack in turn
 	Drain   Kind = "drain"    // drain Node through the metadata leader
 	Undrain Kind = "undrain"  // return Node to service
+	// Decommission retires a drained Node once its chunks have RF copies
+	// elsewhere; the real-mode target retries until then. Real mode only:
+	// the sim decommissions in its tests.
+	Decommission Kind = "decommission"
 	// KillLeaderMidMove waits, up to 15 s, for a balance copy in flight, then
 	// kills the leader; a ReviveLeader ends it.
 	KillLeaderMidMove Kind = "kill-leader-mid-rebalance"
@@ -121,6 +125,9 @@ type Scenario struct {
 	// WantCorrupt is how many rotted copies the cluster must find (by
 	// reads or the scrubber) before the run counts as settled.
 	WantCorrupt int
+	// WantChunksOn is a node, added during the run, that must hold chunks
+	// before the run counts as settled: balancing reached it.
+	WantChunksOn iface.NodeID
 }
 
 func (s Scenario) String() string {

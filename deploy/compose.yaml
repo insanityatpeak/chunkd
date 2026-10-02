@@ -71,6 +71,14 @@ services:
     profiles: [full]
     environment: { CHUNKD_ID: node-5, CHUNKD_ADVERTISE: "node-5:7000", CHUNKD_METAS: *peers, CHUNKD_RACK: r2, CHUNKD_SCRUB_PASS: 30s }
     volumes: [node-5:/data]
+  # A sixth node for growing the cluster (rack r3, empty volume):
+  #   docker compose --profile full --profile extra up -d node-6
+  # The real-mode add-node scenario starts it and removes it afterwards.
+  node-6:
+    <<: *node
+    profiles: [extra]
+    environment: { CHUNKD_ID: node-6, CHUNKD_ADVERTISE: "node-6:7000", CHUNKD_METAS: *peers, CHUNKD_RACK: r3, CHUNKD_SCRUB_PASS: 30s }
+    volumes: [node-6:/data]
 
   gateway:
     build: { context: .., dockerfile: deploy/Dockerfile, target: gateway }
@@ -112,3 +120,4 @@ volumes:
   node-3:
   node-4:
   node-5:
+  node-6:
