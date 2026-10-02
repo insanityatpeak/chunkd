@@ -6,6 +6,7 @@ import (
 	"crypto/sha256"
 	"errors"
 	"fmt"
+	"time"
 
 	"github.com/insanityatpeak/chunkd/internal/core/ec"
 	"github.com/insanityatpeak/chunkd/internal/core/wire"
@@ -15,7 +16,8 @@ import (
 
 // rebuildShard recomputes a lost shard (ADR-0023): it reads sources, the
 // first ec.DataShards in parallel and the next one each time a read fails
-// or does not verify, decodes once ec.DataShards have verified, and stores
+// or does not verify, or every rebuildHedge while one is outstanding,
+// decodes once ec.DataShards have verified, and stores
 // the result only if it hashes to the shard ID. Completion is the
 // incremental block report; failure is a ReplicateFailed.
 // SIMPLIFIED: the decode runs on the event loop. RS(4,2) rebuilds a 1 MiB
@@ -52,7 +54,13 @@ func (n *Node) rebuildShard(m iface.Message) {
 	r := &rebuild{n: n, id: id, logical: logical, idx: idx, size: size, sources: cmd.GetSources(),
 		shards: make([][]byte, ec.TotalShards), fail: fail}
 	r.more()
+	r.n.d.Clock.AfterFunc(rebuildHedge, r.hedge)
 }
+
+// rebuildHedge is how long a rebuild waits on its first reads before it also
+// asks the next source. A lost message costs the call timeout (10 s), the
+// scheduler's whole copy timeout; a shard read takes milliseconds.
+const rebuildHedge = 2 * time.Second
 
 // rebuild is one shard rebuild in progress. Loop-owned.
 type rebuild struct {
@@ -63,6 +71,7 @@ type rebuild struct {
 	shards      [][]byte
 	have, next  int
 	pending     int
+	hedges      int // extra reads started because the first were slow
 	done        bool
 	errs        []error
 	fail        func(error)
@@ -71,7 +80,7 @@ type rebuild struct {
 // more starts reads until enough are verified or in flight, and gives up
 // once nothing is in flight and the sources are exhausted.
 func (r *rebuild) more() {
-	for r.have+r.pending < ec.DataShards && r.next < len(r.sources) {
+	for r.have+r.pending < ec.DataShards+r.hedges && r.next < len(r.sources) {
 		src := r.sources[r.next]
 		r.next++
 		j := int(src.GetIndex())
@@ -144,4 +153,15 @@ func (r *rebuild) finish() {
 	}
 	r.n.stats.RepairCopies++
 	r.n.report(seq, []iface.ChunkID{r.id}, nil, nil)
+}
+
+// hedge starts one more read while the rebuild is still waiting, and again
+// every rebuildHedge until it ends or the sources run out.
+func (r *rebuild) hedge() {
+	if r.done || r.n.stopped || r.next >= len(r.sources) {
+		return
+	}
+	r.hedges++
+	r.more()
+	r.n.d.Clock.AfterFunc(rebuildHedge, r.hedge)
 }

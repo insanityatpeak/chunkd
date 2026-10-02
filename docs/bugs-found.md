@@ -283,3 +283,13 @@ Related: with 1% message loss a copy command or its completion report can be los
 | Root cause | A shard's copy on node-3 had a GC delete pending from when its stripe was unreferenced; a later upload of the same bytes referenced it again. Repair counts a copy under a pending GC delete as gone and rebuilt the shard on node-6. `OverReplicated` still counted node-3's copy, so the run waited for GC, which does not run on the repair bound, not for a trim. |
 | Fix | `OverReplicated` skips copies GC has authorized deleting, as repair does. If the node keeps its copy (it wrote it after the fence), the pending delete clears, the copy counts again and a real surplus is trimmed. |
 | Regression test | `chaos.TestChaosECRegressions` (seed 244). |
+
+## 29. One lost message stalled a shard rebuild past its copy timeout
+
+| | |
+|---|---|
+| Symptom | The first run of `TestECBenchmark`: 4 of 31 rebuilds timed out, so the bytes written fell short of the bytes lost and the stripes took 51 s to be whole again. |
+| Repro | `go test -run TestECBenchmark/ec -v ./internal/sim/cluster/` before the fix; the repair stats show `TimedOut:4`. |
+| Root cause | A rebuild reads 4 shards: 8 messages, where a copy sends 2. The node asked the next source only after a read failed, and a lost request or answer fails only at the 10 s call timeout, which is also the scheduler's copy timeout. So one lost message (the sim drops 1%) let the copy time out, and the late result was not counted as the copy's. |
+| Fix | Every 2 s while it is unfinished, a rebuild also asks the next source (`rebuildHedge`). |
+| Regression test | `TestECBenchmark` requires bytes read to be exactly 4× bytes written and written to equal what the dead node held; a timed-out rebuild breaks both. |

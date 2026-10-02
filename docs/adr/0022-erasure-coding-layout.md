@@ -34,7 +34,7 @@ chunk C (4 MiB) ─ stripe ID L = sha256("chunkd-ec-4+2:" ‖ sha256(C))
 
 The client claims `L` with the 6 shard IDs before writing (ADR-0015 unchanged: the claim marks every shard for GC). Commit needs 5 shards reported on alive nodes. The chunk record keeps the 6 shard IDs, and the state derives a shard → (stripe, slot) index from them. Each shard is a block with a copy target of 1: GC marking, fenced deletes, trims, scrub and drain see an ordinary block, and repair rebuilds it instead of copying (ADR-0023).
 
-A read fetches the 4 data shards in one batch. If any is missing, slow or fails its hash, the client fetches parity and decodes from any 4. The decoded chunk is checked against `L`, and the file against its SHA-256. With 3 or more shards gone the read fails with the stripe and its readable count.
+A read fetches the 4 data shards in one batch. If any is missing, fails or does not verify, the client fetches parity and decodes from any 4; once no untried shard is left, a shard that timed out is asked once more, since a lost message is not a lost shard (bugs-found #25). The decoded chunk is checked against `L`, and the file against its SHA-256. With 3 or more shards gone the read fails with the stripe and its readable count.
 
 ## Consequences
 
