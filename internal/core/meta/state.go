@@ -18,6 +18,7 @@ import (
 	"google.golang.org/protobuf/proto"
 
 	"github.com/insanityatpeak/chunkd/internal/core/chunk"
+	"github.com/insanityatpeak/chunkd/internal/core/ec"
 	"github.com/insanityatpeak/chunkd/internal/iface"
 	chunkdv1 "github.com/insanityatpeak/chunkd/proto/gen/chunkd/v1"
 )
@@ -37,6 +38,8 @@ type Version struct {
 	RetiredAt uint64
 	// RestoredFrom is the version an undelete copied; 0 otherwise.
 	RestoredFrom uint64
+	// Redundancy: under EC, Chunks holds stripe logical IDs (ADR-0022).
+	Redundancy chunkdv1.Redundancy
 }
 
 // File is every version of a path, oldest first. The newest entry is never
@@ -58,6 +61,10 @@ type Upload struct {
 	// only for uploads begun before claims existed.
 	Claims  bool
 	Claimed map[int]iface.ChunkID
+	// Redundancy: under EC, Placement lists 6 nodes per chunk (shard i on
+	// node i), Claimed holds stripe logical IDs and Shards their shard IDs.
+	Redundancy chunkdv1.Redundancy
+	Shards     map[int][]iface.ChunkID
 	// LWW commits over whatever version is live instead of comparing.
 	LWW bool
 	// Touched is the epoch of the begin or the latest claim. The upload
@@ -80,6 +87,25 @@ type GCTarget struct {
 type ChunkInfo struct {
 	Refcount uint64
 	Size     int64
+	// Shards are a stripe's 6 shard block IDs, data first; nil for a
+	// replicated chunk. Size is then the encoded chunk's size.
+	Shards []iface.ChunkID
+}
+
+// ShardRef locates a shard block within its stripe.
+type ShardRef struct {
+	Stripe iface.ChunkID
+	Index  int
+	// Size is the stored block's size: header plus payload.
+	Size int64
+}
+
+// stripe is a stripe known to a record or a pending claim. holds counts
+// them: the stripe's shards stay marked while it is above zero.
+type stripe struct {
+	shards []iface.ChunkID
+	size   int64
+	holds  int
 }
 
 // State is the durable metadata state.
@@ -111,6 +137,10 @@ type State struct {
 	// nodeAdmin is each storage node's operator-set state; absent means active
 	// (ADR-0021). Logged, so a new leader re-derives every drain from it.
 	nodeAdmin map[iface.NodeID]chunkdv1.NodeAdmin
+	// stripes and shardOf index every stripe a record or pending claim names,
+	// and each of its shards; derived from chunks and uploads.
+	stripes map[iface.ChunkID]*stripe
+	shardOf map[iface.ChunkID]ShardRef
 }
 
 // Committed locates the version an upload produced.
@@ -136,7 +166,8 @@ type Result struct {
 // New returns empty state.
 func New() *State {
 	return &State{files: map[string]*File{}, chunks: map[iface.ChunkID]*ChunkInfo{}, uploads: map[uint64]*Upload{}, committed: map[uint64]Committed{}, claimed: map[iface.ChunkID]int{},
-		requests: map[string]uint64{}, gcPending: map[iface.ChunkID]map[iface.NodeID]GCTarget{}, trimPending: map[iface.ChunkID]iface.NodeID{}, nodeAdmin: map[iface.NodeID]chunkdv1.NodeAdmin{}}
+		requests: map[string]uint64{}, gcPending: map[iface.ChunkID]map[iface.NodeID]GCTarget{}, trimPending: map[iface.ChunkID]iface.NodeID{}, nodeAdmin: map[iface.NodeID]chunkdv1.NodeAdmin{},
+		stripes: map[iface.ChunkID]*stripe{}, shardOf: map[iface.ChunkID]ShardRef{}}
 }
 
 // ValidPath reports whether p is an absolute, clean path to a file.
@@ -186,6 +217,22 @@ func (s *State) Validate(op *chunkdv1.Op) error {
 				return iface.Errorf(iface.CodeInvalid, "chunk %d has no replicas", i)
 			}
 		}
+		switch b.GetRedundancy() {
+		case chunkdv1.Redundancy_REDUNDANCY_REPLICATED:
+		case chunkdv1.Redundancy_REDUNDANCY_EC_4_2:
+			// Claims carry the shard IDs, so an EC upload without them could
+			// commit stripes no record describes.
+			if !b.GetClaims() {
+				return iface.Errorf(iface.CodeInvalid, "an erasure-coded upload must claim its chunks")
+			}
+			for i, r := range b.GetPlacement() {
+				if n := r.GetNodes(); len(n) != ec.TotalShards || len(slices.Compact(slices.Sorted(slices.Values(n)))) != ec.TotalShards {
+					return iface.Errorf(iface.CodeInvalid, "chunk %d: an erasure-coded chunk needs %d distinct nodes, got %v", i, ec.TotalShards, n)
+				}
+			}
+		default:
+			return iface.Errorf(iface.CodeInvalid, "unknown redundancy %d", b.GetRedundancy())
+		}
 		if live := s.liveVersion(b.GetPath()); live != b.GetExpectedVersion() && !b.GetLastWriterWins() {
 			return iface.Errorf(iface.CodeConflict, "%s is at version %d, expected %d", b.GetPath(), live, b.GetExpectedVersion())
 		}
@@ -223,6 +270,7 @@ func (s *State) Validate(op *chunkdv1.Op) error {
 		if u == nil {
 			return iface.Errorf(iface.CodeNotFound, "upload %d", c.GetUploadId())
 		}
+		batch := map[iface.ChunkID][]iface.ChunkID{}
 		for _, cl := range c.GetClaims() {
 			i := int(cl.GetIndex())
 			if i < 0 || i >= len(u.Placement) {
@@ -234,6 +282,9 @@ func (s *State) Validate(op *chunkdv1.Op) error {
 			// Re-claiming the same chunk is a retry; a different one is a bug.
 			if id, ok := u.Claimed[i]; ok && !bytes.Equal(id[:], cl.GetId()) {
 				return iface.Errorf(iface.CodeInvalid, "chunk %d of upload %d already claimed as %s", i, u.ID, id)
+			}
+			if err := s.validShards(u, cl, batch); err != nil {
+				return err
 			}
 		}
 	case *chunkdv1.Op_Abort:
@@ -314,6 +365,130 @@ func validTrims(ts []*chunkdv1.TrimTarget) error {
 	return nil
 }
 
+// validShards checks a claim's shard list against its upload's policy and
+// every stripe already known, including earlier claims in the same op
+// (batch): one logical ID names one set of shards, and one shard one slot.
+func (s *State) validShards(u *Upload, cl *chunkdv1.ChunkClaim, batch map[iface.ChunkID][]iface.ChunkID) error {
+	var id iface.ChunkID
+	copy(id[:], cl.GetId())
+	rec := s.chunks[id]
+	if u.Redundancy != chunkdv1.Redundancy_REDUNDANCY_EC_4_2 {
+		if len(cl.GetShards()) != 0 || s.stripes[id] != nil {
+			return iface.Errorf(iface.CodeInvalid, "replicated upload %d claims stripe %s", u.ID, id)
+		}
+		return nil
+	}
+	if rec != nil && rec.Shards == nil {
+		return iface.Errorf(iface.CodeInvalid, "erasure-coded upload %d claims replicated chunk %s", u.ID, id)
+	}
+	shards, err := shardIDs(cl.GetShards())
+	if err != nil {
+		return err
+	}
+	known := batch[id]
+	if st := s.stripes[id]; st != nil {
+		known = st.shards
+	}
+	if known != nil && !slices.Equal(known, shards) {
+		return iface.Errorf(iface.CodeInvalid, "stripe %s claimed with shards that differ from its record", id)
+	}
+	for j, sh := range shards {
+		if ref, ok := s.shardOf[sh]; ok && (ref.Stripe != id || ref.Index != j) {
+			return iface.Errorf(iface.CodeInvalid, "shard %s is slot %d of stripe %s, claimed as slot %d of %s", sh, ref.Index, ref.Stripe, j, id)
+		}
+	}
+	batch[id] = shards
+	return nil
+}
+
+func rawIDs(ids []iface.ChunkID) [][]byte {
+	var out [][]byte
+	for _, id := range ids {
+		out = append(out, slices.Clone(id[:]))
+	}
+	return out
+}
+
+func shardIDs(raw [][]byte) ([]iface.ChunkID, error) {
+	if len(raw) != ec.TotalShards {
+		return nil, iface.Errorf(iface.CodeInvalid, "%d shard ids, want %d", len(raw), ec.TotalShards)
+	}
+	out := make([]iface.ChunkID, len(raw))
+	for j, r := range raw {
+		if len(r) != len(iface.ChunkID{}) {
+			return nil, iface.Errorf(iface.CodeInvalid, "shard id of %d bytes", len(r))
+		}
+		copy(out[j][:], r)
+		if slices.Contains(out[:j], out[j]) {
+			return nil, iface.Errorf(iface.CodeInvalid, "shard %d repeats an earlier shard id", j)
+		}
+	}
+	return out, nil
+}
+
+// hold adds a reference to stripe id, indexing it and its shards on the
+// first. size is the encoded chunk's size.
+func (s *State) hold(id iface.ChunkID, shards []iface.ChunkID, size int64) {
+	st := s.stripes[id]
+	if st == nil {
+		st = &stripe{shards: shards, size: size}
+		s.stripes[id] = st
+		for j, sh := range shards {
+			s.shardOf[sh] = ShardRef{Stripe: id, Index: j, Size: ec.BlockSize(size)}
+		}
+	}
+	st.holds++
+}
+
+// release drops a reference to stripe id. At zero its shards are unmarked.
+func (s *State) release(id iface.ChunkID) {
+	st := s.stripes[id]
+	if st.holds--; st.holds > 0 {
+		return
+	}
+	for _, sh := range st.shards {
+		delete(s.shardOf, sh)
+	}
+	delete(s.stripes, id)
+}
+
+// ShardOf reports whether id is a shard of a recorded or claimed stripe.
+func (s *State) ShardOf(id iface.ChunkID) (ShardRef, bool) {
+	r, ok := s.shardOf[id]
+	return r, ok
+}
+
+// Stripe returns the shard IDs of a recorded or claimed stripe, data first.
+func (s *State) Stripe(id iface.ChunkID) ([]iface.ChunkID, bool) {
+	st := s.stripes[id]
+	if st == nil {
+		return nil, false
+	}
+	return slices.Clone(st.shards), true
+}
+
+// BlockInfo is what the metadata knows about one stored block.
+type BlockInfo struct {
+	Size int64
+	// Shard is set for a shard of a stripe; Ref then locates it.
+	Shard bool
+	Ref   ShardRef
+}
+
+// Block describes a block a node may store: a replicated chunk with a
+// record, or a shard of a recorded or claimed stripe. A block that is both
+// (a file chunk whose bytes equal a shard's) is reported as the chunk, the
+// stronger target.
+func (s *State) Block(id iface.ChunkID) (BlockInfo, bool) {
+	if c := s.chunks[id]; c != nil && c.Shards == nil {
+		return BlockInfo{Size: c.Size}, true
+	}
+	if r, ok := s.shardOf[id]; ok {
+		return BlockInfo{Size: r.Size, Shard: true, Ref: r}, true
+	}
+	return BlockInfo{}, false
+}
+
 // Apply applies op, or rejects it with Validate's error and leaves the state
 // unchanged. The leader validates before proposing, but ops proposed
 // together can invalidate each other (two commits on one expected version):
@@ -334,6 +509,7 @@ func (s *State) apply(op *chunkdv1.Op) Result {
 		}
 		s.lastUploadID++
 		u := &Upload{ID: s.lastUploadID, Path: b.GetPath(), Expected: b.GetExpectedVersion(), Size: b.GetSize(), ChunkSize: int(b.GetChunkSize()), Claims: b.GetClaims(), Claimed: map[int]iface.ChunkID{}, LWW: b.GetLastWriterWins(), Touched: s.epoch,
+			Redundancy: b.GetRedundancy(), Shards: map[int][]iface.ChunkID{},
 			RequestID: string(b.GetRequestId())}
 		if u.RequestID != "" {
 			s.requests[u.RequestID] = u.ID
@@ -350,7 +526,7 @@ func (s *State) apply(op *chunkdv1.Op) Result {
 	case *chunkdv1.Op_Commit:
 		c := o.Commit
 		u := s.uploads[c.GetUploadId()]
-		v := Version{V: s.lastVersion(u.Path) + 1, UploadID: u.ID, Size: u.Size, ChunkSize: u.ChunkSize}
+		v := Version{V: s.lastVersion(u.Path) + 1, UploadID: u.ID, Size: u.Size, ChunkSize: u.ChunkSize, Redundancy: u.Redundancy}
 		copy(v.SHA256[:], c.GetSha256())
 		for i, raw := range c.GetChunkIds() {
 			var id iface.ChunkID
@@ -358,8 +534,11 @@ func (s *State) apply(op *chunkdv1.Op) Result {
 			v.Chunks = append(v.Chunks, id)
 			ci := s.chunks[id]
 			if ci == nil {
-				ci = &ChunkInfo{Size: chunk.SizeOf(u.Size, u.ChunkSize, i)}
+				ci = &ChunkInfo{Size: chunk.SizeOf(u.Size, u.ChunkSize, i), Shards: u.Shards[i]}
 				s.chunks[id] = ci
+				if ci.Shards != nil {
+					s.hold(id, ci.Shards, ci.Size)
+				}
 			}
 			ci.Refcount++
 		}
@@ -371,7 +550,7 @@ func (s *State) apply(op *chunkdv1.Op) Result {
 		u := s.uploads[o.Claim.GetUploadId()]
 		u.Touched = s.epoch
 		for _, cl := range o.Claim.GetClaims() {
-			s.claim(u, int(cl.GetIndex()), cl.GetId())
+			s.claim(u, int(cl.GetIndex()), cl.GetId(), cl.GetShards())
 		}
 		return Result{UploadID: u.ID}
 	case *chunkdv1.Op_Abort:
@@ -385,7 +564,7 @@ func (s *State) apply(op *chunkdv1.Op) Result {
 	case *chunkdv1.Op_Undelete:
 		u := o.Undelete
 		src, _ := s.StatVersion(u.GetPath(), u.GetVersion())
-		v := Version{V: s.lastVersion(u.GetPath()) + 1, Size: src.Size, SHA256: src.SHA256, Chunks: slices.Clone(src.Chunks), ChunkSize: src.ChunkSize, RestoredFrom: src.V}
+		v := Version{V: s.lastVersion(u.GetPath()) + 1, Size: src.Size, SHA256: src.SHA256, Chunks: slices.Clone(src.Chunks), ChunkSize: src.ChunkSize, RestoredFrom: src.V, Redundancy: src.Redundancy}
 		// src is retained, so it still holds a reference to every chunk: the
 		// records exist and none can have been collected.
 		for _, id := range v.Chunks {
@@ -530,7 +709,7 @@ func (s *State) GCPendingAll() []GCTarget {
 	return out
 }
 
-func (s *State) claim(u *Upload, i int, raw []byte) {
+func (s *State) claim(u *Upload, i int, raw []byte, rawShards [][]byte) {
 	if _, ok := u.Claimed[i]; ok {
 		return
 	}
@@ -538,14 +717,22 @@ func (s *State) claim(u *Upload, i int, raw []byte) {
 	copy(id[:], raw)
 	u.Claimed[i] = id
 	s.claimed[id]++
+	if len(rawShards) > 0 {
+		shards, _ := shardIDs(rawShards) // validated
+		u.Shards[i] = shards
+		s.hold(id, shards, chunk.SizeOf(u.Size, u.ChunkSize, i))
+	}
 }
 
 // dropUpload ends a pending upload and releases its claims. On commit the
 // refcounts taken just before keep the chunks marked.
 func (s *State) dropUpload(u *Upload) {
-	for _, id := range u.Claimed {
+	for i, id := range u.Claimed {
 		if s.claimed[id]--; s.claimed[id] == 0 {
 			delete(s.claimed, id)
+		}
+		if u.Shards[i] != nil {
+			s.release(id)
 		}
 	}
 	if u.RequestID != "" {
@@ -627,17 +814,23 @@ func (s *State) expire(lease uint64) int {
 }
 
 // Marked reports whether GC must keep every copy of id: a committed or
-// retained version references it, or a pending upload has claimed it.
+// retained version references it, a pending upload has claimed it, or it is
+// a shard of a stripe one of those names.
 func (s *State) Marked(id iface.ChunkID) bool {
-	return s.chunks[id] != nil || s.claimed[id] > 0
+	_, shard := s.shardOf[id]
+	return s.chunks[id] != nil || s.claimed[id] > 0 || shard
 }
 
-// unref drops one reference to id. At zero the record goes: the chunk is
-// unmarked, and GC removes its copies once the grace period has passed.
+// unref drops one reference to id. At zero the record goes: the chunk (or
+// the stripe's shards) is unmarked, and GC removes its copies once the
+// grace period has passed.
 func (s *State) unref(id iface.ChunkID) {
 	ci := s.chunks[id]
 	if ci.Refcount--; ci.Refcount == 0 {
 		delete(s.chunks, id)
+		if ci.Shards != nil {
+			s.release(id)
+		}
 	}
 }
 
@@ -793,7 +986,7 @@ func (s *State) Snapshot() []byte {
 		rec := &chunkdv1.FileRecord{Path: p}
 		for _, v := range f.Versions {
 			fv := &chunkdv1.FileVersion{Version: v.V, UploadId: v.UploadID, Size: v.Size, ChunkSize: int32(v.ChunkSize), State: chunkdv1.VersionState_VERSION_STATE_COMMITTED,
-				Retired: v.Retired, RetiredAt: v.RetiredAt, RestoredFrom: v.RestoredFrom}
+				Retired: v.Retired, RetiredAt: v.RetiredAt, RestoredFrom: v.RestoredFrom, Redundancy: v.Redundancy}
 			if v.Tombstone {
 				fv.State = chunkdv1.VersionState_VERSION_STATE_TOMBSTONE
 			} else {
@@ -809,11 +1002,11 @@ func (s *State) Snapshot() []byte {
 	ids := slices.SortedFunc(maps.Keys(s.chunks), func(a, b iface.ChunkID) int { return slices.Compare(a[:], b[:]) })
 	for _, id := range ids {
 		c := s.chunks[id]
-		snap.Chunks = append(snap.Chunks, &chunkdv1.ChunkRecord{Id: id[:], Refcount: c.Refcount, Size: c.Size})
+		snap.Chunks = append(snap.Chunks, &chunkdv1.ChunkRecord{Id: id[:], Refcount: c.Refcount, Size: c.Size, Shards: rawIDs(c.Shards)})
 	}
 	for _, id := range slices.Sorted(maps.Keys(s.uploads)) {
 		u := s.uploads[id]
-		b := &chunkdv1.BeginUploadOp{Path: u.Path, ExpectedVersion: u.Expected, Size: u.Size, ChunkSize: int32(u.ChunkSize), Claims: u.Claims, LastWriterWins: u.LWW}
+		b := &chunkdv1.BeginUploadOp{Path: u.Path, ExpectedVersion: u.Expected, Size: u.Size, ChunkSize: int32(u.ChunkSize), Claims: u.Claims, LastWriterWins: u.LWW, Redundancy: u.Redundancy}
 		if u.RequestID != "" {
 			b.RequestId = []byte(u.RequestID)
 		}
@@ -827,7 +1020,7 @@ func (s *State) Snapshot() []byte {
 		rec := &chunkdv1.UploadRecord{Id: id, Begin: b, TouchedEpoch: u.Touched}
 		for _, i := range slices.Sorted(maps.Keys(u.Claimed)) {
 			cid := u.Claimed[i]
-			rec.Claims = append(rec.Claims, &chunkdv1.ChunkClaim{Index: int32(i), Id: cid[:]})
+			rec.Claims = append(rec.Claims, &chunkdv1.ChunkClaim{Index: int32(i), Id: cid[:], Shards: rawIDs(u.Shards[i])})
 		}
 		snap.Uploads = append(snap.Uploads, rec)
 	}
@@ -862,7 +1055,7 @@ func Restore(data []byte) (*State, error) {
 		f := &File{Path: rec.GetPath()}
 		for _, fv := range rec.GetVersions() {
 			v := Version{V: fv.GetVersion(), UploadID: fv.GetUploadId(), Size: fv.GetSize(), ChunkSize: int(fv.GetChunkSize()), Tombstone: fv.GetState() == chunkdv1.VersionState_VERSION_STATE_TOMBSTONE,
-				Retired: fv.GetRetired(), RetiredAt: fv.GetRetiredAt(), RestoredFrom: fv.GetRestoredFrom()}
+				Retired: fv.GetRetired(), RetiredAt: fv.GetRetiredAt(), RestoredFrom: fv.GetRestoredFrom(), Redundancy: fv.GetRedundancy()}
 			if v.UploadID != 0 {
 				s.committed[v.UploadID] = Committed{Path: rec.GetPath(), Version: v.V}
 			}
@@ -879,11 +1072,21 @@ func Restore(data []byte) (*State, error) {
 	for _, c := range snap.GetChunks() {
 		var id iface.ChunkID
 		copy(id[:], c.GetId())
-		s.chunks[id] = &ChunkInfo{Refcount: c.GetRefcount(), Size: c.GetSize()}
+		ci := &ChunkInfo{Refcount: c.GetRefcount(), Size: c.GetSize()}
+		if len(c.GetShards()) > 0 {
+			shards, err := shardIDs(c.GetShards())
+			if err != nil {
+				return nil, err
+			}
+			ci.Shards = shards
+			s.hold(id, shards, ci.Size)
+		}
+		s.chunks[id] = ci
 	}
 	for _, u := range snap.GetUploads() {
 		b := u.GetBegin()
 		up := &Upload{ID: u.GetId(), Path: b.GetPath(), Expected: b.GetExpectedVersion(), Size: b.GetSize(), ChunkSize: int(b.GetChunkSize()), Claims: b.GetClaims(), Claimed: map[int]iface.ChunkID{}, LWW: b.GetLastWriterWins(), Touched: u.GetTouchedEpoch(),
+			Redundancy: b.GetRedundancy(), Shards: map[int][]iface.ChunkID{},
 			RequestID: string(b.GetRequestId())}
 		if up.RequestID != "" {
 			s.requests[up.RequestID] = up.ID
@@ -897,7 +1100,7 @@ func Restore(data []byte) (*State, error) {
 		}
 		s.uploads[up.ID] = up
 		for _, cl := range u.GetClaims() {
-			s.claim(up, int(cl.GetIndex()), cl.GetId())
+			s.claim(up, int(cl.GetIndex()), cl.GetId(), cl.GetShards())
 		}
 	}
 	for _, t := range snap.GetGcPending() {

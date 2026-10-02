@@ -17,7 +17,13 @@ type Drift struct {
 	// Claims lists chunks whose claim count differs from the pending
 	// uploads' claims.
 	Claims []iface.ChunkID
+	// Stripes lists stripes whose hold count differs from their record plus
+	// the pending uploads claiming them: their shards' GC mark is wrong.
+	Stripes []iface.ChunkID
 }
+
+// Count is the number of drifted entries.
+func (d Drift) Count() int { return len(d.Refcounts) + len(d.Claims) + len(d.Stripes) }
 
 // RefDrift is one chunk's stored and recounted refcount.
 type RefDrift struct {
@@ -26,7 +32,7 @@ type RefDrift struct {
 }
 
 // Empty reports whether the counts agree.
-func (d Drift) Empty() bool { return len(d.Refcounts) == 0 && len(d.Claims) == 0 }
+func (d Drift) Empty() bool { return d.Count() == 0 }
 
 // Reconcile recounts chunk references from the retained versions and claims
 // from the pending uploads, and reports where the stored counts differ.
@@ -73,6 +79,31 @@ func (s *State) Reconcile() Drift {
 	for _, id := range sortedIDs(cids) {
 		if claims[id] != s.claimed[id] {
 			d.Claims = append(d.Claims, id)
+		}
+	}
+	holds := map[iface.ChunkID]int{}
+	for id, ci := range s.chunks {
+		if ci.Shards != nil {
+			holds[id]++
+		}
+	}
+	for _, u := range s.uploads {
+		for i, id := range u.Claimed {
+			if u.Shards[i] != nil {
+				holds[id]++
+			}
+		}
+	}
+	sids := map[iface.ChunkID]struct{}{}
+	for id := range holds {
+		sids[id] = struct{}{}
+	}
+	for id := range s.stripes {
+		sids[id] = struct{}{}
+	}
+	for _, id := range sortedIDs(sids) {
+		if st := s.stripes[id]; st == nil || st.holds != holds[id] {
+			d.Stripes = append(d.Stripes, id)
 		}
 	}
 	return d

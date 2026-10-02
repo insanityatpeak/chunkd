@@ -590,6 +590,174 @@ func (x *ReplicateChunk) GetTerm() uint64 {
 	return 0
 }
 
+// ShardSource is one surviving shard of a stripe and a node holding it.
+type ShardSource struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	Index         int32                  `protobuf:"varint,1,opt,name=index,proto3" json:"index,omitempty"`
+	ShardId       []byte                 `protobuf:"bytes,2,opt,name=shard_id,json=shardId,proto3" json:"shard_id,omitempty"`
+	Node          string                 `protobuf:"bytes,3,opt,name=node,proto3" json:"node,omitempty"`
+	Addr          string                 `protobuf:"bytes,4,opt,name=addr,proto3" json:"addr,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *ShardSource) Reset() {
+	*x = ShardSource{}
+	mi := &file_chunkd_v1_node_proto_msgTypes[8]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *ShardSource) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*ShardSource) ProtoMessage() {}
+
+func (x *ShardSource) ProtoReflect() protoreflect.Message {
+	mi := &file_chunkd_v1_node_proto_msgTypes[8]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use ShardSource.ProtoReflect.Descriptor instead.
+func (*ShardSource) Descriptor() ([]byte, []int) {
+	return file_chunkd_v1_node_proto_rawDescGZIP(), []int{8}
+}
+
+func (x *ShardSource) GetIndex() int32 {
+	if x != nil {
+		return x.Index
+	}
+	return 0
+}
+
+func (x *ShardSource) GetShardId() []byte {
+	if x != nil {
+		return x.ShardId
+	}
+	return nil
+}
+
+func (x *ShardSource) GetNode() string {
+	if x != nil {
+		return x.Node
+	}
+	return ""
+}
+
+func (x *ShardSource) GetAddr() string {
+	if x != nil {
+		return x.Addr
+	}
+	return ""
+}
+
+// RebuildShard tells a node to recompute a lost shard (ADR-0023): pull
+// shards from sources until 4 verify, decode, check the result hashes to
+// shard_id and store it. Completion is the node's incremental block report;
+// failure is a ReplicateFailed with the same copy_id.
+type RebuildShard struct {
+	state   protoimpl.MessageState `protogen:"open.v1"`
+	CopyId  uint64                 `protobuf:"varint,1,opt,name=copy_id,json=copyId,proto3" json:"copy_id,omitempty"`
+	ShardId []byte                 `protobuf:"bytes,2,opt,name=shard_id,json=shardId,proto3" json:"shard_id,omitempty"`
+	Index   int32                  `protobuf:"varint,3,opt,name=index,proto3" json:"index,omitempty"`
+	// The stripe's logical ID, checked against every source's header.
+	LogicalId []byte `protobuf:"bytes,4,opt,name=logical_id,json=logicalId,proto3" json:"logical_id,omitempty"`
+	// Size of the chunk the stripe encodes.
+	ChunkSize int64 `protobuf:"varint,5,opt,name=chunk_size,json=chunkSize,proto3" json:"chunk_size,omitempty"`
+	// Every other alive shard, the 4 to read first.
+	Sources       []*ShardSource `protobuf:"bytes,6,rep,name=sources,proto3" json:"sources,omitempty"`
+	Term          uint64         `protobuf:"varint,7,opt,name=term,proto3" json:"term,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *RebuildShard) Reset() {
+	*x = RebuildShard{}
+	mi := &file_chunkd_v1_node_proto_msgTypes[9]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *RebuildShard) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*RebuildShard) ProtoMessage() {}
+
+func (x *RebuildShard) ProtoReflect() protoreflect.Message {
+	mi := &file_chunkd_v1_node_proto_msgTypes[9]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use RebuildShard.ProtoReflect.Descriptor instead.
+func (*RebuildShard) Descriptor() ([]byte, []int) {
+	return file_chunkd_v1_node_proto_rawDescGZIP(), []int{9}
+}
+
+func (x *RebuildShard) GetCopyId() uint64 {
+	if x != nil {
+		return x.CopyId
+	}
+	return 0
+}
+
+func (x *RebuildShard) GetShardId() []byte {
+	if x != nil {
+		return x.ShardId
+	}
+	return nil
+}
+
+func (x *RebuildShard) GetIndex() int32 {
+	if x != nil {
+		return x.Index
+	}
+	return 0
+}
+
+func (x *RebuildShard) GetLogicalId() []byte {
+	if x != nil {
+		return x.LogicalId
+	}
+	return nil
+}
+
+func (x *RebuildShard) GetChunkSize() int64 {
+	if x != nil {
+		return x.ChunkSize
+	}
+	return 0
+}
+
+func (x *RebuildShard) GetSources() []*ShardSource {
+	if x != nil {
+		return x.Sources
+	}
+	return nil
+}
+
+func (x *RebuildShard) GetTerm() uint64 {
+	if x != nil {
+		return x.Term
+	}
+	return 0
+}
+
 // ReplicateFailed tells the metadata server a copy will not complete, so
 // its throttle slots free up before the copy timeout.
 type ReplicateFailed struct {
@@ -604,7 +772,7 @@ type ReplicateFailed struct {
 
 func (x *ReplicateFailed) Reset() {
 	*x = ReplicateFailed{}
-	mi := &file_chunkd_v1_node_proto_msgTypes[8]
+	mi := &file_chunkd_v1_node_proto_msgTypes[10]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -616,7 +784,7 @@ func (x *ReplicateFailed) String() string {
 func (*ReplicateFailed) ProtoMessage() {}
 
 func (x *ReplicateFailed) ProtoReflect() protoreflect.Message {
-	mi := &file_chunkd_v1_node_proto_msgTypes[8]
+	mi := &file_chunkd_v1_node_proto_msgTypes[10]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -629,7 +797,7 @@ func (x *ReplicateFailed) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use ReplicateFailed.ProtoReflect.Descriptor instead.
 func (*ReplicateFailed) Descriptor() ([]byte, []int) {
-	return file_chunkd_v1_node_proto_rawDescGZIP(), []int{8}
+	return file_chunkd_v1_node_proto_rawDescGZIP(), []int{10}
 }
 
 func (x *ReplicateFailed) GetCopyId() uint64 {
@@ -681,7 +849,7 @@ type DeleteReplica struct {
 
 func (x *DeleteReplica) Reset() {
 	*x = DeleteReplica{}
-	mi := &file_chunkd_v1_node_proto_msgTypes[9]
+	mi := &file_chunkd_v1_node_proto_msgTypes[11]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -693,7 +861,7 @@ func (x *DeleteReplica) String() string {
 func (*DeleteReplica) ProtoMessage() {}
 
 func (x *DeleteReplica) ProtoReflect() protoreflect.Message {
-	mi := &file_chunkd_v1_node_proto_msgTypes[9]
+	mi := &file_chunkd_v1_node_proto_msgTypes[11]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -706,7 +874,7 @@ func (x *DeleteReplica) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use DeleteReplica.ProtoReflect.Descriptor instead.
 func (*DeleteReplica) Descriptor() ([]byte, []int) {
-	return file_chunkd_v1_node_proto_rawDescGZIP(), []int{9}
+	return file_chunkd_v1_node_proto_rawDescGZIP(), []int{11}
 }
 
 func (x *DeleteReplica) GetTrimId() uint64 {
@@ -764,7 +932,7 @@ type VerifyChunk struct {
 
 func (x *VerifyChunk) Reset() {
 	*x = VerifyChunk{}
-	mi := &file_chunkd_v1_node_proto_msgTypes[10]
+	mi := &file_chunkd_v1_node_proto_msgTypes[12]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -776,7 +944,7 @@ func (x *VerifyChunk) String() string {
 func (*VerifyChunk) ProtoMessage() {}
 
 func (x *VerifyChunk) ProtoReflect() protoreflect.Message {
-	mi := &file_chunkd_v1_node_proto_msgTypes[10]
+	mi := &file_chunkd_v1_node_proto_msgTypes[12]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -789,7 +957,7 @@ func (x *VerifyChunk) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use VerifyChunk.ProtoReflect.Descriptor instead.
 func (*VerifyChunk) Descriptor() ([]byte, []int) {
-	return file_chunkd_v1_node_proto_rawDescGZIP(), []int{10}
+	return file_chunkd_v1_node_proto_rawDescGZIP(), []int{12}
 }
 
 func (x *VerifyChunk) GetChunkId() []byte {
@@ -858,7 +1026,22 @@ const file_chunkd_v1_node_proto_rawDesc = "" +
 	"\x06source\x18\x03 \x01(\tR\x06source\x12\x1f\n" +
 	"\vsource_addr\x18\x04 \x01(\tR\n" +
 	"sourceAddr\x12\x12\n" +
-	"\x04term\x18\x05 \x01(\x04R\x04term\"o\n" +
+	"\x04term\x18\x05 \x01(\x04R\x04term\"f\n" +
+	"\vShardSource\x12\x14\n" +
+	"\x05index\x18\x01 \x01(\x05R\x05index\x12\x19\n" +
+	"\bshard_id\x18\x02 \x01(\fR\ashardId\x12\x12\n" +
+	"\x04node\x18\x03 \x01(\tR\x04node\x12\x12\n" +
+	"\x04addr\x18\x04 \x01(\tR\x04addr\"\xdc\x01\n" +
+	"\fRebuildShard\x12\x17\n" +
+	"\acopy_id\x18\x01 \x01(\x04R\x06copyId\x12\x19\n" +
+	"\bshard_id\x18\x02 \x01(\fR\ashardId\x12\x14\n" +
+	"\x05index\x18\x03 \x01(\x05R\x05index\x12\x1d\n" +
+	"\n" +
+	"logical_id\x18\x04 \x01(\fR\tlogicalId\x12\x1d\n" +
+	"\n" +
+	"chunk_size\x18\x05 \x01(\x03R\tchunkSize\x120\n" +
+	"\asources\x18\x06 \x03(\v2\x16.chunkd.v1.ShardSourceR\asources\x12\x12\n" +
+	"\x04term\x18\a \x01(\x04R\x04term\"o\n" +
 	"\x0fReplicateFailed\x12\x17\n" +
 	"\acopy_id\x18\x01 \x01(\x04R\x06copyId\x12\x19\n" +
 	"\bchunk_id\x18\x02 \x01(\fR\achunkId\x12\x12\n" +
@@ -887,7 +1070,7 @@ func file_chunkd_v1_node_proto_rawDescGZIP() []byte {
 	return file_chunkd_v1_node_proto_rawDescData
 }
 
-var file_chunkd_v1_node_proto_msgTypes = make([]protoimpl.MessageInfo, 11)
+var file_chunkd_v1_node_proto_msgTypes = make([]protoimpl.MessageInfo, 13)
 var file_chunkd_v1_node_proto_goTypes = []any{
 	(*Heartbeat)(nil),        // 0: chunkd.v1.Heartbeat
 	(*HeartbeatAck)(nil),     // 1: chunkd.v1.HeartbeatAck
@@ -897,16 +1080,19 @@ var file_chunkd_v1_node_proto_goTypes = []any{
 	(*GetChunkRequest)(nil),  // 5: chunkd.v1.GetChunkRequest
 	(*GetChunkResponse)(nil), // 6: chunkd.v1.GetChunkResponse
 	(*ReplicateChunk)(nil),   // 7: chunkd.v1.ReplicateChunk
-	(*ReplicateFailed)(nil),  // 8: chunkd.v1.ReplicateFailed
-	(*DeleteReplica)(nil),    // 9: chunkd.v1.DeleteReplica
-	(*VerifyChunk)(nil),      // 10: chunkd.v1.VerifyChunk
+	(*ShardSource)(nil),      // 8: chunkd.v1.ShardSource
+	(*RebuildShard)(nil),     // 9: chunkd.v1.RebuildShard
+	(*ReplicateFailed)(nil),  // 10: chunkd.v1.ReplicateFailed
+	(*DeleteReplica)(nil),    // 11: chunkd.v1.DeleteReplica
+	(*VerifyChunk)(nil),      // 12: chunkd.v1.VerifyChunk
 }
 var file_chunkd_v1_node_proto_depIdxs = []int32{
-	0, // [0:0] is the sub-list for method output_type
-	0, // [0:0] is the sub-list for method input_type
-	0, // [0:0] is the sub-list for extension type_name
-	0, // [0:0] is the sub-list for extension extendee
-	0, // [0:0] is the sub-list for field type_name
+	8, // 0: chunkd.v1.RebuildShard.sources:type_name -> chunkd.v1.ShardSource
+	1, // [1:1] is the sub-list for method output_type
+	1, // [1:1] is the sub-list for method input_type
+	1, // [1:1] is the sub-list for extension type_name
+	1, // [1:1] is the sub-list for extension extendee
+	0, // [0:1] is the sub-list for field type_name
 }
 
 func init() { file_chunkd_v1_node_proto_init() }
@@ -920,7 +1106,7 @@ func file_chunkd_v1_node_proto_init() {
 			GoPackagePath: reflect.TypeOf(x{}).PkgPath(),
 			RawDescriptor: unsafe.Slice(unsafe.StringData(file_chunkd_v1_node_proto_rawDesc), len(file_chunkd_v1_node_proto_rawDesc)),
 			NumEnums:      0,
-			NumMessages:   11,
+			NumMessages:   13,
 			NumExtensions: 0,
 			NumServices:   0,
 		},

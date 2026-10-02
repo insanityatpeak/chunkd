@@ -55,7 +55,7 @@ func (c *Cluster) AssertCollected() error {
 		errs = append(errs, fmt.Errorf("%d orphan chunks in all", orphans))
 	}
 	if d := st.Reconcile(); !d.Empty() {
-		errs = append(errs, fmt.Errorf("refcount drift on %d chunks, claim drift on %d", len(d.Refcounts), len(d.Claims)))
+		errs = append(errs, fmt.Errorf("refcount drift on %d chunks, claim drift on %d, stripe drift on %d", len(d.Refcounts), len(d.Claims), len(d.Stripes)))
 	}
 	if err := errors.Join(errs...); err != nil {
 		return fmt.Errorf("seed %d: %w", c.seed, err)

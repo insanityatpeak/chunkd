@@ -29,7 +29,7 @@ func (s *Server) Health() Health {
 		h.Nodes[n.State.String()]++
 	}
 	s.state.Chunks(func(id iface.ChunkID, ci ChunkInfo) {
-		if ci.Refcount == 0 {
+		if ci.Refcount == 0 || ci.Shards != nil {
 			return
 		}
 		h.Chunks++

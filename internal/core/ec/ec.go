@@ -20,6 +20,9 @@ const (
 	ParityShards = 2
 	// TotalShards is k + m: the nodes one chunk's stripe spans.
 	TotalShards = DataShards + ParityShards
+	// CommitShards are the shards a commit needs on alive nodes: one loss of
+	// margin above DataShards, as 2 of 3 copies is for replication.
+	CommitShards = DataShards + 1
 )
 
 // ErrUnrecoverable means more than ParityShards shards of a chunk are missing.

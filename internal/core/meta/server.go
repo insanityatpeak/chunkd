@@ -11,6 +11,7 @@ import (
 	"google.golang.org/protobuf/proto"
 
 	"github.com/insanityatpeak/chunkd/internal/core/chunk"
+	"github.com/insanityatpeak/chunkd/internal/core/ec"
 	"github.com/insanityatpeak/chunkd/internal/core/consensus"
 	"github.com/insanityatpeak/chunkd/internal/core/detector"
 	"github.com/insanityatpeak/chunkd/internal/core/placement"
@@ -345,8 +346,8 @@ func (s *Server) reconcile() {
 	if s.drift.Empty() {
 		return
 	}
-	s.d.Log.Error("refcount drift", "chunks", len(s.drift.Refcounts), "claims", len(s.drift.Claims))
-	s.event("gc", "", "refcount drift on %d chunks, claim drift on %d: GC should be stopped and the log inspected", len(s.drift.Refcounts), len(s.drift.Claims))
+	s.d.Log.Error("refcount drift", "chunks", len(s.drift.Refcounts), "claims", len(s.drift.Claims), "stripes", len(s.drift.Stripes))
+	s.event("gc", "", "refcount drift on %d chunks, claim drift on %d, stripe drift on %d: GC should be stopped and the log inspected", len(s.drift.Refcounts), len(s.drift.Claims), len(s.drift.Stripes))
 }
 
 // Drift returns the latest reconciliation result.
@@ -510,18 +511,28 @@ func (s *Server) begin(m iface.Message, respond iface.Responder) {
 			return
 		}
 	}
+	stripes := req.GetRedundancy() == chunkdv1.Redundancy_REDUNDANCY_EC_4_2
+	want, need := s.cfg.Replicas, s.cfg.MinReplicas
+	if stripes {
+		// 6 distinct nodes or none: two shards on one node turn one failure
+		// into two (ADR-0022).
+		want, need = ec.TotalShards, ec.TotalShards
+	}
 	n := chunk.Count(req.GetSize(), s.cfg.ChunkSize)
 	sizes := make([]int64, n)
 	for i := range sizes {
 		sizes[i] = chunk.SizeOf(req.GetSize(), s.cfg.ChunkSize, i)
+		if stripes {
+			sizes[i] = ec.BlockSize(sizes[i])
+		}
 	}
-	pl, err := placement.Place(s.cluster.PlacementView(s.state.Leaving), sizes, s.cfg.Replicas, s.cfg.MinReplicas, s.d.Rand)
+	pl, err := placement.Place(s.cluster.PlacementView(s.state.Leaving), sizes, want, need, s.d.Rand)
 	if err != nil {
-		respond(nil, iface.Errorf(iface.CodeUnavailable, "%v (need %d)", err, s.cfg.MinReplicas))
+		respond(nil, iface.Errorf(iface.CodeUnavailable, "%v (need %d)", err, need))
 		return
 	}
 	op := &chunkdv1.BeginUploadOp{Path: req.GetPath(), ExpectedVersion: req.GetExpectedVersion(), Size: req.GetSize(), ChunkSize: int32(s.cfg.ChunkSize),
-		Claims: true, LastWriterWins: req.GetLastWriterWins(), RequestId: req.GetRequestId()}
+		Claims: true, LastWriterWins: req.GetLastWriterWins(), RequestId: req.GetRequestId(), Redundancy: req.GetRedundancy()}
 	for _, nodes := range pl {
 		r := &chunkdv1.Replicas{}
 		for _, id := range nodes {
@@ -552,7 +563,10 @@ func (s *Server) beginResponse(id uint64) (*chunkdv1.BeginUploadResponse, bool) 
 	if !ok {
 		return nil, false
 	}
-	resp := &chunkdv1.BeginUploadResponse{UploadId: id, ChunkSize: int32(u.ChunkSize), MinReplicas: int32(s.cfg.MinReplicas)}
+	resp := &chunkdv1.BeginUploadResponse{UploadId: id, ChunkSize: int32(u.ChunkSize), MinReplicas: int32(s.cfg.MinReplicas), Redundancy: u.Redundancy}
+	if u.Redundancy == chunkdv1.Redundancy_REDUNDANCY_EC_4_2 {
+		resp.MinReplicas = ec.CommitShards
+	}
 	for _, nodes := range u.Placement {
 		cp := &chunkdv1.ChunkPlacement{}
 		for _, n := range nodes {
@@ -593,11 +607,12 @@ func (s *Server) claim(m iface.Message, respond iface.Responder) {
 		resp := &chunkdv1.ClaimChunksResponse{}
 		for _, cl := range req.GetClaims() {
 			id, _ := wire.ChunkID(cl.GetId())
-			live := s.liveLocations(id)
-			present := len(live) >= s.cfg.MinReplicas
+			got, need := s.durable(id)
+			present := got >= need
 			loc := &chunkdv1.ChunkPlacement{}
 			if present {
-				for _, n := range live {
+				// Empty for a stripe: its shards are not copies of the chunk.
+				for _, n := range s.liveLocations(id) {
 					loc.Replicas = append(loc.Replicas, s.replica(n))
 				}
 				s.dedupSkipped += uint64(chunk.SizeOf(u.Size, u.ChunkSize, int(cl.GetIndex())))
@@ -635,9 +650,9 @@ func (s *Server) commit(m iface.Message, respond iface.Responder) {
 	}
 	for i, raw := range req.GetChunkIds() {
 		id, _ := wire.ChunkID(raw)
-		if got := len(s.liveLocations(id)); got < s.cfg.MinReplicas {
+		if got, need := s.durable(id); got < need {
 			// Retry, not failure: incremental reports may still be in flight.
-			respond(nil, iface.Errorf(iface.CodeRetry, "chunk %d has %d of %d required replicas reported", i, got, s.cfg.MinReplicas))
+			respond(nil, iface.Errorf(iface.CodeRetry, "chunk %d has %d of %d required replicas reported", i, got, need))
 			return
 		}
 	}
@@ -655,7 +670,12 @@ func (s *Server) commit(m iface.Message, respond iface.Responder) {
 		ids := make([]iface.ChunkID, 0, len(req.GetChunkIds()))
 		for _, raw := range req.GetChunkIds() {
 			if id, err := wire.ChunkID(raw); err == nil {
-				ids = append(ids, id)
+				// The scheduler's unit is the block: a stripe's are its shards.
+				if shards, ok := s.state.Stripe(id); ok {
+					ids = append(ids, shards...)
+				} else {
+					ids = append(ids, id)
+				}
 			}
 		}
 		s.repair.Fresh(ids)
@@ -673,6 +693,27 @@ func (s *Server) liveLocations(id iface.ChunkID) []iface.NodeID {
 		return !s.cluster.Alive(n) || s.gcPending(id, n) || s.trimPending(id, n) ||
 			s.state.NodeAdmin(n) == chunkdv1.NodeAdmin_NODE_ADMIN_DECOMMISSIONED
 	})
+}
+
+// durable returns what counts toward committing id and what commit needs:
+// copies on alive nodes, or for a stripe, shards with a copy on one.
+func (s *Server) durable(id iface.ChunkID) (got, need int) {
+	shards, ok := s.state.Stripe(id)
+	if !ok {
+		return len(s.liveLocations(id)), s.cfg.MinReplicas
+	}
+	return s.liveShards(shards), ec.CommitShards
+}
+
+// liveShards counts the shards with a copy on an alive node.
+func (s *Server) liveShards(shards []iface.ChunkID) int {
+	n := 0
+	for _, sh := range shards {
+		if len(s.liveLocations(sh)) > 0 {
+			n++
+		}
+	}
+	return n
 }
 
 // readLocations are replicas a reader may try: alive first, then suspect.
@@ -780,9 +821,18 @@ func (s *Server) statNow(req *chunkdv1.StatRequest, respond iface.Responder) {
 		respond(nil, err)
 		return
 	}
-	resp := &chunkdv1.StatResponse{Path: req.GetPath(), Version: v.V, Size: v.Size, Sha256: v.SHA256[:], ChunkSize: int32(v.ChunkSize)}
+	resp := &chunkdv1.StatResponse{Path: req.GetPath(), Version: v.V, Size: v.Size, Sha256: v.SHA256[:], ChunkSize: int32(v.ChunkSize), Redundancy: v.Redundancy}
 	for i, id := range v.Chunks {
 		loc := &chunkdv1.ChunkLocation{Id: id[:], Size: chunk.SizeOf(v.Size, v.ChunkSize, i)}
+		if c, _ := s.state.Chunk(id); c.Shards != nil {
+			for _, sh := range c.Shards {
+				sl := &chunkdv1.ShardLocation{Id: sh[:]}
+				for _, n := range s.readLocations(sh) {
+					sl.Replicas = append(sl.Replicas, s.replica(n))
+				}
+				loc.Shards = append(loc.Shards, sl)
+			}
+		}
 		for _, n := range s.readLocations(id) {
 			loc.Replicas = append(loc.Replicas, s.replica(n))
 		}
@@ -800,7 +850,7 @@ func (s *Server) list(m iface.Message, respond iface.Responder) {
 	s.linearize(respond, func() {
 		resp := &chunkdv1.ListResponse{}
 		for _, e := range s.state.List(req.GetPrefix()) {
-			resp.Files = append(resp.Files, &chunkdv1.FileInfo{Path: e.Path, Version: e.V, Size: e.Size, Sha256: e.SHA256[:], ChunkCount: int32(len(e.Chunks))})
+			resp.Files = append(resp.Files, &chunkdv1.FileInfo{Path: e.Path, Version: e.V, Size: e.Size, Sha256: e.SHA256[:], ChunkCount: int32(len(e.Chunks)), Redundancy: e.Redundancy})
 		}
 		respond(wire.Marshal(resp), nil)
 	})
@@ -820,7 +870,7 @@ func (s *Server) log(m iface.Message, respond iface.Responder) {
 		}
 		resp := &chunkdv1.LogResponse{Epoch: s.state.Epoch()}
 		for _, v := range vs {
-			vi := &chunkdv1.VersionInfo{Version: v.V, Size: v.Size, ChunkCount: int32(len(v.Chunks)), Tombstone: v.Tombstone, Retired: v.Retired}
+			vi := &chunkdv1.VersionInfo{Version: v.V, Size: v.Size, ChunkCount: int32(len(v.Chunks)), Tombstone: v.Tombstone, Retired: v.Retired, Redundancy: v.Redundancy}
 			if v.Retired {
 				vi.ExpiresEpoch = v.RetiredAt + uint64(s.cfg.RetainEpochs)
 			}
@@ -879,11 +929,18 @@ func (s *Server) ClusterView(eventsAfter uint64) *chunkdv1.ClusterResponse {
 	for _, e := range s.state.List("/") {
 		resp.Files++
 		resp.LogicalBytes += e.Size
-		fh := &chunkdv1.FileHealth{Path: e.Path, Chunks: int32(len(e.Chunks)), MinLive: int32(s.cfg.Replicas)}
+		target := int32(s.cfg.Replicas)
+		if e.Redundancy == chunkdv1.Redundancy_REDUNDANCY_EC_4_2 {
+			target = ec.TotalShards
+		}
+		fh := &chunkdv1.FileHealth{Path: e.Path, Chunks: int32(len(e.Chunks)), MinLive: target, Redundancy: e.Redundancy}
 		for _, id := range e.Chunks {
 			live := int32(len(s.liveLocations(id)))
+			if shards, ok := s.state.Stripe(id); ok {
+				live = int32(s.liveShards(shards))
+			}
 			fh.MinLive = min(fh.MinLive, live)
-			if live < int32(s.cfg.Replicas) {
+			if live < target {
 				fh.UnderReplicated++
 			}
 		}
@@ -896,7 +953,7 @@ func (s *Server) ClusterView(eventsAfter uint64) *chunkdv1.ClusterResponse {
 	resp.ReferencedBytes, resp.DistinctBytes = s.state.Dedup()
 	resp.Epoch = s.state.Epoch()
 	resp.Gc = &chunkdv1.GCStats{Orphans: s.gc.stats.Orphans, Sent: s.gc.stats.Sent, Deleted: s.gc.stats.Deleted, Kept: s.gc.stats.Kept,
-		Drift: uint64(len(s.drift.Refcounts) + len(s.drift.Claims)), RetainEpochs: uint32(s.cfg.RetainEpochs),
+		Drift: uint64(s.drift.Count()), RetainEpochs: uint32(s.cfg.RetainEpochs),
 		EpochEveryMs: int64(s.cfg.EpochEvery / time.Millisecond)}
 	h := s.Health()
 	resp.Health = &chunkdv1.ClusterHealth{Chunks: int64(h.Chunks), UnderReplicated: int64(h.UnderReplicated), OverReplicated: int64(h.OverReplicated),

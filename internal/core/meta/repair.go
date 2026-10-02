@@ -20,12 +20,13 @@ var _ repair.View = repairView{}
 // finish.
 func (v repairView) Want(id iface.ChunkID) (int64, bool) {
 	ci, ok := v.s.state.Chunk(id)
-	return ci.Size, ok && ci.Refcount > 0
+	// A stripe record has no copies of its own: its shards are the blocks.
+	return ci.Size, ok && ci.Refcount > 0 && ci.Shards == nil
 }
 
 func (v repairView) Chunks(fn func(iface.ChunkID, int64)) {
 	v.s.state.Chunks(func(id iface.ChunkID, ci ChunkInfo) {
-		if ci.Refcount > 0 {
+		if ci.Refcount > 0 && ci.Shards == nil {
 			fn(id, ci.Size)
 		}
 	})

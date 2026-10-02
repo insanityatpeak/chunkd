@@ -118,7 +118,7 @@ func main() {
 			dedupSaved.Set(float64(ref - uniq))
 			dedupSkipped.Mirror(srv.DedupSkipped())
 			d := srv.Drift()
-			drift.Set(float64(len(d.Refcounts) + len(d.Claims)))
+			drift.Set(float64(d.Count()))
 			gc := srv.GC()
 			orphans.Set(float64(gc.Orphans))
 			gcSent.Mirror(gc.Sent)

@@ -11,6 +11,15 @@ message Replicas {
   repeated string nodes = 1;
 }
 
+// Redundancy is how an upload's chunks survive node loss (ADR-0022).
+enum Redundancy {
+  // Every chunk stored as RF full copies.
+  REDUNDANCY_REPLICATED = 0;
+  // Every chunk stored as a Reed-Solomon stripe: 4 data and 2 parity shards
+  // on 6 distinct nodes.
+  REDUNDANCY_EC_4_2 = 1;
+}
+
 message BeginUploadOp {
   string path = 1;
   // Live version the writer expects; 0 means the path must not exist.
@@ -29,11 +38,16 @@ message BeginUploadOp {
   // so a retry after a lost response or a leader change opens exactly one.
   // Empty: no deduplication.
   bytes request_id = 8;
+  // EC: placement lists 6 nodes per chunk, shard i on nodes[i].
+  Redundancy redundancy = 9;
 }
 
 message ChunkClaim {
   int32 index = 1;
+  // The chunk's content hash, or its stripe's logical ID under EC.
   bytes id = 2;
+  // EC only: the 6 shard block IDs, data shards first.
+  repeated bytes shards = 3;
 }
 
 // ClaimChunksOp records that an upload is about to reference these chunks.
@@ -182,6 +196,7 @@ message FileVersion {
   uint64 retired_at = 9;
   // Set on versions created by undelete: the version they copied.
   uint64 restored_from = 10;
+  Redundancy redundancy = 11;
 }
 
 message FileRecord {
@@ -193,6 +208,8 @@ message ChunkRecord {
   bytes id = 1;
   uint64 refcount = 2;
   int64 size = 3;
+  // A stripe's 6 shard block IDs; empty for a replicated chunk.
+  repeated bytes shards = 4;
 }
 
 message UploadRecord {
@@ -238,14 +255,17 @@ message BeginUploadRequest {
   bool last_writer_wins = 4;
   // See BeginUploadOp.request_id.
   bytes request_id = 5;
+  Redundancy redundancy = 6;
 }
 
 message BeginUploadResponse {
   uint64 upload_id = 1;
   int32 chunk_size = 2;
+  // EC: 6 replicas per chunk, shard i to replicas[i].
   repeated ChunkPlacement placement = 3;
-  // Acknowledged replicas per chunk the commit will require.
+  // Acknowledged replicas (EC: shards) per chunk the commit will require.
   int32 min_replicas = 4;
+  Redundancy redundancy = 5;
 }
 
 message CommitUploadRequest {
@@ -298,9 +318,17 @@ message UndeleteResponse {
 }
 
 message ChunkLocation {
+  // The content hash, or the stripe's logical ID when shards is set.
   bytes id = 1;
   int64 size = 2;
   repeated Replica replicas = 3;
+  // EC: the stripe's 6 shards in index order; replicas is empty.
+  repeated ShardLocation shards = 4;
+}
+
+message ShardLocation {
+  bytes id = 1;
+  repeated Replica replicas = 2;
 }
 
 message StatRequest {
@@ -316,6 +344,8 @@ message StatResponse {
   bytes sha256 = 4;
   int32 chunk_size = 5;
   repeated ChunkLocation chunks = 6;
+  // EC: every chunk location lists its shards.
+  Redundancy redundancy = 7;
 }
 
 message LogRequest {
@@ -333,6 +363,7 @@ message VersionInfo {
   bool retired = 6;
   // Epoch at which a retired version is dropped.
   uint64 expires_epoch = 7;
+  Redundancy redundancy = 8;
 }
 
 message LogResponse {
@@ -351,6 +382,7 @@ message FileInfo {
   int64 size = 3;
   bytes sha256 = 4;
   int32 chunk_count = 5;
+  Redundancy redundancy = 6;
 }
 
 message ListResponse {
@@ -489,8 +521,10 @@ message FileHealth {
   string path = 1;
   int32 chunks = 2;
   int32 under_replicated = 3;
-  // Fewest copies on alive nodes across the file's chunks.
+  // Fewest copies on alive nodes across the file's chunks; for an EC file,
+  // fewest available shards of a stripe.
   int32 min_live = 4;
+  Redundancy redundancy = 5;
 }
 
 // RepairCopy is one re-replication in flight.
@@ -501,6 +535,9 @@ message RepairCopy {
   string target = 4;
   int64 bytes = 5;
   int64 started_ms = 6;
+  // A shard rebuild: the target reads the shards on these nodes and
+  // decodes; source is empty.
+  repeated string rebuild_from = 7;
 }
 
 // Event is one entry of the metadata server's recent-event ring.

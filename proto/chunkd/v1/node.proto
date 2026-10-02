@@ -86,6 +86,31 @@ message ReplicateChunk {
   uint64 term = 5;
 }
 
+// ShardSource is one surviving shard of a stripe and a node holding it.
+message ShardSource {
+  int32 index = 1;
+  bytes shard_id = 2;
+  string node = 3;
+  string addr = 4;
+}
+
+// RebuildShard tells a node to recompute a lost shard (ADR-0023): pull
+// shards from sources until 4 verify, decode, check the result hashes to
+// shard_id and store it. Completion is the node's incremental block report;
+// failure is a ReplicateFailed with the same copy_id.
+message RebuildShard {
+  uint64 copy_id = 1;
+  bytes shard_id = 2;
+  int32 index = 3;
+  // The stripe's logical ID, checked against every source's header.
+  bytes logical_id = 4;
+  // Size of the chunk the stripe encodes.
+  int64 chunk_size = 5;
+  // Every other alive shard, the 4 to read first.
+  repeated ShardSource sources = 6;
+  uint64 term = 7;
+}
+
 // ReplicateFailed tells the metadata server a copy will not complete, so
 // its throttle slots free up before the copy timeout.
 message ReplicateFailed {

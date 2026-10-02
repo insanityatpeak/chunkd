@@ -163,3 +163,26 @@ func TestPlacementMinReplicas(t *testing.T) {
 		})
 	}
 }
+
+// Six shards on 3 uneven racks still fill round-robin: losing any rack
+// loses at most 2.
+func TestPlacementFillsRacksRoundRobin(t *testing.T) {
+	nodes := append(cluster(1, 5), cluster(3, 1)[1:]...) // r1: 5 nodes, r2 and r3: 1 each
+	nodes = append(nodes, Node{ID: "r2-n2", Rack: "r2", Alive: true}, Node{ID: "r3-n2", Rack: "r3", Alive: true})
+	racks := rackOf(nodes)
+	for seed := range uint64(50) {
+		pl, err := Place(nodes, sizes(4), 6, 6, sim.NewRand(seed))
+		if err != nil {
+			t.Fatal(err)
+		}
+		for i, ids := range pl {
+			per := map[string]int{}
+			for _, id := range ids {
+				per[racks[id]]++
+			}
+			if per["r1"] != 2 || per["r2"] != 2 || per["r3"] != 2 {
+				t.Fatalf("seed %d chunk %d: racks %v", seed, i, per)
+			}
+		}
+	}
+}

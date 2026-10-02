@@ -24,10 +24,11 @@ type Node struct {
 // Place returns replica nodes for each chunk, in preference order.
 //
 // Per chunk: the first replica is the least-loaded eligible node; each next
-// replica is the least-loaded node on a rack not yet used for this chunk;
-// racks repeat only once all are used, nodes never. Load is bytes used plus
-// bytes placed earlier in this call, so one large upload spreads out instead
-// of piling onto the emptiest nodes. Ties break through rng.
+// replica is the least-loaded node on the racks this chunk uses least, so
+// racks fill round-robin (6 EC shards on 3 racks: 2 each), and nodes never
+// repeat. Load is bytes used plus bytes placed earlier in this call, so one
+// large upload spreads out instead of piling onto the emptiest nodes. Ties
+// break through rng.
 //
 // It returns ErrNotEnoughNodes if any chunk gets fewer than min replicas.
 // SIMPLIFIED: one level of failure domain (rack). HDFS and Ceph CRUSH model
@@ -47,14 +48,14 @@ func Place(nodes []Node, sizes []int64, n, min int, rng iface.Rand) ([][]iface.N
 	out := make([][]iface.NodeID, len(sizes))
 	for i, size := range sizes {
 		chosen := map[iface.NodeID]bool{}
-		racks := map[string]bool{}
+		racks := map[string]int{}
 		for len(out[i]) < n {
 			nd, ok := pick(eligible, chosen, racks, load, rng)
 			if !ok {
 				break
 			}
 			chosen[nd.ID] = true
-			racks[nd.Rack] = true
+			racks[nd.Rack]++
 			pending[nd.ID] += size
 			out[i] = append(out[i], nd.ID)
 		}
@@ -65,21 +66,20 @@ func Place(nodes []Node, sizes []int64, n, min int, rng iface.Rand) ([][]iface.N
 	return out, nil
 }
 
-// pick returns the least-loaded unchosen node, preferring unused racks.
-func pick(nodes []Node, chosen map[iface.NodeID]bool, racks map[string]bool, load func(Node) int64, rng iface.Rand) (Node, bool) {
-	var fresh, any []Node
+// pick returns the least-loaded unchosen node on the least-used racks.
+func pick(nodes []Node, chosen map[iface.NodeID]bool, racks map[string]int, load func(Node) int64, rng iface.Rand) (Node, bool) {
+	var pool []Node
+	least := -1
 	for _, nd := range nodes {
 		if chosen[nd.ID] {
 			continue
 		}
-		any = append(any, nd)
-		if !racks[nd.Rack] {
-			fresh = append(fresh, nd)
+		switch used := racks[nd.Rack]; {
+		case least < 0 || used < least:
+			pool, least = []Node{nd}, used
+		case used == least:
+			pool = append(pool, nd)
 		}
-	}
-	pool := fresh
-	if len(pool) == 0 {
-		pool = any
 	}
 	if len(pool) == 0 {
 		return Node{}, false
