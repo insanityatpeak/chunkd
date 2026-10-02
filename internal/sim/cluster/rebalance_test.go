@@ -132,6 +132,20 @@ func TestAddNodeConverges(t *testing.T) {
 	if err := c.AssertInvariants(); err != nil {
 		t.Fatal(err)
 	}
+	// The dashboard's view of the plan: every node, the new one included, has
+	// a target and sits within its band.
+	for _, n := range c.State().Nodes {
+		if n.BalanceTarget == 0 || abs64(n.BalanceUsed-n.BalanceTarget) > n.BalanceBand {
+			t.Fatalf("%s in the cluster view: %d bytes located, target %d ± %d", n.ID, n.BalanceUsed, n.BalanceTarget, n.BalanceBand)
+		}
+	}
+}
+
+func abs64(x int64) int64 {
+	if x < 0 {
+		return -x
+	}
+	return x
 }
 
 // TestDrainNeverDropsRF: drain a node while uploads go on, and kill another

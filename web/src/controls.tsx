@@ -1,6 +1,8 @@
 import type { ClusterAPI, MetaPeerView, NodeView } from './api/cluster';
 
 const SLOW_MS = 2000;
+// The simulation runs at most this many storage nodes (cluster.MaxNodes).
+const MAX_NODES = 8;
 const NO_LEADER_CUT = 'compose cannot cut one peer off from the others: that needs per-link rules (README, Known limitations)';
 
 interface Props {
@@ -70,6 +72,7 @@ export function NodeControls({ api, nodes, metas, onError }: Props) {
           })}
         {nodes.map((n) => {
           const svc = n.id;
+          const leaving = !!n.admin && n.admin !== 'active';
           return (
             <div class="fault-row" role="row" key={n.id}>
               <span class="fault-node" role="cell">
@@ -111,6 +114,20 @@ export function NodeControls({ api, nodes, metas, onError }: Props) {
               >
                 {n.partitioned ? 'Heal' : 'Partition'}
               </button>
+              <button
+                type="button"
+                disabled={live}
+                aria-pressed={leaving}
+                title={tip(
+                  leaving
+                    ? 'Return it to service: it takes new chunks again and the balancer moves copies back'
+                    : 'Stop placing chunks here and move its copies to other nodes, keeping rack spread',
+                  `chunkd node ${leaving ? 'undrain' : 'drain'} ${n.id}`,
+                )}
+                onClick={() => report(api.drain(n.id, !leaving))}
+              >
+                {leaving ? 'Undrain' : 'Drain'}
+              </button>
             </div>
           );
         })}
@@ -118,7 +135,19 @@ export function NodeControls({ api, nodes, metas, onError }: Props) {
           <span class="fault-node" role="cell">
             cluster
           </span>
-          <button type="button" disabled title="Adding nodes needs rebalancing, which lands in Phase 6">
+          <button
+            type="button"
+            disabled={live || nodes.length >= MAX_NODES}
+            title={
+              nodes.length >= MAX_NODES && !live
+                ? `The simulation runs at most ${MAX_NODES} storage nodes`
+                : tip(
+                    `Start node-${nodes.length + 1}, empty, on the next rack in turn; the balancer moves copies onto it`,
+                    'docker compose --profile full --profile extra up -d node-6',
+                  )
+            }
+            onClick={() => report(api.addNode())}
+          >
             Add node
           </button>
           <button

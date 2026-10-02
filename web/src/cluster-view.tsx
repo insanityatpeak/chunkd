@@ -6,6 +6,7 @@ const META_W = 200;
 const META_H = 74;
 const META_GAP = 16;
 const NODE_W = 132;
+const NODE_GAP = 12;
 const NODE_H = 128;
 const META_Y = 14;
 const NODE_Y = 150;
@@ -19,26 +20,31 @@ interface Props {
 // shows its Raft role, term and log indexes; the crown marks the leader
 // that serves (a quorum confirms it). Nodes are coloured by the failure
 // detector's state: alive, suspect after 3 s without a heartbeat, dead
-// after 10 s. A crashed process (sim only) is dashed.
+// after 10 s. A crashed process (sim only) is dashed; a draining or
+// decommissioned node is outlined in amber, and its bar shows the balance
+// target as a tick inside the band the balancer leaves alone.
 export function ClusterView({ view }: Props) {
   const nodes = view.nodes;
-  const slot = W / Math.max(nodes.length, 1);
+  // Wider than W once the cards would overlap (6 or more); the SVG scales down.
+  const w = Math.max(W, nodes.length * (NODE_W + NODE_GAP));
+  const slot = w / Math.max(nodes.length, 1);
   const nodeX = (i: number) => slot * i + (slot - NODE_W) / 2;
-  const maxUsed = Math.max(1, ...nodes.map((n) => n.usedBytes));
+  // One scale for every bar, so bars and target ticks compare across cards.
+  const scale = Math.max(1, ...nodes.map((n) => Math.max(n.usedBytes, n.balanceUsed ?? 0, (n.balanceTarget ?? 0) + (n.balanceBand ?? 0))));
   const metas: MetaPeerView[] = view.metas?.length
     ? view.metas
     : [{ id: view.meta?.id ?? 'metadata server', state: 'unknown', leader: true, applied: view.meta?.applied }];
   const metasW = metas.length * META_W + (metas.length - 1) * META_GAP;
-  const metaX = (i: number) => (W - metasW) / 2 + i * (META_W + META_GAP);
+  const metaX = (i: number) => (w - metasW) / 2 + i * (META_W + META_GAP);
   // Nodes heartbeat every peer; the lines go to the leader that acts on them.
   const lead = metas.findIndex((m) => m.leader);
-  const hubX = lead >= 0 ? metaX(lead) + META_W / 2 : W / 2;
+  const hubX = lead >= 0 ? metaX(lead) + META_W / 2 : w / 2;
   const leader = lead >= 0 ? metas[lead] : undefined;
   const label = `Cluster topology: metadata group of ${metas.length}, ${leader ? `leader ${leader.id}${leader.term ? ` in term ${leader.term}` : ''}` : 'no leader (election running)'}; ${nodes.length} storage nodes`;
 
   return (
     <figure class="cluster">
-      <svg viewBox={`0 0 ${W} ${NODE_Y + NODE_H + 34}`} role="img" aria-label={label}>
+      <svg viewBox={`0 0 ${w} ${NODE_Y + NODE_H + 34}`} role="img" aria-label={label}>
         {nodes.map((n, i) => (
           <line
             key={`l-${n.id}`}
@@ -66,7 +72,7 @@ export function ClusterView({ view }: Props) {
         ))}
         {nodes.map((n, i) => (
           <g key={n.id} transform={`translate(${nodeX(i)} ${NODE_Y})`}>
-            <rect class={`box node ${status(n)}`} width={NODE_W} height={NODE_H} rx="8" />
+            <rect class={`box node ${status(n)}${leaving(n) ? ' leaving' : ''}`} width={NODE_W} height={NODE_H} rx="8" />
             <text class="title" x="10" y="22">
               {n.id}
             </text>
@@ -87,10 +93,9 @@ export function ClusterView({ view }: Props) {
               scrub {scrubPct(n)}
               {n.corrupt ? <tspan class="corrupt"> · {n.corrupt} bad</tspan> : null}
             </text>
-            <rect class="bar-bg" x="10" y="114" width={NODE_W - 20} height="6" rx="3" />
-            <rect class="bar" x="10" y="114" width={((NODE_W - 20) * n.usedBytes) / maxUsed} height="6" rx="3" />
+            <Utilization n={n} scale={scale} />
             <text class={`state ${status(n)}`} x={NODE_W / 2} y={NODE_H + 18} text-anchor="middle">
-              {[n.crashed && 'process down', ...faults(n), n.state].filter(Boolean).join(' · ')}
+              {[n.crashed && 'process down', leaving(n) && n.admin, ...faults(n), n.state].filter(Boolean).join(' · ')}
             </text>
           </g>
         ))}
@@ -103,6 +108,36 @@ export function ClusterView({ view }: Props) {
       )}
     </figure>
   );
+}
+
+const BAR_W = NODE_W - 20;
+
+// Utilization is a node's bar: bytes the leader has located on it against
+// the balancer's target (the tick) and the band it leaves alone (shaded).
+// Without a plan (membership unsettled) it shows stored bytes alone.
+function Utilization({ n, scale }: { n: NodeView; scale: number }) {
+  const x = (b: number) => 10 + (BAR_W * Math.max(0, b)) / scale;
+  const target = n.balanceTarget ?? 0;
+  const band = n.balanceBand ?? 0;
+  const used = target > 0 ? (n.balanceUsed ?? 0) : n.usedBytes;
+  return (
+    <g class="util">
+      <title>
+        {target > 0
+          ? `${formatBytes(used)} located here; balance target ${formatBytes(target)} ± ${formatBytes(band)}`
+          : `${formatBytes(used)} stored; no balance target while membership is changing`}
+      </title>
+      <rect class="bar-bg" x="10" y="114" width={BAR_W} height="6" rx="3" />
+      {target > 0 && <rect class="band" x={x(target - band)} y="111" width={x(target + band) - x(target - band)} height="12" rx="2" />}
+      <rect class="bar" x="10" y="114" width={x(used) - 10} height="6" rx="3" />
+      {target > 0 && <line class="target" x1={x(target)} x2={x(target)} y1="109" y2="125" />}
+    </g>
+  );
+}
+
+// leaving: draining or decommissioned by the operator.
+function leaving(n: NodeView): boolean {
+  return !!n.admin && n.admin !== 'active';
 }
 
 type Status = NodeView['state'] | 'crashed';

@@ -376,6 +376,12 @@ message NodeInfo {
   uint64 scrub_passes = 13;
   // Operator-set state: "active", "draining" or "decommissioned".
   string admin = 14;
+  // The balancer's view (ADR-0020): bytes the leader has located on the node,
+  // its target and the band around it. Zero target: no plan (unsettled
+  // membership, or not a member).
+  int64 balance_used = 15;
+  int64 balance_target = 16;
+  int64 balance_band = 17;
 }
 
 // NodeAdminRequest drains, undrains (to active) or decommissions a node.

@@ -243,6 +243,13 @@ export class HttpClusterAPI implements ClusterAPI {
   cutMeta(_id: string, _on: boolean): Promise<void> {
     return this.corrupt('', '');
   }
+  // Membership changes on a real cluster go through the CLI (chunkd node).
+  addNode(): Promise<void> {
+    return this.corrupt('', '');
+  }
+  drain(_node: string, _on: boolean): Promise<void> {
+    return this.corrupt('', '');
+  }
 
   dispose() {
     clearInterval(this.timer);

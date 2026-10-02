@@ -19,6 +19,8 @@
 //	corrupt(node, chunkHex) flip a byte in node's copy of a chunk
 //	killMeta(id), reviveMeta(id)  stop a metadata peer (log kept); start a new process over it
 //	cutMeta(id, on)         partition a metadata peer from the other peers, or heal
+//	addNode()               start node-(N+1), empty, on the next rack in turn; JSON {"node": id}
+//	drain(node, on)         drain node through the metadata leader, or undrain it; JSON {"warning": ...}
 //
 // An empty metadata peer id means the current leader; with none (during an
 // election) the call returns an error.
@@ -165,6 +167,18 @@ func main() {
 				}
 			}
 			return jsonValue(struct{}{}, err)
+		}),
+		"addNode": needCluster(func([]js.Value) any {
+			id, err := c.AddNode()
+			return jsonValue(map[string]iface.NodeID{"node": id}, err)
+		}),
+		"drain": needCluster(func(args []js.Value) any {
+			id := iface.NodeID(args[0].String())
+			if !args[1].Bool() {
+				return jsonValue(struct{}{}, c.Undrain(id))
+			}
+			w, err := c.Drain(id)
+			return jsonValue(map[string]string{"warning": w}, err)
 		}),
 		"corrupt": needCluster(func(args []js.Value) any {
 			return jsonValue(struct{}{}, c.CorruptReplica(iface.NodeID(args[0].String()), args[1].String()))

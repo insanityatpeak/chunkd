@@ -1,0 +1,240 @@
+{
+  "seed": 7,
+  "scenario": "add-node",
+  "untilMs": 120000,
+  "events": [
+    {
+      "seq": 1,
+      "atMs": 391,
+      "kind": "node",
+      "node": "node-5",
+      "text": "joined as alive"
+    },
+    {
+      "seq": 2,
+      "atMs": 446,
+      "kind": "node",
+      "node": "node-3",
+      "text": "joined as alive"
+    },
+    {
+      "seq": 3,
+      "atMs": 587,
+      "kind": "node",
+      "node": "node-4",
+      "text": "joined as alive"
+    },
+    {
+      "seq": 4,
+      "atMs": 748,
+      "kind": "node",
+      "node": "node-2",
+      "text": "joined as alive"
+    },
+    {
+      "seq": 5,
+      "atMs": 840,
+      "kind": "node",
+      "node": "node-1",
+      "text": "joined as alive"
+    },
+    {
+      "seq": 6,
+      "atMs": 1335,
+      "kind": "raft",
+      "node": "",
+      "text": "term 2: election, no leader yet"
+    },
+    {
+      "seq": 7,
+      "atMs": 1394,
+      "kind": "raft",
+      "node": "meta-2",
+      "text": "term 2: meta-2 leads"
+    },
+    {
+      "seq": 8,
+      "atMs": 32095,
+      "kind": "node",
+      "node": "node-6",
+      "text": "joined as alive"
+    },
+    {
+      "seq": 9,
+      "atMs": 32112,
+      "kind": "copy",
+      "node": "node-6",
+      "text": "copy 1 started (rebalance): chunk 03097f628b88 from node-3, 4194304 bytes"
+    },
+    {
+      "seq": 10,
+      "atMs": 32212,
+      "kind": "copy",
+      "node": "node-6",
+      "text": "copy 2 started (rebalance): chunk 46467b005358 from node-3, 4194304 bytes"
+    },
+    {
+      "seq": 11,
+      "atMs": 32237,
+      "kind": "copy",
+      "node": "node-4",
+      "text": "copy 3 started (rebalance): chunk 5ac0bbdc1c6f from node-1, 1048576 bytes"
+    },
+    {
+      "seq": 12,
+      "atMs": 32255,
+      "kind": "copy",
+      "node": "node-6",
+      "text": "copy 1 completed after 143ms"
+    },
+    {
+      "seq": 13,
+      "atMs": 32276,
+      "kind": "trim",
+      "node": "node-3",
+      "text": "trim 4 sent: chunk 03097f628b88"
+    },
+    {
+      "seq": 14,
+      "atMs": 32281,
+      "kind": "copy",
+      "node": "node-6",
+      "text": "copy 2 completed after 69ms"
+    },
+    {
+      "seq": 15,
+      "atMs": 32299,
+      "kind": "copy",
+      "node": "node-4",
+      "text": "copy 3 completed after 61ms"
+    },
+    {
+      "seq": 16,
+      "atMs": 32314,
+      "kind": "trim",
+      "node": "node-3",
+      "text": "trim 5 sent: chunk 46467b005358"
+    },
+    {
+      "seq": 17,
+      "atMs": 32321,
+      "kind": "trim",
+      "node": "node-1",
+      "text": "trim 6 sent: chunk 5ac0bbdc1c6f"
+    },
+    {
+      "seq": 18,
+      "atMs": 32337,
+      "kind": "trim",
+      "node": "node-3",
+      "text": "trim 4 done: chunk 03097f628b88 removed"
+    },
+    {
+      "seq": 19,
+      "atMs": 32337,
+      "kind": "copy",
+      "node": "node-6",
+      "text": "copy 7 started (rebalance): chunk 7c0b044463ce from node-3, 4194304 bytes"
+    },
+    {
+      "seq": 20,
+      "atMs": 32363,
+      "kind": "trim",
+      "node": "node-1",
+      "text": "trim 6 done: chunk 5ac0bbdc1c6f removed"
+    },
+    {
+      "seq": 21,
+      "atMs": 32386,
+      "kind": "trim",
+      "node": "node-3",
+      "text": "trim 5 done: chunk 46467b005358 removed"
+    },
+    {
+      "seq": 22,
+      "atMs": 32437,
+      "kind": "copy",
+      "node": "node-6",
+      "text": "copy 8 started (rebalance): chunk 86d04a75fc5b from node-3, 4194304 bytes"
+    },
+    {
+      "seq": 23,
+      "atMs": 32462,
+      "kind": "copy",
+      "node": "node-4",
+      "text": "copy 9 started (rebalance): chunk 7c0c00b9a472 from node-1, 1048576 bytes"
+    },
+    {
+      "seq": 24,
+      "atMs": 32496,
+      "kind": "copy",
+      "node": "node-6",
+      "text": "copy 7 completed after 159ms"
+    },
+    {
+      "seq": 25,
+      "atMs": 32530,
+      "kind": "trim",
+      "node": "node-3",
+      "text": "trim 10 sent: chunk 7c0b044463ce"
+    },
+    {
+      "seq": 26,
+      "atMs": 32556,
+      "kind": "copy",
+      "node": "node-4",
+      "text": "copy 9 completed after 93ms"
+    },
+    {
+      "seq": 27,
+      "atMs": 32558,
+      "kind": "trim",
+      "node": "node-3",
+      "text": "trim 10 done: chunk 7c0b044463ce removed"
+    },
+    {
+      "seq": 28,
+      "atMs": 32565,
+      "kind": "copy",
+      "node": "node-6",
+      "text": "copy 8 completed after 127ms"
+    },
+    {
+      "seq": 29,
+      "atMs": 32600,
+      "kind": "trim",
+      "node": "node-1",
+      "text": "trim 11 sent: chunk 7c0c00b9a472"
+    },
+    {
+      "seq": 30,
+      "atMs": 32605,
+      "kind": "trim",
+      "node": "node-3",
+      "text": "trim 12 sent: chunk 86d04a75fc5b"
+    },
+    {
+      "seq": 31,
+      "atMs": 32618,
+      "kind": "trim",
+      "node": "node-3",
+      "text": "trim 12 done: chunk 86d04a75fc5b removed"
+    },
+    {
+      "seq": 32,
+      "atMs": 32638,
+      "kind": "trim",
+      "node": "node-1",
+      "text": "trim 11 done: chunk 7c0c00b9a472 removed"
+    }
+  ],
+  "reads": [
+    {
+      "seq": 1,
+      "atMs": 31159,
+      "kind": "admin",
+      "node": "client",
+      "text": "node-6 started, empty"
+    }
+  ]
+}

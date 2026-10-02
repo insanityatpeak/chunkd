@@ -2990,7 +2990,13 @@ type NodeInfo struct {
 	ScrubTotal  int64  `protobuf:"varint,12,opt,name=scrub_total,json=scrubTotal,proto3" json:"scrub_total,omitempty"`
 	ScrubPasses uint64 `protobuf:"varint,13,opt,name=scrub_passes,json=scrubPasses,proto3" json:"scrub_passes,omitempty"`
 	// Operator-set state: "active", "draining" or "decommissioned".
-	Admin         string `protobuf:"bytes,14,opt,name=admin,proto3" json:"admin,omitempty"`
+	Admin string `protobuf:"bytes,14,opt,name=admin,proto3" json:"admin,omitempty"`
+	// The balancer's view (ADR-0020): bytes the leader has located on the node,
+	// its target and the band around it. Zero target: no plan (unsettled
+	// membership, or not a member).
+	BalanceUsed   int64 `protobuf:"varint,15,opt,name=balance_used,json=balanceUsed,proto3" json:"balance_used,omitempty"`
+	BalanceTarget int64 `protobuf:"varint,16,opt,name=balance_target,json=balanceTarget,proto3" json:"balance_target,omitempty"`
+	BalanceBand   int64 `protobuf:"varint,17,opt,name=balance_band,json=balanceBand,proto3" json:"balance_band,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -3121,6 +3127,27 @@ func (x *NodeInfo) GetAdmin() string {
 		return x.Admin
 	}
 	return ""
+}
+
+func (x *NodeInfo) GetBalanceUsed() int64 {
+	if x != nil {
+		return x.BalanceUsed
+	}
+	return 0
+}
+
+func (x *NodeInfo) GetBalanceTarget() int64 {
+	if x != nil {
+		return x.BalanceTarget
+	}
+	return 0
+}
+
+func (x *NodeInfo) GetBalanceBand() int64 {
+	if x != nil {
+		return x.BalanceBand
+	}
+	return 0
 }
 
 // NodeAdminRequest drains, undrains (to active) or decommissions a node.
@@ -4427,7 +4454,7 @@ const file_chunkd_v1_meta_proto_rawDesc = "" +
 	"\vchunk_count\x18\x05 \x01(\x05R\n" +
 	"chunkCount\"9\n" +
 	"\fListResponse\x12)\n" +
-	"\x05files\x18\x01 \x03(\v2\x13.chunkd.v1.FileInfoR\x05files\"\x87\x03\n" +
+	"\x05files\x18\x01 \x03(\v2\x13.chunkd.v1.FileInfoR\x05files\"\xf4\x03\n" +
 	"\bNodeInfo\x12\x0e\n" +
 	"\x02id\x18\x01 \x01(\tR\x02id\x12\x12\n" +
 	"\x04rack\x18\x02 \x01(\tR\x04rack\x12\x12\n" +
@@ -4447,7 +4474,10 @@ const file_chunkd_v1_meta_proto_rawDesc = "" +
 	"\vscrub_total\x18\f \x01(\x03R\n" +
 	"scrubTotal\x12!\n" +
 	"\fscrub_passes\x18\r \x01(\x04R\vscrubPasses\x12\x14\n" +
-	"\x05admin\x18\x0e \x01(\tR\x05admin\"R\n" +
+	"\x05admin\x18\x0e \x01(\tR\x05admin\x12!\n" +
+	"\fbalance_used\x18\x0f \x01(\x03R\vbalanceUsed\x12%\n" +
+	"\x0ebalance_target\x18\x10 \x01(\x03R\rbalanceTarget\x12!\n" +
+	"\fbalance_band\x18\x11 \x01(\x03R\vbalanceBand\"R\n" +
 	"\x10NodeAdminRequest\x12\x12\n" +
 	"\x04node\x18\x01 \x01(\tR\x04node\x12*\n" +
 	"\x05state\x18\x02 \x01(\x0e2\x14.chunkd.v1.NodeAdminR\x05state\"Y\n" +

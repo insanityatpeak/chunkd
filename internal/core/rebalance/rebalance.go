@@ -121,7 +121,7 @@ func L1(nodes []Node, target map[iface.NodeID]int64) int64 {
 
 // Balanced reports whether every node is within its band.
 func Balanced(nodes []Node, chunks []Chunk, cfg Config) bool {
-	target, band := frame(nodes, chunks, cfg)
+	target, band := Frame(nodes, chunks, cfg)
 	for _, n := range nodes {
 		if abs(n.Used-target[n.ID]) > band(n.ID) {
 			return false
@@ -130,7 +130,10 @@ func Balanced(nodes []Node, chunks []Chunk, cfg Config) bool {
 	return true
 }
 
-func frame(nodes []Node, chunks []Chunk, cfg Config) (map[iface.NodeID]int64, func(iface.NodeID) int64) {
+// Frame returns each node's target and its band: the distance from target the
+// planner tolerates, BandPercent of the target but at least two of the
+// largest chunk.
+func Frame(nodes []Node, chunks []Chunk, cfg Config) (map[iface.NodeID]int64, func(iface.NodeID) int64) {
 	var distinct, largest int64
 	for _, c := range chunks {
 		distinct += c.Size
@@ -154,7 +157,7 @@ func Plan(nodes []Node, chunks []Chunk, cfg Config, limit int) []Move {
 	if Balanced(nodes, chunks, cfg) {
 		return nil
 	}
-	target, _ := frame(nodes, chunks, cfg)
+	target, _ := Frame(nodes, chunks, cfg)
 	used := map[iface.NodeID]int64{}
 	rack := map[iface.NodeID]string{}
 	ids := make([]iface.NodeID, 0, len(nodes))

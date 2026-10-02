@@ -641,18 +641,37 @@ func (s *Scheduler) startMove(it *item, size int64, now iface.Instant) moveResul
 	return moveStarted
 }
 
-// planBalance asks the planner for moves while none are queued, from the
-// members' located bytes (plus bytes on their way to them). Chunks that are
-// busy or not at exactly RF on members count but stay put.
+// planBalance asks the planner for moves while none are queued.
 func (s *Scheduler) planBalance() {
 	for _, it := range s.queued {
 		if it.class == Balance {
 			return
 		}
 	}
-	// Only with a settled membership: a node that is suspect, back but not yet
-	// confirmed, or dead inside the repair delay may return with its data, and
-	// targets computed without it would move copies only to move them back.
+	nodes, chunks, distinct, ok := s.balanceInput()
+	if !ok {
+		return
+	}
+	s.load, s.target = map[iface.NodeID]int64{}, rebalance.Targets(nodes, distinct, s.cfg.Replicas)
+	for _, n := range nodes {
+		s.load[n.ID] = n.Used
+	}
+	for _, m := range rebalance.Plan(nodes, chunks, rebalance.Config{Replicas: s.cfg.Replicas, BandPercent: s.cfg.BandPercent}, 2*s.cfg.Background) {
+		s.seq++
+		it := &item{id: m.Chunk, class: Balance, live: s.cfg.Replicas, seq: s.seq, move: &move{from: m.From, to: m.To}}
+		heap.Push(&s.q, it)
+		s.queued[m.Chunk] = it
+	}
+}
+
+// balanceInput is the planner's input: each member's located bytes (plus
+// bytes on their way to it), every chunk, and the distinct bytes stored.
+// Chunks that are busy or not at exactly RF on members count but stay put.
+// ok is false while the membership is unsettled: a node that is suspect,
+// back but not yet confirmed, or dead inside the repair delay may return
+// with its data, and targets computed without it would move copies only to
+// move them back.
+func (s *Scheduler) balanceInput() (nodes []rebalance.Node, chunks []rebalance.Chunk, distinct int64, ok bool) {
 	var members []Member
 	now := s.clock.Now()
 	for _, m := range s.view.Nodes() {
@@ -662,17 +681,16 @@ func (s *Scheduler) planBalance() {
 		case m.State == detector.Dead && now >= m.DeadSince.Add(s.cfg.Delay):
 			// Gone: its chunks were repaired elsewhere.
 		default:
-			return
+			return nil, nil, 0, false
 		}
 	}
 	if len(members) == 0 {
-		return
+		return nil, nil, 0, false
 	}
 	load := make(map[iface.NodeID]int64, len(members))
 	for _, m := range members {
 		load[m.ID] = 0
 	}
-	var chunks []rebalance.Chunk
 	s.view.Chunks(func(id iface.ChunkID, size int64) {
 		c := rebalance.Chunk{ID: id, Size: size}
 		all := s.view.Holders(id)
@@ -696,21 +714,36 @@ func (s *Scheduler) planBalance() {
 			load[c.Target] += c.Size
 		}
 	}
-	nodes := make([]rebalance.Node, 0, len(members))
-	var distinct int64
 	for _, c := range chunks {
 		distinct += c.Size
 	}
 	for _, m := range members {
 		nodes = append(nodes, rebalance.Node{ID: m.ID, Rack: m.Rack, Used: load[m.ID]})
 	}
-	s.load, s.target = load, rebalance.Targets(nodes, distinct, s.cfg.Replicas)
-	for _, m := range rebalance.Plan(nodes, chunks, rebalance.Config{Replicas: s.cfg.Replicas, BandPercent: s.cfg.BandPercent}, 2*s.cfg.Background) {
-		s.seq++
-		it := &item{id: m.Chunk, class: Balance, live: s.cfg.Replicas, seq: s.seq, move: &move{from: m.From, to: m.To}}
-		heap.Push(&s.q, it)
-		s.queued[m.Chunk] = it
+	return nodes, chunks, distinct, true
+}
+
+// NodeBalance is one member's located bytes against its balance target; the
+// planner leaves it alone while Used is within Band of Target.
+type NodeBalance struct {
+	Node               iface.NodeID
+	Used, Target, Band int64
+}
+
+// Balance is the planner's view of the members now, nil while the membership
+// is unsettled. O(chunks).
+func (s *Scheduler) Balance() []NodeBalance {
+	nodes, chunks, _, ok := s.balanceInput()
+	if !ok {
+		return nil
 	}
+	cfg := rebalance.Config{Replicas: s.cfg.Replicas, BandPercent: s.cfg.BandPercent}
+	target, band := rebalance.Frame(nodes, chunks, cfg)
+	out := make([]NodeBalance, 0, len(nodes))
+	for _, n := range nodes {
+		out = append(out, NodeBalance{Node: n.ID, Used: n.Used, Target: target[n.ID], Band: band(n.ID)})
+	}
+	return out
 }
 
 // trim removes copies beyond Replicas. Only confirmed alive copies count,

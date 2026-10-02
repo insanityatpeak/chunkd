@@ -131,6 +131,14 @@ export class WasmClusterAPI implements ClusterAPI {
     await this.call('cutMeta', [id, on]);
   }
 
+  async addNode(): Promise<void> {
+    await this.call('addNode', []);
+  }
+
+  async drain(node: string, on: boolean): Promise<void> {
+    await this.call('drain', [node, on]);
+  }
+
   dispose() {
     this.worker.terminate();
     this.subs.clear();

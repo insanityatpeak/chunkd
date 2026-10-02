@@ -29,6 +29,8 @@ export interface Manifest extends FileInfo {
 
 export type NodeState = 'alive' | 'suspect' | 'dead' | 'unknown';
 
+export type NodeAdmin = 'active' | 'draining' | 'decommissioned';
+
 export interface NodeView {
   id: string;
   rack: string;
@@ -45,6 +47,15 @@ export interface NodeView {
   frozen?: boolean; // sim only: paused, messages held
   slowMs?: number; // sim only: added to every message to or from it
   partitioned?: boolean; // sim only: cut off from the metadata server
+  // Operator-set state (ADR-0021): a draining node takes no new chunks and
+  // its copies move away; a decommissioned one may be switched off.
+  draining?: boolean;
+  admin?: NodeAdmin;
+  // The balancer's view: bytes located on the node, its target and the band
+  // around it. No target (0 or absent): membership unsettled, or not a member.
+  balanceUsed?: number;
+  balanceTarget?: number;
+  balanceBand?: number;
   usedBytes: number;
   chunks: number;
   heartbeats?: number;
@@ -67,6 +78,9 @@ export interface Health {
   repairFailed: number;
   detectorStalls: number;
   corruptReplicas?: number;
+  // Of repairCompleted: drain copies and balance moves.
+  repairEvacuated?: number;
+  repairMoved?: number;
 }
 
 export interface RepairCopy {
@@ -81,7 +95,7 @@ export interface RepairCopy {
 export interface TimelineEvent {
   seq: number;
   atMs: number;
-  kind: 'node' | 'copy' | 'trim' | 'corrupt' | 'read' | 'write' | 'gc' | 'raft';
+  kind: 'node' | 'copy' | 'trim' | 'corrupt' | 'read' | 'write' | 'admin' | 'gc' | 'raft';
   node: string;
   text: string;
 }
@@ -236,6 +250,10 @@ export interface ClusterAPI {
   killMeta(id: string): Promise<void>;
   reviveMeta(id: string): Promise<void>;
   cutMeta(id: string, on: boolean): Promise<void>;
+  // Membership (sim only): start node-(N+1) empty on the next rack, and
+  // drain or undrain a node through the metadata leader.
+  addNode(): Promise<void>;
+  drain(node: string, on: boolean): Promise<void>;
   dispose(): void;
 }
 

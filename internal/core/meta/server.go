@@ -865,11 +865,16 @@ func (s *Server) ClusterView(eventsAfter uint64) *chunkdv1.ClusterResponse {
 		}
 		resp.MetaPeers = append(resp.MetaPeers, &chunkdv1.MetaPeer{Id: string(p.Node), Match: p.Match, HeardAgoMs: heard})
 	}
+	bal := map[iface.NodeID]repair.NodeBalance{}
+	for _, b := range s.repair.Balance() {
+		bal[b.Node] = b
+	}
 	for _, n := range s.cluster.Nodes() {
 		resp.Nodes = append(resp.Nodes, &chunkdv1.NodeInfo{Id: string(n.ID), Rack: n.Rack, Addr: n.Addr, UsedBytes: n.Used,
 			ChunkCount: n.Chunks, Alive: s.cluster.Alive(n.ID), Draining: s.state.NodeAdmin(n.ID) == chunkdv1.NodeAdmin_NODE_ADMIN_DRAINING, State: n.State.String(), Admin: AdminName(s.state.NodeAdmin(n.ID)),
 			HeartbeatAgeMs: int64(now.Sub(n.LastSeen) / time.Millisecond), Corrupt: n.Corrupt, ScrubDone: n.ScrubDone,
-			ScrubTotal: n.ScrubTotal, ScrubPasses: n.ScrubPasses})
+			ScrubTotal: n.ScrubTotal, ScrubPasses: n.ScrubPasses,
+			BalanceUsed: bal[n.ID].Used, BalanceTarget: bal[n.ID].Target, BalanceBand: bal[n.ID].Band})
 	}
 	for _, e := range s.state.List("/") {
 		resp.Files++

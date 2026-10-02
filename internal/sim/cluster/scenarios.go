@@ -1,6 +1,7 @@
 package cluster
 
 import (
+	"context"
 	"encoding/hex"
 	"fmt"
 	"slices"
@@ -28,6 +29,8 @@ var Scenarios = []Scenario{
 	{"slow-node", "Slow node", "node-4 answers 2 s late for a minute but keeps heartbeating, so the detector keeps it alive. Reads every 5 s show hedging: the client asks a second replica and learns to avoid node-4."},
 	{"gc", "Delete and collect", "5 s after the demo files load, one is overwritten with its last chunk changed: the first chunk is already stored, so only the new one is sent. 5 s later another file is deleted. Both old versions stay restorable for 3 epochs of 30 s; then their chunks lose the last reference, and after a 60 s grace the sweep deletes the copies."},
 	{"kill-leader", "Kill the metadata leader", "10 s after the demo files load, the metadata leader dies. About a second later a follower notices the silence, wins a pre-vote and then the election, and leads the next term. A write sent just after the kill goes to the dead leader first: it waits out the client's 10 s call timeout, then retries and commits on the new leader. Reads go on throughout. At 60 s the old leader returns as a follower and catches up from the new leader's log."},
+	{"add-node", "Add a node", "5 s after the demo files load, node-6 joins empty on rack r3. Once the detector has confirmed it, the balancer gives every node a rack-feasible target and moves copies onto node-6, a few at a time beside repair. Each move copies first and trims the source only after the new copy is confirmed, so no chunk drops below 3 copies. It stops once every node is within its band."},
+	{"drain", "Drain a node", "5 s after the demo files load, the operator drains node-4: it takes no new chunks and its copies move to other nodes, rack spread kept. 25 s later every chunk has 3 copies elsewhere and node-4 is decommissioned: it could be switched off now (with a copy still missing, the leader refuses and the timeline says so). 30 s after that it is undrained: its copies count again, the surplus is trimmed, and the balancer evens out the bytes."},
 }
 
 // RunScenario starts a named script.
@@ -69,6 +72,26 @@ func (c *Cluster) RunScenario(name string) error {
 		return nil
 	case "kill-leader":
 		return c.scriptKillLeader()
+	case "add-node":
+		if err := c.demoFiles(); err != nil {
+			return err
+		}
+		c.after(5*time.Second, func() {
+			if id, err := c.AddNode(); err != nil {
+				c.logClient("admin", fmt.Sprintf("add node failed: %v", err))
+			} else {
+				c.logClient("admin", fmt.Sprintf("%s started, empty", id))
+			}
+		})
+		return nil
+	case "drain":
+		if err := c.demoFiles(); err != nil {
+			return err
+		}
+		c.after(5*time.Second, func() { c.scriptAdmin("node-4", "draining") })
+		c.after(30*time.Second, func() { c.scriptAdmin("node-4", "decommissioned") })
+		c.after(60*time.Second, func() { c.scriptAdmin("node-4", "active") })
+		return nil
 	}
 	return iface.Errorf(iface.CodeInvalid, "unknown scenario %q", name)
 }
@@ -238,4 +261,18 @@ func (c *Cluster) scriptPut(path string, size int64) {
 		return
 	}
 	c.logClient("write", fmt.Sprintf("write %s (%d KiB) v%d in %v", path, size>>10, m.Version, took))
+}
+
+// scriptAdmin sets node's admin state through the client, as the CLI does,
+// and logs the outcome.
+func (c *Cluster) scriptAdmin(node, state string) {
+	res, err := c.Client().NodeAdmin(context.Background(), node, state)
+	switch {
+	case err != nil:
+		c.logClient("admin", fmt.Sprintf("%s → %s refused: %v", node, state, err))
+	case res.Warning != "":
+		c.logClient("admin", fmt.Sprintf("%s → %s (%s)", node, state, res.Warning))
+	default:
+		c.logClient("admin", fmt.Sprintf("%s → %s", node, state))
+	}
 }

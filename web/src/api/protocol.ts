@@ -20,6 +20,8 @@ export type Method =
   | 'killMeta'
   | 'reviveMeta'
   | 'cutMeta'
+  | 'addNode'
+  | 'drain'
   | 'scenarios';
 
 export type ToWorker =

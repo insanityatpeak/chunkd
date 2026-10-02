@@ -60,6 +60,11 @@ type NodeInfo struct {
 	ScrubDone   int64  `json:"scrubDone"`
 	ScrubTotal  int64  `json:"scrubTotal"`
 	ScrubPasses uint64 `json:"scrubPasses"`
+	// The balancer's view: bytes located on the node, its target and the
+	// band around it. BalanceTarget 0: no plan (unsettled membership).
+	BalanceUsed   int64 `json:"balanceUsed"`
+	BalanceTarget int64 `json:"balanceTarget"`
+	BalanceBand   int64 `json:"balanceBand"`
 }
 
 // Health is replication state across all chunks.

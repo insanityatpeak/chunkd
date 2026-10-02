@@ -41,6 +41,8 @@ export function Replication({ view }: { view: ClusterView }) {
         <Stat label="queued" value={h.repairQueued} />
         <Stat label="in flight" value={h.repairInFlight} />
         <Stat label="copies done" value={h.repairCompleted} />
+        <Stat label="of them drain copies" value={h.repairEvacuated ?? 0} />
+        <Stat label="of them balance moves" value={h.repairMoved ?? 0} />
         <Stat label="copied" value={formatBytes(h.repairBytes)} />
         <Stat label="trimmed" value={h.repairTrimmed} />
         <Stat label="timed out" value={h.repairTimedOut} />

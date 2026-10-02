@@ -176,6 +176,12 @@ svg text.role.dead {
   stroke: var(--accent);
 }
 
+/* Before suspect and dead, which win. */
+.box.node.leaving {
+  stroke: var(--warn);
+  stroke-width: 2;
+}
+
 .box.node.suspect {
   stroke: var(--warn);
   stroke-width: 2.5;
@@ -274,6 +280,16 @@ svg text.hb.crashed {
 
 .bar {
   fill: var(--accent);
+}
+
+.band {
+  fill: var(--accent);
+  opacity: 0.18;
+}
+
+line.target {
+  stroke: var(--fg);
+  stroke-width: 2;
 }
 
 .node-actions {
@@ -603,6 +619,26 @@ table.copies {
 
 .ev.good .ev-text {
   color: var(--accent);
+}
+
+.ev-tag {
+  display: inline-block;
+  margin-right: 6px;
+  padding: 0 6px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  font-size: 12px;
+  color: var(--muted);
+}
+
+.ev-tag.drain {
+  border-color: var(--warn);
+  color: var(--warn);
+}
+
+.ev-tag.rebalance {
+  border-color: var(--meta);
+  color: var(--meta);
 }
 
 .small {

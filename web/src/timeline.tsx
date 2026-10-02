@@ -2,7 +2,7 @@ import { useState } from 'preact/hooks';
 import type { ClusterView, TimelineEvent } from './api/cluster';
 
 const SHOWN = 200;
-const KINDS: TimelineEvent['kind'][] = ['raft', 'node', 'copy', 'trim', 'corrupt', 'gc', 'read', 'write'];
+const KINDS: TimelineEvent['kind'][] = ['raft', 'node', 'admin', 'copy', 'trim', 'corrupt', 'gc', 'read', 'write'];
 
 // EventTimeline lists recent events, newest first: elections in the metadata
 // group, the metadata leader's detector transitions, repair copies, trims,
@@ -42,7 +42,10 @@ export function EventTimeline({ view, sim }: { view: ClusterView; sim: boolean }
               <span class="ev-time">{when(e.atMs)}</span>
               <span class="ev-kind">{e.kind}</span>
               <span class="ev-node">{e.node}</span>
-              <span class="ev-text">{e.text}</span>
+              <span class="ev-text">
+                {tagOf(e) && <span class={`ev-tag ${tagOf(e)}`}>{tagOf(e)}</span>}
+                {e.text.replace(TAG, '')}
+              </span>
             </li>
           ))}
         </ol>
@@ -56,9 +59,17 @@ export function EventTimeline({ view, sim }: { view: ClusterView; sim: boolean }
   );
 }
 
+// TAG is the class a drain or balance copy carries in its text (repair copies
+// carry none); the list shows it as a tag.
+const TAG = / \((drain|rebalance)\)/;
+
+function tagOf(e: TimelineEvent): string | undefined {
+  return e.kind === 'copy' ? TAG.exec(e.text)?.[1] : undefined;
+}
+
 function tone(text: string): string {
-  if (/→ dead|timed out|failed|drift|no contact from leader/.test(text)) return 'bad';
-  if (/→ suspect|re-check|hedged|no leader yet/.test(text)) return 'warn';
-  if (/→ alive|completed|joined| leads$/.test(text)) return 'good';
+  if (/→ dead|timed out|failed|drift|no contact from leader|refused/.test(text)) return 'bad';
+  if (/→ suspect|re-check|hedged|no leader yet|draining|decommissioned/.test(text)) return 'warn';
+  if (/→ alive|completed|joined| leads$|→ active|active by the operator|started, empty/.test(text)) return 'good';
   return '';
 }
