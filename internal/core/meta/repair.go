@@ -121,3 +121,14 @@ func (s *Server) verifyReport(iface.NodeID, []iface.ChunkID) {}
 
 // Repair exposes the repair scheduler. Loop-owned.
 func (s *Server) Repair() *repair.Scheduler { return s.repair }
+
+// Nodes lists every known node that is not draining, with its liveness.
+func (v repairView) Nodes() []repair.Member {
+	var out []repair.Member
+	for _, n := range v.s.cluster.Nodes() {
+		if !n.Draining {
+			out = append(out, repair.Member{ID: n.ID, Rack: n.Rack, State: n.State, DeadSince: n.DeadSince, Confirmed: v.s.cluster.Reported(n.ID)})
+		}
+	}
+	return out
+}

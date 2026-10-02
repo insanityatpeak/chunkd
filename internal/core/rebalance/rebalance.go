@@ -24,6 +24,9 @@ type Chunk struct {
 	ID      iface.ChunkID
 	Size    int64
 	Holders []iface.NodeID
+	// Pinned chunks count toward the targets but never move: a copy, a trim
+	// or a repair is under way, or the chunk is not at exactly RF.
+	Pinned bool
 }
 
 // Move copies Chunk from From to To; the copy at From is then trimmed.
@@ -166,6 +169,9 @@ func Plan(nodes []Node, chunks []Chunk, cfg Config, limit int) []Move {
 	on := map[iface.NodeID][]int{}
 	for i, c := range chunks {
 		cs[i] = Chunk{ID: c.ID, Size: c.Size, Holders: slices.Clone(c.Holders)}
+		if c.Pinned {
+			continue
+		}
 		for _, h := range c.Holders {
 			if _, ok := used[h]; ok {
 				on[h] = append(on[h], i)

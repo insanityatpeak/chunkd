@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"github.com/insanityatpeak/chunkd/internal/core/detector"
+	"github.com/insanityatpeak/chunkd/internal/core/rebalance"
 	"github.com/insanityatpeak/chunkd/internal/iface"
 )
 
@@ -40,10 +41,15 @@ type Config struct {
 	// before repair copies it: commit needs 2 of 3 reports, and the third
 	// is usually still in flight.
 	UploadGrace time.Duration
+	// Background bounds the copy slots drain and balance copies may hold
+	// together, so a failure always finds slots for repair (ADR-0020).
+	Background int
+	// BandPercent is the balancer's tolerated distance from a node's target.
+	BandPercent int64
 }
 
 // DefaultConfig: RF 3, 20 s delay, 8 copies in flight (2 per node as source
-// and as target), 40 MiB/s.
+// and as target, at most 4 for drain and balance), 40 MiB/s, a ±10% band.
 func DefaultConfig() Config {
 	return Config{
 		Replicas:    3,
@@ -56,6 +62,8 @@ func DefaultConfig() Config {
 		CopyTimeout: 10 * time.Second,
 		ScanEvery:   30 * time.Second,
 		UploadGrace: 10 * time.Second,
+		Background:  4,
+		BandPercent: 10,
 	}
 }
 
@@ -69,6 +77,9 @@ type Holder struct {
 	Confirmed bool
 	Rack      string
 	Used      int64
+	// Leaving: the node is draining (ADR-0021). Its copy serves reads and can
+	// be a source, but does not count toward RF and is never trimmed.
+	Leaving bool
 }
 
 // View is the scheduler's read-only window onto the metadata server.
@@ -82,6 +93,40 @@ type View interface {
 	// Target picks a node for a new replica by the placement rules, never
 	// one of exclude.
 	Target(size int64, exclude []iface.NodeID) (iface.NodeID, bool)
+	// Nodes returns every known node that is not leaving, ordered by ID, a
+	// node holding nothing included: the candidates for balancing.
+	Nodes() []Member
+}
+
+// Member is a node that may take part in balancing.
+type Member struct {
+	ID        iface.NodeID
+	Rack      string
+	State     detector.State
+	DeadSince iface.Instant
+	Confirmed bool
+}
+
+// eligible: alive and confirmed by a full report since it last returned.
+func (m Member) eligible() bool { return m.State == detector.Alive && m.Confirmed }
+
+// Class is a copy's priority: repair before drain before balance.
+type Class int
+
+const (
+	Repair  Class = iota // a chunk below RF
+	Drain                // a chunk at RF only by counting leaving copies
+	Balance              // a move from an over-full node to an under-full one
+)
+
+func (c Class) String() string {
+	switch c {
+	case Drain:
+		return "drain"
+	case Balance:
+		return "rebalance"
+	}
+	return "repair"
 }
 
 // Copy is one dispatched replication: Target pulls Chunk from Source.
@@ -92,6 +137,7 @@ type Copy struct {
 	Target  iface.NodeID
 	Size    int64
 	Started iface.Instant
+	Class   Class
 }
 
 // Trim is one over-replication removal: Node deletes its copy of Chunk.
@@ -144,6 +190,11 @@ type Stats struct {
 	Cancelled  uint64 `json:"cancelled"`
 	Bytes      uint64 `json:"bytes"`
 	Trimmed    uint64 `json:"trimmed"`
+	// Evacuated and Moved count completed drain and balance copies; MovedBytes
+	// is the balance share of Bytes.
+	Evacuated  uint64 `json:"evacuated"`
+	Moved      uint64 `json:"moved"`
+	MovedBytes uint64 `json:"movedBytes"`
 	// Peaks are high-water marks of concurrent copies: cluster-wide, and
 	// the most any one node sourced or received at once.
 	PeakInFlight  int `json:"peakInFlight"`
@@ -181,6 +232,10 @@ type Scheduler struct {
 	// graceUntil: after SetActive(true), a chunk with more than one copy left
 	// waits until then; zero for a scheduler never deactivated.
 	graceUntil iface.Instant
+
+	// load and target are each member's located bytes and balance target as
+	// of the last plan; the trim victim rule prefers the most over-target.
+	load, target map[iface.NodeID]int64
 }
 
 // New returns a scheduler that acts through send.
@@ -237,12 +292,15 @@ func (s *Scheduler) Start() {
 // assessment is one chunk's replication state at an instant.
 type assessment struct {
 	holders []Holder
-	live    int // alive or suspect: still counted toward RF
+	live    int // alive or suspect and not leaving: counted toward RF
+	leaving int // alive or suspect and leaving: a source, not counted
 	missing int // Replicas - live, or 0
-	// sure are alive holders whose location is confirmed by a full report
-	// since they last returned. Only these may justify a trim.
+	// sure are alive, non-leaving holders whose location is confirmed by a
+	// full report since they last returned. Only these may justify a trim.
 	sure []Holder
 	lost bool // missing, and nothing to copy from
+	// class is Drain when the leaving copies still make up RF, else Repair.
+	class Class
 	// readyAt is when repair may start: now, or the end of the delay for
 	// the latest-dead holder whose absence is still excused.
 	readyAt iface.Instant
@@ -253,12 +311,14 @@ func (s *Scheduler) assess(id iface.ChunkID, now iface.Instant) assessment {
 	var excused []iface.Instant
 	for _, h := range a.holders {
 		switch {
+		case (h.State == detector.Alive || h.State == detector.Suspect) && h.Leaving:
+			a.leaving++
 		case h.State == detector.Alive || h.State == detector.Suspect:
 			a.live++
 			if h.State == detector.Alive && h.Confirmed {
 				a.sure = append(a.sure, h)
 			}
-		case h.State == detector.Dead && now < h.DeadSince.Add(s.cfg.Delay):
+		case h.State == detector.Dead && !h.Leaving && now < h.DeadSince.Add(s.cfg.Delay):
 			excused = append(excused, h.DeadSince.Add(s.cfg.Delay))
 		}
 	}
@@ -266,18 +326,22 @@ func (s *Scheduler) assess(id iface.ChunkID, now iface.Instant) assessment {
 	if a.missing == 0 {
 		return a
 	}
-	if a.live == 0 {
+	copies := a.live + a.leaving
+	if copies == 0 {
 		a.lost = true
 		return a
 	}
+	if copies >= s.cfg.Replicas {
+		a.class = Drain
+	}
 	// A single remaining copy is not worth the gamble: repair at once.
 	// Otherwise wait while recently dead holders would still cover the gap.
-	if a.live > 1 && a.live+len(excused) >= s.cfg.Replicas {
+	if copies > 1 && a.live+len(excused) >= s.cfg.Replicas {
 		slices.Sort(excused)
 		// Ready once enough excuses expire that the gap is real.
 		a.readyAt = excused[a.live+len(excused)-s.cfg.Replicas]
 	}
-	if a.live > 1 && now < s.graceUntil {
+	if copies > 1 && now < s.graceUntil {
 		a.readyAt = max(a.readyAt, s.graceUntil)
 	}
 	// A just-committed chunk's missing report is usually in flight, not
@@ -286,7 +350,7 @@ func (s *Scheduler) assess(id iface.ChunkID, now iface.Instant) assessment {
 		switch end := t.Add(s.cfg.UploadGrace); {
 		case now >= end:
 			delete(s.fresh, id)
-		case a.live > 1:
+		case copies > 1:
 			a.readyAt = max(a.readyAt, end)
 		}
 	}
@@ -333,12 +397,17 @@ func (s *Scheduler) Scan() {
 				next = a.readyAt
 			}
 		default:
-			s.enqueue(id, a.live)
+			s.enqueue(id, a.live, a.class)
 		}
 	})
 	s.stats.Waiting, s.stats.Lost = waiting, lost
 	if next >= 0 {
 		s.wakeAtLeast(next)
+	}
+	// Balance only once repair and drain have nothing waiting, queued or in
+	// flight: their copies change the loads the plan is made from.
+	if waiting == 0 && !s.urgent() {
+		s.planBalance()
 	}
 	s.dispatch()
 }
@@ -360,24 +429,40 @@ func (s *Scheduler) Recheck(ids []iface.ChunkID) {
 		case a.readyAt > now:
 			s.wakeAtLeast(a.readyAt)
 		default:
-			s.enqueue(id, a.live)
+			s.enqueue(id, a.live, a.class)
 		}
 	}
 	s.dispatch()
 }
 
-func (s *Scheduler) enqueue(id iface.ChunkID, live int) {
+func (s *Scheduler) enqueue(id iface.ChunkID, live int, class Class) {
 	if it := s.queued[id]; it != nil {
-		if it.live != live {
-			it.live = live
+		if it.live != live || it.class != class {
+			// A planned move gives way: the chunk needs a copy for RF now.
+			it.live, it.class, it.move = live, class, nil
 			heap.Fix(&s.q, it.idx)
 		}
 		return
 	}
 	s.seq++
-	it := &item{id: id, live: live, seq: s.seq}
+	it := &item{id: id, live: live, class: class, seq: s.seq}
 	heap.Push(&s.q, it)
 	s.queued[id] = it
+}
+
+// urgent reports repair or drain work queued or in flight.
+func (s *Scheduler) urgent() bool {
+	for _, it := range s.queued {
+		if it.class < Balance {
+			return true
+		}
+	}
+	for _, c := range s.inflight {
+		if c.Class < Balance {
+			return true
+		}
+	}
+	return false
 }
 
 // wakeAtLeast schedules a Scan no later than at.
@@ -410,12 +495,39 @@ func (s *Scheduler) dispatch() {
 			s.queued[it.id] = it
 		}
 	}()
+	background := 0
+	for _, c := range s.inflight {
+		if c.Class > Repair {
+			background++
+		}
+	}
+	// Copies cannot be preempted, so priority is enforced at dispatch: while
+	// a repair waits on a per-node limit, nothing of a lower class starts,
+	// and drain and balance never hold more than Background slots.
+	repairBlocked := false
 	for s.q.Len() > 0 && len(s.inflight) < s.cfg.MaxInFlight {
 		it := heap.Pop(&s.q).(*item)
 		delete(s.queued, it.id)
+		if it.class > Repair && (repairBlocked || background >= s.cfg.Background) {
+			blocked = append(blocked, it)
+			continue
+		}
 		size, ok := s.view.Want(it.id)
 		if !ok {
 			s.stats.Cancelled++
+			continue
+		}
+		if it.move != nil {
+			switch s.startMove(it, size, now) {
+			case moveBlocked:
+				blocked = append(blocked, it)
+			case moveStarted:
+				background++
+			case moveNoTokens:
+				blocked = append(blocked, it)
+				s.wakeAtLeast(s.bucket.ReadyAt(size, now))
+				return
+			}
 			continue
 		}
 		// Re-check: the node may have come back, or a report arrived, since
@@ -433,9 +545,15 @@ func (s *Scheduler) dispatch() {
 			s.wakeAtLeast(a.readyAt)
 			continue
 		}
+		it.class = a.class
+		if a.class > Repair && (repairBlocked || background >= s.cfg.Background) {
+			blocked = append(blocked, it)
+			continue
+		}
 		source, ok := s.pickSource(a.holders)
 		if !ok {
 			blocked = append(blocked, it)
+			repairBlocked = repairBlocked || a.class == Repair
 			continue
 		}
 		exclude := make([]iface.NodeID, 0, len(a.holders)+len(s.dst))
@@ -450,6 +568,7 @@ func (s *Scheduler) dispatch() {
 		target, ok := s.view.Target(size, exclude)
 		if !ok {
 			blocked = append(blocked, it)
+			repairBlocked = repairBlocked || a.class == Repair
 			continue
 		}
 		if !s.bucket.Take(size, now) {
@@ -457,22 +576,134 @@ func (s *Scheduler) dispatch() {
 			s.wakeAtLeast(s.bucket.ReadyAt(size, now))
 			return
 		}
-		s.nextID++
-		c := &Copy{ID: s.nextID, Chunk: it.id, Source: source, Target: target, Size: size, Started: now}
-		s.inflight[it.id] = c
-		s.src[source]++
-		s.dst[target]++
-		s.stats.Dispatched++
-		s.stats.PeakInFlight = max(s.stats.PeakInFlight, len(s.inflight))
-		s.stats.PeakPerSource = max(s.stats.PeakPerSource, s.src[source])
-		s.stats.PeakPerTarget = max(s.stats.PeakPerTarget, s.dst[target])
-		s.clock.AfterFunc(s.cfg.CopyTimeout, func() {
-			if cur := s.inflight[c.Chunk]; cur != nil && cur.ID == c.ID {
-				s.stats.TimedOut++
-				s.finish(c, TimedOut)
+		s.launch(it.id, source, target, size, a.class, now)
+		if a.class > Repair {
+			background++
+		}
+	}
+}
+
+func (s *Scheduler) launch(id iface.ChunkID, source, target iface.NodeID, size int64, class Class, now iface.Instant) {
+	s.nextID++
+	c := &Copy{ID: s.nextID, Chunk: id, Source: source, Target: target, Size: size, Started: now, Class: class}
+	s.inflight[id] = c
+	s.src[source]++
+	s.dst[target]++
+	s.stats.Dispatched++
+	s.stats.PeakInFlight = max(s.stats.PeakInFlight, len(s.inflight))
+	s.stats.PeakPerSource = max(s.stats.PeakPerSource, s.src[source])
+	s.stats.PeakPerTarget = max(s.stats.PeakPerTarget, s.dst[target])
+	s.clock.AfterFunc(s.cfg.CopyTimeout, func() {
+		if cur := s.inflight[c.Chunk]; cur != nil && cur.ID == c.ID {
+			s.stats.TimedOut++
+			s.finish(c, TimedOut)
+		}
+	})
+	s.send.Copy(*c)
+}
+
+type moveResult int
+
+const (
+	moveDropped moveResult = iota
+	moveBlocked
+	moveNoTokens
+	moveStarted
+)
+
+// startMove dispatches a planned balance move if it still holds: the chunk
+// is at exactly RF on confirmed, non-leaving holders, the source is one of
+// them and the destination is an eligible node without a copy. A stale move
+// is dropped; the next plan sees the cluster as it is.
+func (s *Scheduler) startMove(it *item, size int64, now iface.Instant) moveResult {
+	m := it.move
+	a := s.assess(it.id, now)
+	if _, busy := s.trimming[it.id]; busy || a.missing != 0 || len(a.sure) != s.cfg.Replicas || len(a.holders) != s.cfg.Replicas ||
+		!slices.ContainsFunc(a.sure, func(h Holder) bool { return h.Node == m.from }) ||
+		slices.ContainsFunc(a.holders, func(h Holder) bool { return h.Node == m.to }) ||
+		!slices.ContainsFunc(s.view.Nodes(), func(n Member) bool { return n.ID == m.to && n.eligible() }) {
+		s.stats.Cancelled++
+		return moveDropped
+	}
+	if s.src[m.from] >= s.cfg.PerSource || s.dst[m.to] >= s.cfg.PerTarget {
+		return moveBlocked
+	}
+	if !s.bucket.Take(size, now) {
+		return moveNoTokens
+	}
+	s.launch(it.id, m.from, m.to, size, Balance, now)
+	return moveStarted
+}
+
+// planBalance asks the planner for moves while none are queued, from the
+// members' located bytes (plus bytes on their way to them). Chunks that are
+// busy or not at exactly RF on members count but stay put.
+func (s *Scheduler) planBalance() {
+	for _, it := range s.queued {
+		if it.class == Balance {
+			return
+		}
+	}
+	// Only with a settled membership: a node that is suspect, back but not yet
+	// confirmed, or dead inside the repair delay may return with its data, and
+	// targets computed without it would move copies only to move them back.
+	var members []Member
+	now := s.clock.Now()
+	for _, m := range s.view.Nodes() {
+		switch {
+		case m.eligible():
+			members = append(members, m)
+		case m.State == detector.Dead && now >= m.DeadSince.Add(s.cfg.Delay):
+			// Gone: its chunks were repaired elsewhere.
+		default:
+			return
+		}
+	}
+	if len(members) == 0 {
+		return
+	}
+	load := make(map[iface.NodeID]int64, len(members))
+	for _, m := range members {
+		load[m.ID] = 0
+	}
+	var chunks []rebalance.Chunk
+	s.view.Chunks(func(id iface.ChunkID, size int64) {
+		c := rebalance.Chunk{ID: id, Size: size}
+		all := s.view.Holders(id)
+		tr, trimming := s.trimming[id]
+		for _, h := range all {
+			// A copy being trimmed is as good as gone: counting it would make
+			// its node look fuller than it is about to be.
+			if trimming && h.Node == tr.Node {
+				continue
 			}
-		})
-		s.send.Copy(*c)
+			if _, ok := load[h.Node]; ok {
+				c.Holders = append(c.Holders, h.Node)
+				load[h.Node] += size
+			}
+		}
+		c.Pinned = s.inflight[id] != nil || trimming || len(c.Holders) != s.cfg.Replicas || len(all) != s.cfg.Replicas
+		chunks = append(chunks, c)
+	})
+	for _, c := range s.inflight {
+		if _, ok := load[c.Target]; ok {
+			load[c.Target] += c.Size
+		}
+	}
+	nodes := make([]rebalance.Node, 0, len(members))
+	var distinct int64
+	for _, c := range chunks {
+		distinct += c.Size
+	}
+	for _, m := range members {
+		nodes = append(nodes, rebalance.Node{ID: m.ID, Rack: m.Rack, Used: load[m.ID]})
+	}
+	s.load, s.target = load, rebalance.Targets(nodes, distinct, s.cfg.Replicas)
+	for _, m := range rebalance.Plan(nodes, chunks, rebalance.Config{Replicas: s.cfg.Replicas, BandPercent: s.cfg.BandPercent}, 2*s.cfg.Background) {
+		s.seq++
+		it := &item{id: m.Chunk, class: Balance, live: s.cfg.Replicas, seq: s.seq, move: &move{from: m.From, to: m.To}}
+		heap.Push(&s.q, it)
+		s.queued[m.Chunk] = it
 	}
 }
 
@@ -486,7 +717,21 @@ func (s *Scheduler) trim(id iface.ChunkID, sure []Holder) {
 	if _, busy := s.trimming[id]; busy {
 		return
 	}
-	s.sendTrim(id, Victim(sure))
+	s.sendTrim(id, s.victim(sure))
+}
+
+// victim applies Victim with each member's distance above its balance target
+// in place of bytes used, once a plan has computed targets.
+func (s *Scheduler) victim(sure []Holder) iface.NodeID {
+	hs := slices.Clone(sure)
+	if s.target != nil {
+		for i := range hs {
+			if t, ok := s.target[hs[i].Node]; ok {
+				hs[i].Used = s.load[hs[i].Node] - t
+			}
+		}
+	}
+	return Victim(hs)
 }
 
 func (s *Scheduler) sendTrim(id iface.ChunkID, victim iface.NodeID) {
@@ -528,7 +773,8 @@ func (s *Scheduler) retryTrim(t Trim) {
 }
 
 // Victim picks the replica to drop: one on the rack holding the most
-// copies (keeps the spread), then the most used node, then the highest ID.
+// copies (keeps the spread), then the highest Used (bytes, or distance above
+// target), then the highest ID. Callers pass only non-leaving holders.
 func Victim(holders []Holder) iface.NodeID {
 	perRack := map[string]int{}
 	for _, h := range holders {
@@ -584,6 +830,20 @@ func (s *Scheduler) pickSource(holders []Holder) (iface.NodeID, bool) {
 	return best.Node, true
 }
 
+// movable: src is among sure and dropping it keeps the racks the others hold.
+func movable(sure []Holder, src iface.NodeID) bool {
+	racks := map[string]int{}
+	var rack string
+	found := false
+	for _, h := range sure {
+		racks[h.Rack]++
+		if h.Node == src {
+			rack, found = h.Rack, true
+		}
+	}
+	return found && (racks[rack] > 1 || len(racks) > len(sure)-1)
+}
+
 // finish releases a copy's slots and re-queues its chunk if it still needs
 // more replicas.
 func (s *Scheduler) finish(c *Copy, o Outcome) {
@@ -602,6 +862,11 @@ func (s *Scheduler) finish(c *Copy, o Outcome) {
 	now := s.clock.Now()
 	if _, ok := s.view.Want(c.Chunk); ok {
 		switch a := s.assess(c.Chunk, now); {
+		case a.missing == 0 && c.Class == Balance && o == Completed && len(a.sure) > s.cfg.Replicas && movable(a.sure, c.Source):
+			// The second half of a move: the source's copy goes.
+			if _, busy := s.trimming[c.Chunk]; !busy {
+				s.sendTrim(c.Chunk, c.Source)
+			}
 		case a.missing == 0:
 			// The copy may have landed after a holder came back.
 			if len(a.sure) > s.cfg.Replicas {
@@ -612,8 +877,13 @@ func (s *Scheduler) finish(c *Copy, o Outcome) {
 			// Back above one copy, the rest waits out the delay again.
 			s.wakeAtLeast(a.readyAt)
 		default:
-			s.enqueue(c.Chunk, a.live)
+			s.enqueue(c.Chunk, a.live, a.class)
 		}
+	}
+	// The last planned move is done: plan the next ones now, not at the next
+	// periodic scan.
+	if c.Class == Balance && !slices.ContainsFunc(s.q, func(it *item) bool { return it.class == Balance }) {
+		s.wakeAtLeast(now)
 	}
 	s.dispatch()
 }
@@ -628,6 +898,13 @@ func (s *Scheduler) Reported(node iface.NodeID, chunks []iface.ChunkID) {
 		if c := s.inflight[id]; c != nil && c.Target == node {
 			s.stats.Completed++
 			s.stats.Bytes += uint64(c.Size)
+			switch c.Class {
+			case Drain:
+				s.stats.Evacuated++
+			case Balance:
+				s.stats.Moved++
+				s.stats.MovedBytes += uint64(c.Size)
+			}
 			s.finish(c, Completed)
 			continue
 		}
@@ -669,20 +946,25 @@ func (s *Scheduler) InFlight() []Copy {
 // Busy reports whether a copy of chunk is in flight.
 func (s *Scheduler) Busy(chunk iface.ChunkID) bool { return s.inflight[chunk] != nil }
 
-// item is a queued chunk. Fewest live replicas first; then FIFO; the chunk
-// ID breaks the (impossible) remaining tie so order never depends on maps.
+// item is a queued chunk. Class first (repair, drain, balance); then fewest
+// live replicas; then FIFO; the chunk ID breaks the (impossible) remaining
+// tie so order never depends on maps.
 type item struct {
-	id   iface.ChunkID
-	live int
-	seq  uint64
-	idx  int
+	id    iface.ChunkID
+	class Class
+	live  int
+	seq   uint64
+	idx   int
+	move  *move // set for a planned balance move
 }
+
+type move struct{ from, to iface.NodeID }
 
 type queue []*item
 
 func (q queue) Len() int { return len(q) }
 func (q queue) Less(i, j int) bool {
-	return cmp.Or(cmp.Compare(q[i].live, q[j].live), cmp.Compare(q[i].seq, q[j].seq), bytes.Compare(q[i].id[:], q[j].id[:])) < 0
+	return cmp.Or(cmp.Compare(q[i].class, q[j].class), cmp.Compare(q[i].live, q[j].live), cmp.Compare(q[i].seq, q[j].seq), bytes.Compare(q[i].id[:], q[j].id[:])) < 0
 }
 func (q queue) Swap(i, j int) {
 	q[i], q[j] = q[j], q[i]

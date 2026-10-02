@@ -69,7 +69,11 @@ func (s *Server) nodeEvent(tr detector.Transition) {
 }
 
 func (s *Server) copyStarted(c repair.Copy) {
-	s.event("copy", c.Target, "copy %d started: chunk %s from %s, %d bytes", c.ID, c.Chunk.String()[:12], c.Source, c.Size)
+	tag := ""
+	if c.Class != repair.Repair {
+		tag = " (" + c.Class.String() + ")"
+	}
+	s.event("copy", c.Target, "copy %d started%s: chunk %s from %s, %d bytes", c.ID, tag, c.Chunk.String()[:12], c.Source, c.Size)
 }
 
 func (s *Server) copyDone(c repair.Copy, o repair.Outcome) {

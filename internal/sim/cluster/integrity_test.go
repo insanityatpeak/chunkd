@@ -157,7 +157,11 @@ func TestSuspectHintMakesNodeRecheck(t *testing.T) {
 // it, and nobody reads it. The next pass finds it, and RF is back within one
 // pass interval plus the repair bound.
 func TestScrubberFindsCorruption(t *testing.T) {
-	c, _, id, reps := oneChunk(t, 7)
+	c, _, id, _ := oneChunk(t, 7)
+	// Past the first scan: a late report can bring a fourth copy and a trim,
+	// so the copy to rot is chosen among the holders as they are now.
+	c.Tick(c.Config().Meta.Repair.ScanEvery + 5*time.Second)
+	reps := c.Meta().Cluster().Locations(id)
 	pass := c.node(reps[2]).Config().Scrub.Pass
 	// Wait for the first pass on that node to finish.
 	for c.node(reps[2]).Scrub().Passes == 0 {

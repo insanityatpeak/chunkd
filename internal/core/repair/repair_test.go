@@ -21,6 +21,9 @@ type world struct {
 	deadSince   map[iface.NodeID]iface.Instant
 	unconfirmed map[iface.NodeID]bool
 	used        map[iface.NodeID]int64
+	members     map[iface.NodeID]bool
+	leaving     map[iface.NodeID]bool
+	racks       map[iface.NodeID]string
 }
 
 func newWorld(nodes int) *world {
@@ -61,7 +64,7 @@ func (w *world) Chunks(fn func(iface.ChunkID, int64)) {
 func (w *world) Holders(id iface.ChunkID) []Holder {
 	var out []Holder
 	for _, n := range w.holders[id] {
-		out = append(out, Holder{Node: n, State: w.state[n], DeadSince: w.deadSince[n], Confirmed: !w.unconfirmed[n], Rack: "r1", Used: w.used[n]})
+		out = append(out, Holder{Node: n, State: w.state[n], DeadSince: w.deadSince[n], Confirmed: !w.unconfirmed[n], Rack: w.rack(n), Used: w.used[n], Leaving: w.leaving[n]})
 	}
 	return out
 }
@@ -99,6 +102,7 @@ type harness struct {
 	maxIn    int
 	maxSrc   map[iface.NodeID]int
 	maxDst   map[iface.NodeID]int
+	trims    []Trim
 }
 
 func newHarness(t *testing.T, cfg Config, w *world, copyTime time.Duration) *harness {
@@ -503,4 +507,23 @@ func TestUploadGrace(t *testing.T) {
 			}
 		})
 	}
+}
+
+// Nodes: the members listed in w.members, all on rack r1 unless w.racks says
+// otherwise. Empty unless a test opts in, so balancing stays off elsewhere.
+func (w *world) Nodes() []Member {
+	var out []Member
+	for _, n := range slices.Sorted(maps.Keys(w.members)) {
+		if !w.leaving[n] {
+			out = append(out, Member{ID: n, Rack: w.rack(n), State: w.state[n], DeadSince: w.deadSince[n], Confirmed: !w.unconfirmed[n]})
+		}
+	}
+	return out
+}
+
+func (w *world) rack(n iface.NodeID) string {
+	if r, ok := w.racks[n]; ok {
+		return r
+	}
+	return "r1"
 }
