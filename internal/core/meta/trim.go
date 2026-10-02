@@ -84,6 +84,10 @@ func (s *Server) proposeTrims() {
 				continue
 			}
 			if _, sent := s.trims.sent[t.Chunk]; !sent {
+				if !s.trimSafe(t.Chunk, t.Node) {
+					s.trims.ids[t.Chunk] = t.ID // resendTrims sends it once repair has caught up
+					continue
+				}
 				s.trimSent(t)
 				s.d.Log.Info("trim replica", "trim", t.ID, "chunk", t.Chunk.String()[:12], "node", t.Node)
 				s.sendTrimDelete(t.Chunk, t.Node, t.ID)
@@ -168,7 +172,30 @@ func (s *Server) resendTrims() {
 		if at, sent := s.trims.sent[t.Chunk]; sent && now.Sub(at) < s.cfg.Repair.CopyTimeout {
 			continue
 		}
+		if !s.trimSafe(t.Chunk, t.Node) {
+			continue
+		}
 		s.sendTrimDelete(t.Chunk, t.Node, 0)
 	}
 	s.flushTrimDone()
+}
+
+// trimSafe: deleting n's copy of id now leaves the chunk RF confirmed, alive
+// copies on other nodes that are not leaving and not being deleted. A trim
+// is authorized against the holders when it is decided, but its delete may
+// go out much later (the victim was down, or a new leader resends it); a
+// holder that died since must not be counted. Until repair has replaced
+// it, the delete waits: the pending copy does not count as a holder, so
+// repair tops the chunk up first.
+func (s *Server) trimSafe(id iface.ChunkID, n iface.NodeID) bool {
+	if ci, ok := s.state.Chunk(id); !ok || ci.Refcount == 0 {
+		return true
+	}
+	others := 0
+	for _, o := range s.cluster.Locations(id) {
+		if o != n && s.cluster.Alive(o) && s.cluster.Reported(o) && !s.state.Leaving(o) && !s.gcPending(id, o) && !s.trimPending(id, o) {
+			others++
+		}
+	}
+	return others >= s.cfg.Replicas
 }

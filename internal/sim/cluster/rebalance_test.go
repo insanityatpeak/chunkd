@@ -407,3 +407,73 @@ func TestNewLeaderTrustsLoggedTrimDone(t *testing.T) {
 		t.Fatal(err)
 	}
 }
+
+// A trim is authorized when the chunk has a copy to spare, but its delete
+// may go out much later: the victim was down, so the leader resends when it
+// returns. By then another holder may have died, its chunks waiting out the
+// repair delay. The resend must wait for repair instead of deleting a copy
+// the chunk now needs.
+func TestStaleTrimWaitsForRepair(t *testing.T) {
+	c := New(4, DefaultConfig(), io.Discard)
+	c.Tick(3 * time.Second)
+	for i := range 8 {
+		if _, _, err := c.UploadRandom(fmt.Sprintf("/s/%d", i), 1<<20); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if _, ok := c.Settle(time.Minute); !ok {
+		t.Fatal("not at RF after uploads")
+	}
+	// node-1 dies, repair restores RF elsewhere, node-1 returns with surplus
+	// copies and the leader trims them.
+	c.KillNode("node-1")
+	c.Tick(c.cfg.Meta.Detector.DeadAfter + c.cfg.Meta.Repair.Delay + time.Second)
+	if _, ok := c.Settle(2 * c.RepairBound(c.BytesOn("node-2"))); !ok {
+		t.Fatal("RF not restored after node-1 died")
+	}
+	c.RestartNode("node-1")
+	// Kill the victim the moment its first trim commits, before the delete
+	// lands, so the trim stays pending with the copy still on its disk.
+	var victim iface.NodeID
+	var ch iface.ChunkID
+	for range 60_000 {
+		c.Tick(time.Millisecond)
+		for _, p := range c.Meta().State().TrimPendingAll() {
+			if c.Intact(p.Node, p.Chunk) {
+				victim, ch = p.Node, p.Chunk
+				break
+			}
+		}
+		if victim != "" {
+			break
+		}
+	}
+	if victim == "" {
+		t.Fatal("no trim caught in flight")
+	}
+	c.KillNode(victim)
+	// Another holder dies; the leader declares it dead and waits out the
+	// repair delay before copying its chunks.
+	var other iface.NodeID
+	for _, n := range c.Meta().Cluster().Locations(ch) {
+		if n != victim {
+			other = n
+			break
+		}
+	}
+	c.Tick(2 * time.Second)
+	c.KillNode(other)
+	c.Tick(c.cfg.Meta.Detector.DeadAfter + 3*time.Second)
+	// The victim returns inside the repair delay: its pending trim is resent.
+	c.RestartNode(victim)
+	c.Tick(c.cfg.Meta.Repair.Delay + c.cfg.Meta.Repair.CopyTimeout)
+	if err := c.AssertInvariants(); err != nil {
+		t.Fatalf("victim %s, dead holder %s, chunk %s: %v", victim, other, ch.String()[:12], err)
+	}
+	if _, ok := c.Meta().State().TrimPending(ch); ok && c.Meta().Cluster().Alive(victim) {
+		c.Tick(c.cfg.Meta.Repair.CopyTimeout + 5*time.Second)
+	}
+	if _, ok := c.Meta().State().TrimPending(ch); ok {
+		t.Fatalf("the trim of %s on %s never completed after repair", ch.String()[:12], victim)
+	}
+}
