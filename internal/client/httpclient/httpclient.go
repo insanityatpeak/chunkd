@@ -182,6 +182,18 @@ func (c *Client) Undelete(ctx context.Context, path string, version uint64) (uin
 	return out.Version, err
 }
 
+// NodeAdmin drains (state "draining"), undrains ("active") or decommissions
+// a node through the gateway.
+func (c *Client) NodeAdmin(ctx context.Context, node, state string) (client.NodeAdminResult, error) {
+	action, ok := map[string]string{"draining": "drain", "active": "undrain", "decommissioned": "decommission"}[state]
+	if !ok {
+		return client.NodeAdminResult{}, iface.Errorf(iface.CodeInvalid, "unknown node state %q: want draining, active or decommissioned", state)
+	}
+	var out client.NodeAdminResult
+	_, err := c.do(ctx, http.MethodPost, c.url("/nodes/"+url.PathEscape(node)+"/"+action, nil), nil, 0, &out)
+	return out, err
+}
+
 // Cluster returns the cluster view with events after eventsAfter.
 func (c *Client) Cluster(ctx context.Context, eventsAfter uint64) (client.Cluster, error) {
 	var out client.Cluster

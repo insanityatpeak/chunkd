@@ -43,11 +43,13 @@ type Manifest struct {
 
 // NodeInfo is one storage node in the cluster view.
 type NodeInfo struct {
-	ID        string `json:"id"`
-	Rack      string `json:"rack"`
-	Alive     bool   `json:"alive"`
-	State     string `json:"state"` // alive, suspect or dead
-	Draining  bool   `json:"draining"`
+	ID       string `json:"id"`
+	Rack     string `json:"rack"`
+	Alive    bool   `json:"alive"`
+	State    string `json:"state"` // alive, suspect or dead
+	Draining bool   `json:"draining"`
+	// Admin is the operator-set state: active, draining or decommissioned.
+	Admin     string `json:"admin"`
 	UsedBytes int64  `json:"usedBytes"`
 	Chunks    int64  `json:"chunks"`
 	// HeartbeatAgeMs is the time since the node's last heartbeat.
@@ -206,6 +208,9 @@ type API interface {
 	GetVersion(ctx context.Context, path string, version uint64, w io.Writer) (Manifest, error)
 	// Cluster returns the cluster view with timeline events after eventsAfter.
 	Cluster(ctx context.Context, eventsAfter uint64) (Cluster, error)
+	// NodeAdmin sets a storage node's admin state: "draining", "active"
+	// (undrain) or "decommissioned", refused while unsafe (ADR-0021).
+	NodeAdmin(ctx context.Context, node, state string) (NodeAdminResult, error)
 }
 
 // ManifestWriter is an io.Writer that wants the manifest before the first
@@ -221,4 +226,12 @@ type MetaPeerInfo struct {
 	ID         string `json:"id"`
 	Match      uint64 `json:"match"`
 	HeardAgoMs int64  `json:"heardAgoMs"`
+}
+
+// NodeAdminResult is the outcome of a drain, undrain or decommission.
+type NodeAdminResult struct {
+	Node  string `json:"node"`
+	Admin string `json:"admin"`
+	// Warning says what the change gives up, e.g. rack spread.
+	Warning string `json:"warning,omitempty"`
 }

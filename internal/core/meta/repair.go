@@ -39,9 +39,15 @@ func (v repairView) Holders(id iface.ChunkID) []repair.Holder {
 		if v.s.gcPending(id, n) || v.s.trimPending(id, n) {
 			continue
 		}
+		// A decommissioned node may be switched off at any moment: its copy is
+		// neither counted nor used as a source.
+		admin := v.s.state.NodeAdmin(n)
+		if admin == chunkdv1.NodeAdmin_NODE_ADMIN_DECOMMISSIONED {
+			continue
+		}
 		ns, _ := v.s.cluster.Node(n)
 		out = append(out, repair.Holder{Node: n, State: ns.State, DeadSince: ns.DeadSince,
-			Confirmed: v.s.cluster.Reported(n), Rack: ns.Rack, Used: ns.Used})
+			Confirmed: v.s.cluster.Reported(n), Rack: ns.Rack, Used: ns.Used, Leaving: admin == chunkdv1.NodeAdmin_NODE_ADMIN_DRAINING})
 	}
 	return out
 }
@@ -52,7 +58,7 @@ func (v repairView) Holders(id iface.ChunkID) []repair.Holder {
 // racks. HDFS's BlockPlacementPolicy chooses repair targets with the
 // existing replicas' racks as input.
 func (v repairView) Target(size int64, exclude []iface.NodeID) (iface.NodeID, bool) {
-	nodes := slices.DeleteFunc(v.s.cluster.PlacementView(), func(n placement.Node) bool { return slices.Contains(exclude, n.ID) })
+	nodes := slices.DeleteFunc(v.s.cluster.PlacementView(v.s.state.Leaving), func(n placement.Node) bool { return slices.Contains(exclude, n.ID) })
 	pl, err := placement.Place(nodes, []int64{size}, 1, 1, v.s.d.Rand)
 	if err != nil {
 		return "", false
@@ -126,7 +132,7 @@ func (s *Server) Repair() *repair.Scheduler { return s.repair }
 func (v repairView) Nodes() []repair.Member {
 	var out []repair.Member
 	for _, n := range v.s.cluster.Nodes() {
-		if !n.Draining {
+		if !v.s.state.Leaving(n.ID) {
 			out = append(out, repair.Member{ID: n.ID, Rack: n.Rack, State: n.State, DeadSince: n.DeadSince, Confirmed: v.s.cluster.Reported(n.ID)})
 		}
 	}

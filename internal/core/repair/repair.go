@@ -190,6 +190,9 @@ type Stats struct {
 	Cancelled  uint64 `json:"cancelled"`
 	Bytes      uint64 `json:"bytes"`
 	Trimmed    uint64 `json:"trimmed"`
+	// Repairs counts dispatched repair-class copies: those caused by a chunk
+	// below RF, not by drain or balance.
+	Repairs uint64 `json:"repairs"`
 	// Evacuated and Moved count completed drain and balance copies; MovedBytes
 	// is the balance share of Bytes.
 	Evacuated  uint64 `json:"evacuated"`
@@ -590,6 +593,9 @@ func (s *Scheduler) launch(id iface.ChunkID, source, target iface.NodeID, size i
 	s.src[source]++
 	s.dst[target]++
 	s.stats.Dispatched++
+	if class == Repair {
+		s.stats.Repairs++
+	}
 	s.stats.PeakInFlight = max(s.stats.PeakInFlight, len(s.inflight))
 	s.stats.PeakPerSource = max(s.stats.PeakPerSource, s.src[source])
 	s.stats.PeakPerTarget = max(s.stats.PeakPerTarget, s.dst[target])

@@ -13,12 +13,11 @@ import (
 // NodeState is what the metadata server knows about a storage node. None of
 // it is durable.
 type NodeState struct {
-	ID       iface.NodeID
-	Rack     string
-	Addr     string
-	Used     int64
-	Chunks   int64
-	Draining bool
+	ID     iface.NodeID
+	Rack   string
+	Addr   string
+	Used   int64
+	Chunks int64
 	// Integrity counters from the node's heartbeats.
 	Corrupt               uint64
 	ScrubDone, ScrubTotal int64
@@ -94,7 +93,7 @@ func (c *Cluster) Heartbeat(hb NodeState, b detector.Beat, now iface.Instant) (t
 		n = &NodeState{ID: hb.ID}
 		c.nodes[hb.ID] = n
 	}
-	n.Rack, n.Addr, n.Used, n.Chunks, n.Draining = hb.Rack, hb.Addr, hb.Used, hb.Chunks, hb.Draining
+	n.Rack, n.Addr, n.Used, n.Chunks = hb.Rack, hb.Addr, hb.Used, hb.Chunks
 	n.Corrupt, n.ScrubDone, n.ScrubTotal, n.ScrubPasses = hb.Corrupt, hb.ScrubDone, hb.ScrubTotal, hb.ScrubPasses
 	n.Incarnation = b.Incarnation
 	tr, changed = c.det.Observe(hb.ID, b, now)
@@ -273,6 +272,11 @@ func (c *Cluster) Fence(id iface.NodeID) (inc, seq uint64, ok bool) {
 	return n.ledger.inc, n.ledger.seen, true
 }
 
+// ChunksOn returns the chunks reported on node id, sorted.
+func (c *Cluster) ChunksOn(id iface.NodeID) []iface.ChunkID {
+	return slices.SortedFunc(maps.Keys(c.byNode[id]), func(a, b iface.ChunkID) int { return slices.Compare(a[:], b[:]) })
+}
+
 // Located returns every chunk with at least one reported copy, sorted.
 func (c *Cluster) Located() []iface.ChunkID {
 	return slices.SortedFunc(maps.Keys(c.byChunk), func(a, b iface.ChunkID) int { return slices.Compare(a[:], b[:]) })
@@ -297,12 +301,13 @@ func (c *Cluster) Nodes() []NodeState {
 	return out
 }
 
-// PlacementView converts the node table for placement.Place.
-// Suspect nodes are excluded: a node that may be dying takes no new data.
-func (c *Cluster) PlacementView() []placement.Node {
+// PlacementView converts the node table for placement.Place. Suspect nodes
+// are excluded: a node that may be dying takes no new data; so are nodes
+// the operator is retiring (leaving, from the logged admin state).
+func (c *Cluster) PlacementView(leaving func(iface.NodeID) bool) []placement.Node {
 	var out []placement.Node
 	for _, n := range c.Nodes() {
-		out = append(out, placement.Node{ID: n.ID, Rack: n.Rack, Used: n.Used, Alive: c.Alive(n.ID), Draining: n.Draining})
+		out = append(out, placement.Node{ID: n.ID, Rack: n.Rack, Used: n.Used, Alive: c.Alive(n.ID), Draining: leaving(n.ID)})
 	}
 	return out
 }

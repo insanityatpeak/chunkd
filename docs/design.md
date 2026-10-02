@@ -70,7 +70,7 @@ Client               Meta                  node-A      node-B
 
 ## Heartbeats and block reports
 
-- Every node heartbeats each second: rack, address, bytes and chunks stored, draining flag.
+- Every node heartbeats each second: rack, address, bytes and chunks stored. Whether a node is draining or decommissioned is logged metadata state set by the operator (ADR-0021), not part of the heartbeat.
 - The heartbeat ack asks for a full block report when the metadata server has none for the node (first contact, or after a metadata restart).
 - Nodes send an incremental report after storing each chunk, and a full report every 30 s, which repairs any lost incremental report.
 - Heartbeats carry `(incarnation, seq)`; the incarnation changes on every process start.

@@ -123,6 +123,25 @@ message TrimDoneOp {
   repeated TrimTarget targets = 1;
 }
 
+// NodeAdmin is a storage node's operator-set state (ADR-0021).
+enum NodeAdmin {
+  // Takes new data and counts toward RF. Any node not in the table.
+  NODE_ADMIN_ACTIVE = 0;
+  // Takes no new data; its copies serve reads but do not count toward RF,
+  // so its chunks are copied off.
+  NODE_ADMIN_DRAINING = 1;
+  // Retired: no data placed, no copy counted or read. Safe to switch off.
+  NODE_ADMIN_DECOMMISSIONED = 2;
+}
+
+// NodeAdminOp sets a node's admin state. Validated in log order:
+// decommissioned only from draining; a repeat of the current state is a
+// no-op, so a retried command applies once.
+message NodeAdminOp {
+  string node = 1;
+  NodeAdmin state = 2;
+}
+
 message Op {
   oneof op {
     BeginUploadOp begin = 1;
@@ -136,6 +155,7 @@ message Op {
     GCDoneOp gc_done = 9;
     TrimIntentOp trim_intent = 10;
     TrimDoneOp trim_done = 11;
+    NodeAdminOp node_admin = 12;
   }
 }
 
@@ -193,6 +213,8 @@ message MetaSnapshot {
   repeated GCTarget gc_pending = 6;
   // Trims authorized and not yet answered, at most one per chunk.
   repeated TrimTarget trim_pending = 7;
+  // Nodes not active, sorted by node.
+  repeated NodeAdminOp node_admin = 8;
 }
 
 // ---- Client RPCs to the metadata server.
@@ -352,6 +374,21 @@ message NodeInfo {
   int64 scrub_done = 11;
   int64 scrub_total = 12;
   uint64 scrub_passes = 13;
+  // Operator-set state: "active", "draining" or "decommissioned".
+  string admin = 14;
+}
+
+// NodeAdminRequest drains, undrains (to active) or decommissions a node.
+message NodeAdminRequest {
+  string node = 1;
+  NodeAdmin state = 2;
+}
+
+message NodeAdminResponse {
+  NodeAdmin state = 1;
+  // Set when the change is allowed but weakens something, e.g. the last
+  // node of a rack is draining.
+  string warning = 2;
 }
 
 // SuspectRequest: a client received bytes for chunk_id from node that did

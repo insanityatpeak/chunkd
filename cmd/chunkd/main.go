@@ -6,6 +6,7 @@
 //	chunkd stat <path>                      version, hash and chunk placement
 //	chunkd rm <path>                        delete
 //	chunkd cluster [status]                 nodes, detector state and replication health
+//	chunkd node drain|undrain|decommission <id>   retire a storage node (decommission -wait 10m polls until safe)
 //	chunkd ping <grpc-addr>                 ping a process
 //	chunkd probe <http-url>                 exit 0 if the URL returns 200 (health checks)
 //	chunkd debug corrupt                    flip a byte in -n chunk files under -root (fault injection;
@@ -58,8 +59,9 @@ func main() {
 	root := fs.String("root", envOr("CHUNKD_DATA", "data/node"), "debug corrupt: the node's chunk directory")
 	rotN := fs.Int("n", 1, "debug corrupt: number of chunks")
 	pick := fs.Uint64("pick", 0, "debug corrupt: first chunk, as an index into the chunks in ID order")
+	wait := fs.Duration("wait", 0, "node decommission: keep retrying this long while the node's chunks are still short elsewhere")
 	fs.Usage = func() {
-		fmt.Fprintln(os.Stderr, "usage: chunkd [flags] put|get|log|ls|stat|rm|undelete|cluster|ping|probe|debug corrupt ...")
+		fmt.Fprintln(os.Stderr, "usage: chunkd [flags] put|get|log|ls|stat|rm|undelete|cluster|node|ping|probe|debug corrupt ...")
 		fs.PrintDefaults()
 	}
 	// Flags may come before or after the command.
@@ -139,6 +141,8 @@ func main() {
 		if c, err = api.Cluster(ctx, 0); err == nil {
 			out.cluster(c)
 		}
+	case cmd == "node" && len(args) == 3:
+		err = nodeAdmin(ctx, api, args[1], args[2], *wait, out)
 	case cmd == "ping" && len(args) == 2:
 		err = ping(args[1])
 	case cmd == "probe" && len(args) == 2:
@@ -282,8 +286,8 @@ func (p printer) cluster(c client.Cluster) {
 	fmt.Fprintln(w, "NODE\tRACK\tSTATE\tLAST BEAT\tCHUNKS\tUSED")
 	for _, n := range c.Nodes {
 		state := n.State
-		if n.Draining {
-			state += ",draining"
+		if n.Admin != "" && n.Admin != "active" {
+			state += "," + n.Admin
 		}
 		age := (time.Duration(n.HeartbeatAgeMs) * time.Millisecond).Round(100 * time.Millisecond)
 		fmt.Fprintf(w, "%s\t%s\t%s\t%s ago\t%d\t%s\n", n.ID, n.Rack, state, age, n.Chunks, human(n.UsedBytes))
@@ -344,4 +348,34 @@ func probe(url string) error {
 		return errors.New(url + ": " + resp.Status)
 	}
 	return nil
+}
+
+// nodeAdmin drains, undrains or decommissions a storage node. Decommission is
+// refused while any of the node's chunks lacks RF copies elsewhere; with
+// wait it retries until allowed or the time is up.
+func nodeAdmin(ctx context.Context, api client.API, action, node string, wait time.Duration, out printer) error {
+	state, ok := map[string]string{"drain": "draining", "undrain": "active", "decommission": "decommissioned"}[action]
+	if !ok {
+		return fmt.Errorf("node %s: want drain, undrain or decommission", action)
+	}
+	deadline := time.Now().Add(wait)
+	for {
+		res, err := api.NodeAdmin(ctx, node, state)
+		if err == nil {
+			if out.json {
+				out.print(res)
+				return nil
+			}
+			fmt.Printf("%s is %s\n", node, res.Admin)
+			if res.Warning != "" {
+				fmt.Printf("warning: %s\n", res.Warning)
+			}
+			return nil
+		}
+		if iface.CodeOf(err) != iface.CodeConflict || state != "decommissioned" || time.Now().After(deadline) {
+			return err
+		}
+		fmt.Fprintf(os.Stderr, "waiting: %v\n", err)
+		time.Sleep(2 * time.Second)
+	}
 }

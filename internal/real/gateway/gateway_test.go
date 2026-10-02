@@ -60,6 +60,11 @@ func (l *locked) Cluster(ctx context.Context, after uint64) (client.Cluster, err
 	defer l.mu.Unlock()
 	return l.api.Cluster(ctx, after)
 }
+func (l *locked) NodeAdmin(ctx context.Context, node, state string) (client.NodeAdminResult, error) {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	return l.api.NodeAdmin(ctx, node, state)
+}
 func (l *locked) Undelete(ctx context.Context, p string, v uint64) (uint64, error) {
 	l.mu.Lock()
 	defer l.mu.Unlock()
@@ -259,5 +264,47 @@ func TestGatewayServesUI(t *testing.T) {
 	resp.Body.Close()
 	if resp.StatusCode != http.StatusNotFound || !strings.Contains(string(b), `"code"`) {
 		t.Errorf("POST /undelete/none = %d %q, want the API's not_found", resp.StatusCode, b)
+	}
+}
+
+// Drain, decommission and undrain go through the gateway with the status
+// codes the CLI relies on: 409 while decommission is unsafe, 404 for a node
+// that never reported, 400 for an unknown action.
+func TestGatewayNodeAdmin(t *testing.T) {
+	srv, _ := setup(t)
+	api := httpclient.New(srv.URL)
+	ctx := context.Background()
+	if _, err := api.Put(ctx, "/a", bytes.NewReader(payload(200<<10)), 200<<10, client.PutOptions{}); err != nil {
+		t.Fatal(err)
+	}
+	res, err := api.NodeAdmin(ctx, "node-1", "draining")
+	if err != nil || res.Admin != "draining" {
+		t.Fatalf("drain: %+v, %v", res, err)
+	}
+	if _, err := api.NodeAdmin(ctx, "node-1", "decommissioned"); iface.CodeOf(err) != iface.CodeConflict {
+		t.Fatalf("decommission before evacuation: %v, want conflict", err)
+	}
+	view, err := api.Cluster(ctx, 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, n := range view.Nodes {
+		if want := map[bool]string{true: "draining", false: "active"}[n.ID == "node-1"]; n.Admin != want || n.Draining != (n.ID == "node-1") {
+			t.Fatalf("%s: admin %q draining %v", n.ID, n.Admin, n.Draining)
+		}
+	}
+	if res, err := api.NodeAdmin(ctx, "node-1", "active"); err != nil || res.Admin != "active" {
+		t.Fatalf("undrain: %+v, %v", res, err)
+	}
+	if _, err := api.NodeAdmin(ctx, "node-9", "draining"); iface.CodeOf(err) != iface.CodeNotFound {
+		t.Fatalf("unknown node: %v, want not found", err)
+	}
+	resp, err := http.Post(srv.URL+"/nodes/node-1/explode", "", nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	resp.Body.Close()
+	if resp.StatusCode != http.StatusBadRequest {
+		t.Fatalf("unknown action: %d, want 400", resp.StatusCode)
 	}
 }

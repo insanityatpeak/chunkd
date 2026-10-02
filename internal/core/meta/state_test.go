@@ -759,3 +759,54 @@ func TestTrimIntentsOnePerChunk(t *testing.T) {
 		t.Fatalf("intent with no targets: %v, want invalid", err)
 	}
 }
+
+func adminOp(n iface.NodeID, a chunkdv1.NodeAdmin) *chunkdv1.Op {
+	return &chunkdv1.Op{Op: &chunkdv1.Op_NodeAdmin{NodeAdmin: &chunkdv1.NodeAdminOp{Node: string(n), State: a}}}
+}
+
+// Admin transitions are checked in log order: decommission only from
+// draining; a repeat is a no-op; undrain returns any state to active.
+func TestNodeAdminTransitions(t *testing.T) {
+	const (
+		active = chunkdv1.NodeAdmin_NODE_ADMIN_ACTIVE
+		drain  = chunkdv1.NodeAdmin_NODE_ADMIN_DRAINING
+		decom  = chunkdv1.NodeAdmin_NODE_ADMIN_DECOMMISSIONED
+	)
+	s := New()
+	steps := []struct {
+		to   chunkdv1.NodeAdmin
+		code iface.Code
+		want chunkdv1.NodeAdmin
+	}{
+		{decom, iface.CodeConflict, active}, // not drained first
+		{drain, iface.CodeUnknown, drain},
+		{drain, iface.CodeUnknown, drain}, // retry
+		{decom, iface.CodeUnknown, decom},
+		{drain, iface.CodeConflict, decom}, // back to service is undrain
+		{active, iface.CodeUnknown, active},
+		{drain, iface.CodeUnknown, drain},
+		{active, iface.CodeUnknown, active}, // abort a drain
+	}
+	for i, st := range steps {
+		_, err := s.Apply(adminOp("n1", st.to))
+		if iface.CodeOf(err) != st.code && !(st.code == iface.CodeUnknown && err == nil) {
+			t.Fatalf("step %d (%s): err %v, want code %v", i, AdminName(st.to), err, st.code)
+		}
+		if got := s.NodeAdmin("n1"); got != st.want {
+			t.Fatalf("step %d: state %s, want %s", i, AdminName(got), AdminName(st.want))
+		}
+	}
+	if s.Leaving("n1") || s.Leaving("n9") {
+		t.Fatal("active or unknown node reported leaving")
+	}
+	if _, err := s.Apply(adminOp("n2", drain)); err != nil {
+		t.Fatal(err)
+	}
+	r, err := Restore(s.Snapshot())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !bytes.Equal(r.Snapshot(), s.Snapshot()) || !r.Leaving("n2") || r.Leaving("n1") {
+		t.Fatal("restore lost the admin table")
+	}
+}

@@ -222,17 +222,18 @@ func (s *Server) Raft() consensus.Status { return s.raft.Status() }
 func (s *Server) Start() {
 	s.d.Net.Listen(s.cfg.ID, s.handle)
 	for kind, h := range map[string]iface.RPCHandler{
-		wire.KindBegin:    s.begin,
-		wire.KindClaim:    s.claim,
-		wire.KindCommit:   s.commit,
-		wire.KindAbort:    s.abort,
-		wire.KindDelete:   s.delete,
-		wire.KindUndelete: s.undelete,
-		wire.KindStat:     s.stat,
-		wire.KindList:     s.list,
-		wire.KindLog:      s.log,
-		wire.KindCluster:  s.clusterInfo,
-		wire.KindSuspect:  s.suspect,
+		wire.KindBegin:     s.begin,
+		wire.KindClaim:     s.claim,
+		wire.KindCommit:    s.commit,
+		wire.KindAbort:     s.abort,
+		wire.KindDelete:    s.delete,
+		wire.KindUndelete:  s.undelete,
+		wire.KindStat:      s.stat,
+		wire.KindList:      s.list,
+		wire.KindLog:       s.log,
+		wire.KindCluster:   s.clusterInfo,
+		wire.KindSuspect:   s.suspect,
+		wire.KindNodeAdmin: s.nodeAdmin,
 	} {
 		s.d.Net.Serve(s.cfg.ID, kind, h, iface.ServeOpts{})
 	}
@@ -391,7 +392,7 @@ func (s *Server) handle(m iface.Message) {
 		}
 		id := iface.NodeID(hb.GetNode())
 		tr, changed, need := s.cluster.Heartbeat(NodeState{ID: id, Rack: hb.GetRack(), Addr: hb.GetAddr(), Used: hb.GetUsedBytes(),
-			Chunks: hb.GetChunkCount(), Draining: hb.GetDraining(), Corrupt: hb.GetCorrupt(), ScrubDone: hb.GetScrubDone(),
+			Chunks: hb.GetChunkCount(), Corrupt: hb.GetCorrupt(), ScrubDone: hb.GetScrubDone(),
 			ScrubTotal: hb.GetScrubTotal(), ScrubPasses: hb.GetScrubPasses()}, detector.Beat{Incarnation: hb.GetIncarnation(), Seq: hb.GetSeq()}, s.d.Clock.Now())
 		if changed {
 			s.transition(tr)
@@ -503,7 +504,7 @@ func (s *Server) begin(m iface.Message, respond iface.Responder) {
 	for i := range sizes {
 		sizes[i] = chunk.SizeOf(req.GetSize(), s.cfg.ChunkSize, i)
 	}
-	pl, err := placement.Place(s.cluster.PlacementView(), sizes, s.cfg.Replicas, s.cfg.MinReplicas, s.d.Rand)
+	pl, err := placement.Place(s.cluster.PlacementView(s.state.Leaving), sizes, s.cfg.Replicas, s.cfg.MinReplicas, s.d.Rand)
 	if err != nil {
 		respond(nil, iface.Errorf(iface.CodeUnavailable, "%v (need %d)", err, s.cfg.MinReplicas))
 		return
@@ -657,7 +658,10 @@ func (s *Server) commit(m iface.Message, respond iface.Responder) {
 // A copy with a GC delete in flight does not count either: it may be gone
 // by the time the version is read.
 func (s *Server) liveLocations(id iface.ChunkID) []iface.NodeID {
-	return slices.DeleteFunc(s.cluster.Locations(id), func(n iface.NodeID) bool { return !s.cluster.Alive(n) || s.gcPending(id, n) || s.trimPending(id, n) })
+	return slices.DeleteFunc(s.cluster.Locations(id), func(n iface.NodeID) bool {
+		return !s.cluster.Alive(n) || s.gcPending(id, n) || s.trimPending(id, n) ||
+			s.state.NodeAdmin(n) == chunkdv1.NodeAdmin_NODE_ADMIN_DECOMMISSIONED
+	})
 }
 
 // readLocations are replicas a reader may try: alive first, then suspect.
@@ -852,7 +856,7 @@ func (s *Server) ClusterView(eventsAfter uint64) *chunkdv1.ClusterResponse {
 	}
 	for _, n := range s.cluster.Nodes() {
 		resp.Nodes = append(resp.Nodes, &chunkdv1.NodeInfo{Id: string(n.ID), Rack: n.Rack, Addr: n.Addr, UsedBytes: n.Used,
-			ChunkCount: n.Chunks, Alive: s.cluster.Alive(n.ID), Draining: n.Draining, State: n.State.String(),
+			ChunkCount: n.Chunks, Alive: s.cluster.Alive(n.ID), Draining: s.state.NodeAdmin(n.ID) == chunkdv1.NodeAdmin_NODE_ADMIN_DRAINING, State: n.State.String(), Admin: AdminName(s.state.NodeAdmin(n.ID)),
 			HeartbeatAgeMs: int64(now.Sub(n.LastSeen) / time.Millisecond), Corrupt: n.Corrupt, ScrubDone: n.ScrubDone,
 			ScrubTotal: n.ScrubTotal, ScrubPasses: n.ScrubPasses})
 	}

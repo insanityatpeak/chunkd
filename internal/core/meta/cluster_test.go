@@ -72,7 +72,7 @@ func TestClusterLiveness(t *testing.T) {
 	if c.Alive("n1") || !c.Readable("n1") {
 		t.Fatal("suspect node should be readable but not alive")
 	}
-	if v := c.PlacementView(); len(v) != 1 || v[0].Alive {
+	if v := c.PlacementView(func(iface.NodeID) bool { return false }); len(v) != 1 || v[0].Alive {
 		t.Fatalf("suspect node eligible for placement: %+v", v)
 	}
 	if got := c.Locations(a); len(got) != 1 {

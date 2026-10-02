@@ -541,7 +541,7 @@ func ClusterFromProto(resp *chunkdv1.ClusterResponse) Cluster {
 		out.Deleted = append(out.Deleted, DeletedFile{Path: d.GetPath(), Version: d.GetVersion(), Size: d.GetSize(), ExpiresEpoch: d.GetExpiresEpoch()})
 	}
 	for _, n := range resp.GetNodes() {
-		out.Nodes = append(out.Nodes, NodeInfo{ID: n.GetId(), Rack: n.GetRack(), Alive: n.GetAlive(), State: n.GetState(), Draining: n.GetDraining(),
+		out.Nodes = append(out.Nodes, NodeInfo{ID: n.GetId(), Rack: n.GetRack(), Alive: n.GetAlive(), State: n.GetState(), Draining: n.GetDraining(), Admin: n.GetAdmin(),
 			UsedBytes: n.GetUsedBytes(), Chunks: n.GetChunkCount(), HeartbeatAgeMs: n.GetHeartbeatAgeMs(),
 			Corrupt: n.GetCorrupt(), ScrubDone: n.GetScrubDone(), ScrubTotal: n.GetScrubTotal(), ScrubPasses: n.GetScrubPasses()})
 	}
@@ -563,4 +563,25 @@ func ClusterFromProto(resp *chunkdv1.ClusterResponse) Cluster {
 		out.Events = append(out.Events, Event{Seq: e.GetSeq(), AtMs: e.GetAtMs(), Kind: e.GetKind(), Node: e.GetNode(), Text: e.GetText()})
 	}
 	return out
+}
+
+// adminStates maps the API's state names to their wire values.
+var adminStates = map[string]chunkdv1.NodeAdmin{
+	"active":         chunkdv1.NodeAdmin_NODE_ADMIN_ACTIVE,
+	"draining":       chunkdv1.NodeAdmin_NODE_ADMIN_DRAINING,
+	"decommissioned": chunkdv1.NodeAdmin_NODE_ADMIN_DECOMMISSIONED,
+}
+
+// NodeAdmin asks the metadata leader to change a node's admin state. A
+// repeat of the state the node is in succeeds and changes nothing.
+func (c *Direct) NodeAdmin(ctx context.Context, node, state string) (NodeAdminResult, error) {
+	to, ok := adminStates[state]
+	if !ok {
+		return NodeAdminResult{}, iface.Errorf(iface.CodeInvalid, "unknown node state %q: want draining, active or decommissioned", state)
+	}
+	var resp chunkdv1.NodeAdminResponse
+	if err := c.meta(ctx, wire.KindNodeAdmin, &chunkdv1.NodeAdminRequest{Node: node, State: to}, &resp); err != nil {
+		return NodeAdminResult{}, err
+	}
+	return NodeAdminResult{Node: node, Admin: state, Warning: resp.GetWarning()}, nil
 }

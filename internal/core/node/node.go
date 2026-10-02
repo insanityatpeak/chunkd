@@ -41,7 +41,6 @@ type Config struct {
 	Addr       string // advertised to clients for chunk transfers; empty in sim
 	Heartbeat  time.Duration
 	FullReport time.Duration
-	Draining   bool
 	Scrub      scrub.Config
 }
 
@@ -474,7 +473,7 @@ func (n *Node) heartbeat() {
 	n.stats.Heartbeats++
 	sc := n.scrub.Stats()
 	hb := &chunkdv1.Heartbeat{Node: string(n.cfg.ID), Rack: n.cfg.Rack, Addr: n.cfg.Addr,
-		UsedBytes: u.Bytes, ChunkCount: u.Chunks, Draining: n.cfg.Draining, Seq: n.stats.Heartbeats, Incarnation: n.incarnation,
+		UsedBytes: u.Bytes, ChunkCount: u.Chunks, Seq: n.stats.Heartbeats, Incarnation: n.incarnation,
 		Corrupt: n.corrupt.Load(), ScrubDone: int64(sc.Done), ScrubTotal: int64(sc.Total), ScrubPasses: sc.Passes}
 	n.toMetas(wire.KindHeartbeat, wire.Marshal(hb))
 	n.d.Clock.AfterFunc(n.cfg.Heartbeat, n.heartbeat)

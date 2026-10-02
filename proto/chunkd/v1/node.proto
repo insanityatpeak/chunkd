@@ -12,7 +12,8 @@ message Heartbeat {
   string addr = 3;
   int64 used_bytes = 4;
   int64 chunk_count = 5;
-  bool draining = 6;
+  reserved 6;
+  reserved "draining";
   uint64 seq = 7;
   // Random per process start; seq restarts at 1 with each incarnation.
   uint64 incarnation = 8;

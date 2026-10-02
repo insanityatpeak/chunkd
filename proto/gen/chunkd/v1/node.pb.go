@@ -30,7 +30,6 @@ type Heartbeat struct {
 	Addr       string `protobuf:"bytes,3,opt,name=addr,proto3" json:"addr,omitempty"`
 	UsedBytes  int64  `protobuf:"varint,4,opt,name=used_bytes,json=usedBytes,proto3" json:"used_bytes,omitempty"`
 	ChunkCount int64  `protobuf:"varint,5,opt,name=chunk_count,json=chunkCount,proto3" json:"chunk_count,omitempty"`
-	Draining   bool   `protobuf:"varint,6,opt,name=draining,proto3" json:"draining,omitempty"`
 	Seq        uint64 `protobuf:"varint,7,opt,name=seq,proto3" json:"seq,omitempty"`
 	// Random per process start; seq restarts at 1 with each incarnation.
 	Incarnation uint64 `protobuf:"varint,8,opt,name=incarnation,proto3" json:"incarnation,omitempty"`
@@ -107,13 +106,6 @@ func (x *Heartbeat) GetChunkCount() int64 {
 		return x.ChunkCount
 	}
 	return 0
-}
-
-func (x *Heartbeat) GetDraining() bool {
-	if x != nil {
-		return x.Draining
-	}
-	return false
 }
 
 func (x *Heartbeat) GetSeq() uint64 {
@@ -818,7 +810,7 @@ var File_chunkd_v1_node_proto protoreflect.FileDescriptor
 
 const file_chunkd_v1_node_proto_rawDesc = "" +
 	"\n" +
-	"\x14chunkd/v1/node.proto\x12\tchunkd.v1\"\xd4\x02\n" +
+	"\x14chunkd/v1/node.proto\x12\tchunkd.v1\"\xc8\x02\n" +
 	"\tHeartbeat\x12\x12\n" +
 	"\x04node\x18\x01 \x01(\tR\x04node\x12\x12\n" +
 	"\x04rack\x18\x02 \x01(\tR\x04rack\x12\x12\n" +
@@ -826,8 +818,7 @@ const file_chunkd_v1_node_proto_rawDesc = "" +
 	"\n" +
 	"used_bytes\x18\x04 \x01(\x03R\tusedBytes\x12\x1f\n" +
 	"\vchunk_count\x18\x05 \x01(\x03R\n" +
-	"chunkCount\x12\x1a\n" +
-	"\bdraining\x18\x06 \x01(\bR\bdraining\x12\x10\n" +
+	"chunkCount\x12\x10\n" +
 	"\x03seq\x18\a \x01(\x04R\x03seq\x12 \n" +
 	"\vincarnation\x18\b \x01(\x04R\vincarnation\x12\x18\n" +
 	"\acorrupt\x18\t \x01(\x04R\acorrupt\x12\x1d\n" +
@@ -836,7 +827,7 @@ const file_chunkd_v1_node_proto_rawDesc = "" +
 	" \x01(\x03R\tscrubDone\x12\x1f\n" +
 	"\vscrub_total\x18\v \x01(\x03R\n" +
 	"scrubTotal\x12!\n" +
-	"\fscrub_passes\x18\f \x01(\x04R\vscrubPasses\"v\n" +
+	"\fscrub_passes\x18\f \x01(\x04R\vscrubPassesJ\x04\b\x06\x10\aR\bdraining\"v\n" +
 	"\fHeartbeatAck\x12\x10\n" +
 	"\x03seq\x18\x01 \x01(\x04R\x03seq\x12(\n" +
 	"\x10need_full_report\x18\x02 \x01(\bR\x0eneedFullReport\x12\x12\n" +

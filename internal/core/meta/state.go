@@ -108,6 +108,9 @@ type State struct {
 	// deleting and no TrimDone has cleared: at most one per chunk, so leaders
 	// never trim two copies of a chunk on views that missed each other.
 	trimPending map[iface.ChunkID]iface.NodeID
+	// nodeAdmin is each storage node's operator-set state; absent means active
+	// (ADR-0021). Logged, so a new leader re-derives every drain from it.
+	nodeAdmin map[iface.NodeID]chunkdv1.NodeAdmin
 }
 
 // Committed locates the version an upload produced.
@@ -133,7 +136,7 @@ type Result struct {
 // New returns empty state.
 func New() *State {
 	return &State{files: map[string]*File{}, chunks: map[iface.ChunkID]*ChunkInfo{}, uploads: map[uint64]*Upload{}, committed: map[uint64]Committed{}, claimed: map[iface.ChunkID]int{},
-		requests: map[string]uint64{}, gcPending: map[iface.ChunkID]map[iface.NodeID]GCTarget{}, trimPending: map[iface.ChunkID]iface.NodeID{}}
+		requests: map[string]uint64{}, gcPending: map[iface.ChunkID]map[iface.NodeID]GCTarget{}, trimPending: map[iface.ChunkID]iface.NodeID{}, nodeAdmin: map[iface.NodeID]chunkdv1.NodeAdmin{}}
 }
 
 // ValidPath reports whether p is an absolute, clean path to a file.
@@ -266,6 +269,21 @@ func (s *State) Validate(op *chunkdv1.Op) error {
 		return validTrims(o.TrimIntent.GetTargets())
 	case *chunkdv1.Op_TrimDone:
 		return validTrims(o.TrimDone.GetTargets())
+	case *chunkdv1.Op_NodeAdmin:
+		a := o.NodeAdmin
+		if a.GetNode() == "" {
+			return iface.Errorf(iface.CodeInvalid, "node admin with no node")
+		}
+		cur, to := s.NodeAdmin(iface.NodeID(a.GetNode())), a.GetState()
+		switch {
+		case to == cur:
+		case to == chunkdv1.NodeAdmin_NODE_ADMIN_DECOMMISSIONED && cur != chunkdv1.NodeAdmin_NODE_ADMIN_DRAINING:
+			return iface.Errorf(iface.CodeConflict, "%s is %s: drain it before decommissioning", a.GetNode(), AdminName(cur))
+		case to == chunkdv1.NodeAdmin_NODE_ADMIN_DRAINING && cur == chunkdv1.NodeAdmin_NODE_ADMIN_DECOMMISSIONED:
+			return iface.Errorf(iface.CodeConflict, "%s is decommissioned: undrain it first", a.GetNode())
+		case AdminName(to) == "":
+			return iface.Errorf(iface.CodeInvalid, "unknown node admin state %d", to)
+		}
 	default:
 		return iface.Errorf(iface.CodeInvalid, "empty op")
 	}
@@ -429,8 +447,38 @@ func (s *State) apply(op *chunkdv1.Op) Result {
 			}
 		}
 		return Result{}
+	case *chunkdv1.Op_NodeAdmin:
+		n, to := iface.NodeID(o.NodeAdmin.GetNode()), o.NodeAdmin.GetState()
+		if to == chunkdv1.NodeAdmin_NODE_ADMIN_ACTIVE {
+			delete(s.nodeAdmin, n)
+		} else {
+			s.nodeAdmin[n] = to
+		}
+		return Result{}
 	}
 	panic("unreachable")
+}
+
+// NodeAdmin returns n's operator-set state; active if never set.
+func (s *State) NodeAdmin(n iface.NodeID) chunkdv1.NodeAdmin { return s.nodeAdmin[n] }
+
+// Leaving reports whether n is draining or decommissioned: it takes no new
+// data and its copies do not count toward RF.
+func (s *State) Leaving(n iface.NodeID) bool {
+	return s.nodeAdmin[n] != chunkdv1.NodeAdmin_NODE_ADMIN_ACTIVE
+}
+
+// AdminName is the lower-case name of an admin state, or "" if unknown.
+func AdminName(a chunkdv1.NodeAdmin) string {
+	switch a {
+	case chunkdv1.NodeAdmin_NODE_ADMIN_ACTIVE:
+		return "active"
+	case chunkdv1.NodeAdmin_NODE_ADMIN_DRAINING:
+		return "draining"
+	case chunkdv1.NodeAdmin_NODE_ADMIN_DECOMMISSIONED:
+		return "decommissioned"
+	}
+	return ""
 }
 
 // TrimPending returns the node whose copy of id an authorized, unanswered
@@ -789,6 +837,9 @@ func (s *State) Snapshot() []byte {
 	for _, t := range s.TrimPendingAll() {
 		snap.TrimPending = append(snap.TrimPending, &chunkdv1.TrimTarget{ChunkId: t.Chunk[:], Node: string(t.Node)})
 	}
+	for _, n := range slices.Sorted(maps.Keys(s.nodeAdmin)) {
+		snap.NodeAdmin = append(snap.NodeAdmin, &chunkdv1.NodeAdminOp{Node: string(n), State: s.nodeAdmin[n]})
+	}
 	out, err := proto.MarshalOptions{Deterministic: true}.Marshal(snap)
 	if err != nil {
 		panic(err)
@@ -862,6 +913,9 @@ func Restore(data []byte) (*State, error) {
 		var id iface.ChunkID
 		copy(id[:], t.GetChunkId())
 		s.trimPending[id] = iface.NodeID(t.GetNode())
+	}
+	for _, a := range snap.GetNodeAdmin() {
+		s.nodeAdmin[iface.NodeID(a.GetNode())] = a.GetState()
 	}
 	return s, nil
 }
