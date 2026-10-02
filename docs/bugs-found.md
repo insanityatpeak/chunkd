@@ -173,3 +173,53 @@ Related: with 1% message loss a copy command or its completion report can be los
 | Root cause | `RunTarget` computed repair copies as the last poll's counter minus the first. The counters are the answering leader's, since its process started; after the failover the new leader's count started below the old one's, and the unsigned subtraction wrapped to 2^64 − 60. |
 | Fix | The health poll adds up deltas within one leader and starts again at each leader change (`leaderDeltas`). Copies made in the second before a new leader's first poll are not counted. Commit `f4e9e58`. |
 | Regression test | `chaos.TestLeaderDeltasAcrossFailover`; the real-mode short suite runs `kill-meta-leader` in CI. |
+
+## 18. A deposed leader could trim from soft state
+
+| | |
+|---|---|
+| Symptom | Found in design review of rebalancing, then reproduced. A metadata leader cut off from its peers keeps acting for up to an election timeout. A storage node can still reach it and reports a surplus copy. The old leader trims one copy and the new leader trims a different one, leaving the chunk at RF − 1. |
+| Repro | `TestDeposedLeaderCannotTrim` against the code before `47eecaf`: it failed for 4 of 4 seeds. |
+| Root cause | A trim is a delete, but it was decided and sent from the leader's in-memory location map, which needs no quorum. Two leaders overlap for up to an election timeout, so two trims of one chunk could be in flight from different terms. |
+| Fix | Every trim is logged as a TrimIntent and sent only after it commits; at most one trim per chunk is pending in the log; TrimDone clears it. A cut-off leader cannot commit, so it cannot trim (ADR-0020). Commit `47eecaf`. |
+| Regression test | `TestDeposedLeaderCannotTrim` (4 seeds): no trim while cut off, one trim by the new leader after the election. |
+
+## 19. A follower kept a phantom location after TrimDone
+
+| | |
+|---|---|
+| Symptom | `chaos --seed=395 --metas=3`: the trim-safety watch caught a trim that left a chunk with 2 intact copies on running nodes. |
+| Repro | `go run ./tools/task chaos --seed=395 --metas=3` before `2fc4980`. |
+| Root cause | Locations are soft state: each peer learns them from block reports. A follower missed the report of the trimmed node's delete, so it still counted that copy after TrimDone committed. Once that follower became leader, it saw RF + 1 copies and trimmed a real one. |
+| Fix | Applying TrimDone drops its targets from every peer's location map: the log, not a report, says those copies are gone. Commit `2fc4980`. |
+| Regression test | `TestNewLeaderTrustsLoggedTrimDone`: node→follower links are blocked while the leader trims, then the leader is killed. Also the per-delete trim-safety invariant (`trimwatch.go`) in every chaos run. |
+
+## 20. A stale trim was resent after another holder died
+
+| | |
+|---|---|
+| Symptom | `chaos --seed=1153` (also 1932, 2037, 2352, 2853, found by a sweep from seed 1001): the trim watch saw a trim leave a chunk at RF − 1. |
+| Repro | `go run ./tools/task chaos --seed=1153` before `8ba54f4`. |
+| Root cause | A trim is authorized when it is logged, but its delete can go out much later. The leader resends a pending trim when its victim returns. Here the victim was down; while it was away another holder died, inside the repair delay, so nothing had replaced that copy yet. On the victim's return the resend deleted one of only RF copies left. The bug dates from `47eecaf`; the new trim watch exposed it. |
+| Fix | The leader rechecks before the first send and before every resend: the delete goes out only while RF other alive, reported, non-leaving copies remain with no GC or trim pending on them. Otherwise the trim stays logged until repair has caught up. Commit `8ba54f4`. |
+| Regression test | `TestStaleTrimWaitsForRepair` (seed 4): it reproduces the sequence and asserts the trim completes only after repair. |
+
+## 21. Real-mode no-repair check counted balance moves (harness)
+
+| | |
+|---|---|
+| Symptom | `transient-blip-no-repair` failed with 12 repair copies for a 15 s blip, in the first real-mode run after balancing landed. |
+| Repro | `go run ./tools/task chaos --mode=real --short` before `fc4c43e`. |
+| Root cause | The scheduler's completed-copies counter covers every class: repair, drain and balance. After `kill-node-restores-rf`, the balancer was still evening out the restored node; those moves landed in the next scenario and were blamed on the blip. |
+| Fix | Cluster health reports drain copies and balance moves separately (`repair_evacuated`, `repair_moved`), and the runner counts only repair copies. Commit `fc4c43e`. |
+| Regression test | `chaos.TestLeaderDeltasSkipMoves`; the short suite runs in CI. |
+
+## 22. A retried drain overtook the undrain after it (harness)
+
+| | |
+|---|---|
+| Symptom | While the sim chaos faults for drain and undrain were being written (`302512f`), seeds 84, 136, 323 and 777 ended with a node still draining and chunks over-replicated for good. |
+| Repro | Those seeds with admin commands sent independently, each retrying on its own timer. |
+| Root cause | A drain sent during an election waits and retries. The undrain that followed found a leader at once and committed first, then the retried drain committed over it. The command log was right; the client reordered the commands. |
+| Fix | The sim sends one node's admin commands one at a time, in call order (`Cluster.AdminAsync`). The compose target and the CLI were never affected: they wait for each call. Never committed. |
+| Regression test | Every chaos run with membership faults: the node must end active and every chunk at exactly RF. |

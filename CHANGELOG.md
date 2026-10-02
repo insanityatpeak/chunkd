@@ -1,5 +1,26 @@
 # Changelog
 
+## Unreleased
+
+### Rebalancing, drain and decommission
+- Nodes can join while the cluster serves. A balancer gives every node a rack-feasible byte target. A rack holds at most ceil(RF/racks) copies of a chunk, and its nodes share them. The balancer moves chunks until each node is within its band: 10% of target, but at least two chunks. A move only ever lowers the total distance from target and never loses a rack. Bytes moved stay within ½·L1 plus one chunk per node. ADR-0020.
+- Moves share the repair scheduler: repair first, then drain, then balance, with drain and balance capped at 4 of the 8 copy slots. Balancing waits until no node is suspect, or dead inside the repair delay.
+- Every trim, of a repair surplus or of a move's source, is a logged intent. It is sent only after it commits, at most one is pending per chunk, and the leader rechecks before each send that the chunk keeps RF copies elsewhere. A cut-off leader can no longer trim.
+- `chunkd node drain|undrain|decommission <id>`, the gateway routes `POST /nodes/{id}/drain|undrain|decommission`, and the metadata RPC `meta.node_admin`. A draining node takes no new chunks and its copies move away, keeping rack spread. Decommission is refused until every chunk has RF copies elsewhere; `-wait` retries until then. ADR-0021.
+- Compose: `node-6` (rack r3) under the `extra` profile: `docker compose --profile full --profile extra up -d node-6`.
+- **Wire changes:** heartbeat field 6 (`draining`) is removed and reserved; drain state is now logged. New log ops: TrimIntent (Op 10), TrimDone (11), NodeAdmin (12). New snapshot fields 7 (pending trims) and 8 (node admin states). Cluster view: per-node `balance_used`, `balance_target` and `balance_band`; health `repair_evacuated` and `repair_moved`. Every change is additive, so v0.2.0 data directories replay as they are.
+
+### Proof: rebalancing
+- `TestAddNodeConverges`, `TestDrainNeverDropsRF`, `TestDecommissionOnlyWhenSafe`, `TestDeposedLeaderCannotTrim`, `TestNewLeaderTrustsLoggedTrimDone`, `TestStaleTrimWaitsForRepair`.
+- Every chaos run checks trim safety at each trim delete. Chaos schedules add nodes, drain and undrain them, kill a node mid-drain, and, over the metadata group, kill the leader mid-move. These faults come from a random stream of their own, so existing seeds keep their schedules.
+- The real-mode short suite drains and decommissions node-4, adds node-6 and removes it again.
+- `docs/benchmarks/rebalance.md`: bytes moved against ½·L1 when a sixth node joins r3 or r1, and time to converge.
+- Five more entries in `docs/bugs-found.md` (#18–#22).
+
+### Demo: rebalancing
+- Dashboard: an Add node button, Drain/Undrain per node, amber outlines and labels for draining and decommissioned nodes, and a usage bar with the balance target and band. Drain and balance copies are tagged in the timeline. Against a real cluster the buttons are disabled; their tooltips give the command.
+- Shareable `add-node` and `drain` scenarios. The `kill-node` link replays with slightly different trim timings, because its surplus trims now go through the log.
+
 ## v0.2.0 (2026-10-02)
 
 ### Metadata high availability

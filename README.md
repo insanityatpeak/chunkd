@@ -11,7 +11,7 @@ A fault-tolerant distributed file store in Go, in the style of GFS and HDFS.
 
 **[Try it in your browser →](https://insanityatpeak.github.io/chunkd/)** A simulated cluster running the same core code, compiled to WebAssembly. Kill nodes, rot a disk, partition the network, and watch it recover. Nothing to install.
 
-chunkd splits files into 4 MiB chunks named by their SHA-256 and keeps three copies of each, on nodes in different racks. A metadata group of three Raft peers tracks versions and where every copy lives; killing, freezing or cutting off its leader loses no acknowledged write. Identical chunks are stored once, every file keeps its recent versions, a delete can be undone for a retention window, and garbage collection reclaims what nothing references. It is built to stay correct while things break. A node can crash, freeze, turn slow or come back with an empty disk, and a disk can silently rot bits. Throughout, acknowledged data stays readable, every read is verified end to end, and lost copies are rebuilt within a stated time bound, at a capped rate, without copying anything for a node that only rebooted. Every claim below is a test that runs in CI: 1,000 seeded chaos schedules on every push in a deterministic simulator that replays any failure from its seed, 500 more over the metadata group with leader faults and every client history checked for linearizability, plus a real-mode suite that kills, freezes and corrupts Docker containers, the metadata leader included.
+chunkd splits files into 4 MiB chunks named by their SHA-256 and keeps three copies of each, on nodes in different racks. A metadata group of three Raft peers tracks versions and where every copy lives; killing, freezing or cutting off its leader loses no acknowledged write. Nodes can join, or be drained and retired, while the cluster serves: a balancer moves copies toward rack-feasible targets, and no chunk drops below three copies on the way. Identical chunks are stored once, every file keeps its recent versions, a delete can be undone for a retention window, and garbage collection reclaims what nothing references. It is built to stay correct while things break. A node can crash, freeze, turn slow or come back with an empty disk, and a disk can silently rot bits. Throughout, acknowledged data stays readable, every read is verified end to end, and lost copies are rebuilt within a stated time bound, at a capped rate, without copying anything for a node that only rebooted. Every claim below is a test that runs in CI: 1,000 seeded chaos schedules on every push in a deterministic simulator that replays any failure from its seed, 500 more over the metadata group with leader faults and every client history checked for linearizability, plus a real-mode suite that kills, freezes and corrupts Docker containers, the metadata leader included.
 
 ## Architecture
 
@@ -35,6 +35,10 @@ go run ./cmd/chunkd put ./photo.jpg /photos/photo.jpg
 go run ./cmd/chunkd stat /photos/photo.jpg        # version, SHA-256, replicas per chunk
 go run ./cmd/chunkd get /photos/photo.jpg ./copy.jpg
 go run ./cmd/chunkd cluster status                # detector state, replication, repair
+go run ./cmd/chunkd node drain node-4             # move its copies away; it takes no new chunks
+go run ./cmd/chunkd node decommission -wait 5m node-4   # once every chunk has 3 copies elsewhere
+go run ./cmd/chunkd node undrain node-4           # back in service; the balancer evens out the bytes
+docker compose --profile full --profile extra up -d node-6   # a sixth node, empty, on rack r3
 ```
 
 ## Chaos demo
@@ -55,7 +59,7 @@ go run ./tools/task chaos --mode=real --short          # kill, blip, rot and fre
 docker compose exec node-2 chunkd debug corrupt -n 3   # rot 3 chunk files; the scrubber finds them
 ```
 
-Shared dashboard links replay exactly: [kill a node](https://insanityatpeak.github.io/chunkd/?seed=7&scenario=kill-node&speed=10), [silent bit rot](https://insanityatpeak.github.io/chunkd/?seed=7&scenario=corrupt-chunk&speed=10), [lose a rack](https://insanityatpeak.github.io/chunkd/?seed=7&scenario=rack-loss&speed=10), [slow node](https://insanityatpeak.github.io/chunkd/?seed=7&scenario=slow-node&speed=10), [kill the metadata leader](https://insanityatpeak.github.io/chunkd/?seed=7&scenario=kill-leader&speed=10).
+Shared dashboard links replay exactly: [kill a node](https://insanityatpeak.github.io/chunkd/?seed=7&scenario=kill-node&speed=10), [silent bit rot](https://insanityatpeak.github.io/chunkd/?seed=7&scenario=corrupt-chunk&speed=10), [lose a rack](https://insanityatpeak.github.io/chunkd/?seed=7&scenario=rack-loss&speed=10), [slow node](https://insanityatpeak.github.io/chunkd/?seed=7&scenario=slow-node&speed=10), [kill the metadata leader](https://insanityatpeak.github.io/chunkd/?seed=7&scenario=kill-leader&speed=10), [add a node](https://insanityatpeak.github.io/chunkd/?seed=7&scenario=add-node&speed=10), [drain a node](https://insanityatpeak.github.io/chunkd/?seed=7&scenario=drain&speed=10).
 
 ## What's proven
 
@@ -73,7 +77,7 @@ Shared dashboard links replay exactly: [kill a node](https://insanityatpeak.gith
 | Rot that nobody reads is found within one scrub pass | `TestScrubberFindsCorruption` | go |
 | When every copy is bad, the read fails loudly instead of returning bad bytes | `TestAllReplicasCorrupt` | go |
 | Block reports reordered by the network never drop or resurrect a copy | `TestClusterReportOrdering` | go |
-| Under random faults, acknowledged data stays readable, RF returns within the bound, rot is found, and no read returns bytes never written | 1,000 chaos seeds per push (20,000 on demand) | go |
+| Under random faults, node additions and drains, acknowledged data stays readable, RF returns within the bound, rot is found, and no read returns bytes never written | 1,000 chaos seeds per push (20,000 on demand) | go |
 | Identical chunks are stored once: the same base with small edits ×10 stores 220 MiB as 60 MiB | `TestDedupSavings` ([docs/benchmarks/dedup.md](docs/benchmarks/dedup.md)) | go |
 | Two commits against the same version: exactly one wins, the other gets a conflict | `TestCASConflict`, `TestChaosConcurrentWriters` | go |
 | GC never collects a chunk an in-flight upload needs, even one stalled past a GC cycle | `TestGCSparesInflightUpload`, `TestChaosGCDuringSlowUpload`, `TestChaosDeleteWhileUploadingSameChunk` | go |
@@ -85,6 +89,9 @@ Shared dashboard links replay exactly: [kill a node](https://insanityatpeak.gith
 | A leader cut off with a minority rejects writes; the majority elects a new one | `TestMinorityPartitionRejectsWrites` | go |
 | Client histories are linearizable under leader faults | 500 chaos seeds with `--metas=3` per push, plus every real-mode scenario, checked with porcupine | go, compose |
 | The metadata log stays bounded, and a lagging follower catches up from a snapshot | `TestLogBoundedUnder10kOps`, `TestSnapshotBoundsLogAndCatchesUp` | go |
+| A node joining moves at most ½·L1 plus one chunk per node (½·L1 is the least any plan can move), and every chunk stays at RF throughout | `TestAddNodeConverges`, `TestRebalanceBenchmark` ([docs/benchmarks/rebalance.md](docs/benchmarks/rebalance.md)), `add-node` (containers) | go, compose |
+| Draining a node never takes a chunk below RF, even when another node dies mid-drain; decommission is refused until every chunk has RF copies elsewhere | `TestDrainNeverDropsRF`, `drain-node` (containers) | go, compose |
+| Only a committed trim deletes a copy: a deposed leader cannot trim, a new leader trusts the logged TrimDone, and a trim waits while its chunk is short elsewhere | `TestDeposedLeaderCannotTrim`, `TestNewLeaderTrustsLoggedTrimDone`, `TestStaleTrimWaitsForRepair`; every chaos run checks RF at each trim delete | go |
 | A seed replays the same run, in Go and in the browser | `TestSameSeedSameTrace`, `TestScenarioGolden` + Playwright replay | go, web |
 | The demo runs with only Docker installed | `docker compose run --rm demo` | compose |
 
@@ -122,6 +129,11 @@ Bugs these tests caught, with root causes and fixes: [docs/bugs-found.md](docs/b
 | The history checker accepts a put conflict in any state: it does not check that the expected version really was stale, so a wrongly refused put would pass | A refused put leaves no trace, so it cannot corrupt what later reads see; `TestCASConflict` checks that exactly one of two racing commits wins | Record the expected version and model a conflict as a read showing a different one |
 | Minority-side clients exist only in the sim, and only while a leader is cut off | They are the case that matters: a client next to a deposed leader must never see a stale read or a commit | Pinned clients in real mode, once compose can partition a peer |
 | A client call to a metadata leader that died silently waits out the 10 s call timeout before trying the next peer | A killed process on a live host refuses connections at once; only a silent host costs the timeout | A shorter per-attempt timeout for metadata calls, or a hedged call to the next peer |
+| A leader refuses drain, undrain and decommission for a node it has not heard from since it started | Node state is soft and rebuilt from reports; the node's heartbeat arrives within a second of it being up; the chaos targets retry, and from the CLI it is a second try | Log node registration, so a new leader knows every node the cluster ever admitted |
+| Balance targets are bytes, not capacity: every node is assumed to have the same disk | The compose and sim nodes are identical | Report capacity in heartbeats and weight targets by it, as HDFS's balancer does with utilization percent |
+| The band is at least two of the largest chunk, so a small cluster stops far from its target (node-6 at 12 of 20 MiB on the demo set) | It is what stops a chunk bouncing between two nodes near their targets; at 10% of 100 MiB the floor no longer matters | None at this scale |
+| No balancing while membership is unsettled: a suspect node, or a dead one inside the repair delay, pauses all moves | A node that returns with its data would otherwise have copies moved only to be moved back | Plan around a node that is likely gone, as Ceph does after `mon_osd_down_out_interval` |
+| A decommissioned node stays in the metadata log; starting one again with the same ID needs an undrain | It takes nothing while decommissioned, which is the safe default; the compose add-node path undrains it | Remove a decommissioned node from the log once its last copy is trimmed |
 
 ## Project layout
 
@@ -147,7 +159,7 @@ Every command runs through `go run ./tools/task <name>`, the same on Windows, Li
 - [x] Integrity: verify on read, scrubbing, quarantine, corruption repair
 - [x] High-availability metadata with Raft (replicated log, leader election, term fencing, linearizable histories)
 - [x] Deduplication, versioned files with compare-and-swap, undelete, garbage collection
-- [ ] Rebalancing when nodes join or leave
+- [x] Rebalancing when nodes join, drain and decommission
 - [ ] Erasure coding for cold data
 
 ## License

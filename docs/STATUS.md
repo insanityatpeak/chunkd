@@ -1,6 +1,23 @@
 # Status
 
-Current phase: **Phase 5 complete** (Raft metadata group), released as [v0.2.0](https://github.com/insanityatpeak/chunkd/releases/tag/v0.2.0). Next: Phase 6, rebalancing.
+Current phase: **Phase 6 built** (rebalancing, drain and decommission), not yet pushed or released. Phase 5 was released as [v0.2.0](https://github.com/insanityatpeak/chunkd/releases/tag/v0.2.0).
+
+## Phase 6 (built, push pending)
+
+A placement planner in `core/rebalance` gives every node a rack-feasible byte target. A rack holds at most ceil(RF/racks) copies of a chunk, so its nodes split that share. The planner moves chunks only while some node is outside its band, max(10% of target, 2 chunks). A move must strictly lower the total distance from target and never lose a distinct rack. Moves run in the repair scheduler as a third class (repair before drain before balance; drain and balance share at most 4 of 8 slots), and only once membership has settled. Every trim, whether a repair surplus or a move's source, is a logged TrimIntent sent only after it commits, with at most one pending per chunk. TrimDone clears it on every peer, and the leader rechecks RF elsewhere before each send. Drain state is a logged NodeAdmin op (active, draining, decommissioned). Decommission is refused until every chunk has RF copies on other nodes; the gateway and CLI expose all three. ADRs 0020–0021. Dashboard: an Add node button, per-node Drain/Undrain, amber outlines and labels for leaving nodes, a usage bar with the balance target and band, tagged drain and balance copies, and shareable `add-node` and `drain` scenarios.
+
+| Criterion | Evidence |
+|---|---|
+| `TestAddNodeConverges`: 5 → 6 nodes, every node within its band, bytes moved ≤ the stated bound | Moved 96.0 MiB against ½·L1 100.9 MiB and a bound of 124.9 MiB; never below RF during the moves; the cluster view's targets agree. `docs/benchmarks/rebalance.md` (`TestRebalanceBenchmark`): demo set on r3 12.0 MiB moved (½·L1 25.0, band-limited), loaded set on r3 94.7 MiB of ½·L1 101.3 MiB in 2.6 s |
+| `TestDrainNeverDropsRF`: drain under load, a node killed mid-drain, RF below target only for chunks the failure hit | Passes: 41 drain copies, 43 repair copies, decommission allowed as soon as RF was back. Real mode: `drain-node` in the compose short suite |
+| `TestDecommissionOnlyWhenSafe` | Refused while active and while copies are short; allowed after the drain (99 MiB in 13 s); the node then dies with no repair copy |
+| Chaos over 1,000 sim seeds green, porcupine green | `chaos --seeds=1000`: 0 failed, 1,370 membership faults (add-node, drain, undrain, kill-drain-target). `--seeds=500 --metas=3`: 0 failed, 799 leader faults, 37 of them a leader kill with a balance move in flight. Wider sweeps locally with membership faults: 3,000 seeds and 1,500 meta seeds green. Trim safety is checked at every trim delete in every run |
+| Real-mode short suite | 7 scenarios green against compose, `drain-node` and `add-node` included; node-6 and its volume are removed afterwards |
+| Goldens and replay | The 4 existing goldens are unchanged; `add-node` and `drain` added; Playwright replays all 6 (Edge) |
+| CI and Lighthouse on Pages | Pending push |
+
+Bugs found: #18 (a deposed leader could trim from soft state), #19 (a follower kept a phantom location after TrimDone), #20 (a stale trim was resent after another holder died), #21 (real-mode no-repair check counted balance moves), #22 (a retried drain overtook the undrain after it, in the sim's chaos client).
+
 
 ## Phase 5 (complete)
 
