@@ -31,6 +31,7 @@ var Scenarios = []Scenario{
 	{"kill-leader", "Kill the metadata leader", "10 s after the demo files load, the metadata leader dies. About a second later a follower notices the silence, wins a pre-vote and then the election, and leads the next term. A write sent just after the kill goes to the dead leader first: it waits out the client's 10 s call timeout, then retries and commits on the new leader. Reads go on throughout. At 60 s the old leader returns as a follower and catches up from the new leader's log."},
 	{"add-node", "Add a node", "5 s after the demo files load, node-6 joins empty on rack r3. Once the detector has confirmed it, the balancer gives every node a rack-feasible target and moves copies onto node-6, a few at a time beside repair. Each move copies first and trims the source only after the new copy is confirmed, so no chunk drops below 3 copies. It stops once every node is within its band."},
 	{"drain", "Drain a node", "5 s after the demo files load, the operator drains node-4: it takes no new chunks and its copies move to other nodes, rack spread kept. 25 s later every chunk has 3 copies elsewhere and node-4 is decommissioned: it could be switched off now (with a copy still missing, the leader refuses and the timeline says so). 30 s after that it is undrained: its copies count again, the surplus is trimmed, and the balancer evens out the bytes."},
+	{"ec", "Erasure coding", "node-6 and node-7 join: a stripe spans 6 nodes, and the seventh gives a dead node's shards somewhere to go. Two files are stored as RS(4,2) stripes, 4 data and 2 parity shards per chunk: 1.5× the bytes, against 3× for copies. At 20 s node-3 dies. Reads fetch any 4 shards and decode from parity, hedging past node-3 while it is still believed alive. After the dead timeout and the 20 s delay, each of its shards is rebuilt from 4 others onto the node outside that stripe. At 60 s node-5 dies too: no node is left outside the stripes, so they stay at 5 of 6 shards and still read. At 100 s both return: node-5's shards count again, and node-3's, rebuilt elsewhere meanwhile, are trimmed."},
 }
 
 // RunScenario starts a named script.
@@ -92,8 +93,48 @@ func (c *Cluster) RunScenario(name string) error {
 		c.after(30*time.Second, func() { c.scriptAdmin("node-4", "decommissioned") })
 		c.after(60*time.Second, func() { c.scriptAdmin("node-4", "active") })
 		return nil
+	case "ec":
+		return c.scriptEC()
 	}
 	return iface.Errorf(iface.CodeInvalid, "unknown scenario %q", name)
+}
+
+// ecFiles are the ec scenario's uploads: 3 stripes and 2 stripes.
+var ecFiles = []struct {
+	path string
+	size int64
+}{{"/ec/file-0.bin", 9 << 20}, {"/ec/file-1.bin", 5 << 20}}
+
+// scriptEC is the ec scenario: node-6 and node-7 join (a stripe needs 6
+// nodes, the seventh is a rebuild target), two files are stored as RS(4,2)
+// stripes, then node-3 and later node-5 die while reads go on.
+func (c *Cluster) scriptEC() error {
+	for range 2 {
+		if _, err := c.AddNode(); err != nil {
+			return err
+		}
+	}
+	c.after(3*time.Second, func() {
+		for _, f := range ecFiles {
+			m, _, err := c.Session().UploadAs(f.path, c.RandomData(f.path, f.size), client.EC42)
+			if err != nil {
+				c.logClient("write", fmt.Sprintf("put %s as ec-4+2 failed: %v", f.path, err))
+				continue
+			}
+			c.logClient("write", fmt.Sprintf("put %s as ec-4+2: %d stripes of 6 shards, %d MiB stored for %d MiB", f.path, len(m.Chunk), f.size*3/2>>20, f.size>>20))
+		}
+	})
+	for i := range 22 {
+		p := ecFiles[i%len(ecFiles)].path
+		c.after(time.Duration(10+5*i)*time.Second, func() { c.scriptRead(p) })
+	}
+	c.clock.AfterFunc(20*time.Second, func() { c.KillNode("node-3") })
+	c.clock.AfterFunc(60*time.Second, func() { c.KillNode("node-5") })
+	c.clock.AfterFunc(100*time.Second, func() {
+		c.RestartNode("node-3")
+		c.RestartNode("node-5")
+	})
+	return nil
 }
 
 type scriptedStep struct {
@@ -161,17 +202,30 @@ func (c *Cluster) scriptRead(path string) {
 	case err != nil:
 		text = fmt.Sprintf("read %s failed after %v: %v", path, took, err)
 	default:
-		var hedged, served []string
+		var hedged, served, decoded []string
 		for _, ch := range m.Chunk {
-			served = append(served, ch.ServedBy)
+			if len(ch.Shards) == 0 {
+				served = append(served, ch.ServedBy)
+			}
+			for _, s := range ch.Shards {
+				if s.ServedBy != "" {
+					served = append(served, s.ServedBy)
+				}
+			}
 			if ch.Hedged {
 				hedged = append(hedged, fmt.Sprint(ch.Index))
+			}
+			if ch.Decoded {
+				decoded = append(decoded, fmt.Sprint(ch.Index))
 			}
 		}
 		slices.Sort(served)
 		text = fmt.Sprintf("read %s (%d KiB) in %v from %s", path, len(data)>>10, took, strings.Join(slices.Compact(served), ", "))
 		if len(hedged) > 0 {
 			text += fmt.Sprintf("; hedged chunk %s", strings.Join(hedged, ", "))
+		}
+		if len(decoded) > 0 {
+			text += fmt.Sprintf("; decoded chunk %s from parity", strings.Join(decoded, ", "))
 		}
 	}
 	c.logClient("read", text)

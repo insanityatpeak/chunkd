@@ -189,6 +189,67 @@ func RPC(t *testing.T, newEnv func(t *testing.T) RPCEnv) {
 		}
 	})
 
+	t.Run("gather", func(t *testing.T) {
+		env := newEnv(t)
+		for _, id := range []iface.NodeID{"fast1", "fast2", "fast3", "slow", "bad", "down"} {
+			clk := env.Clock(id)
+			env.Server(id).Serve(id, "test.gather", func(m iface.Message, respond iface.Responder) {
+				switch m.To {
+				case "slow":
+					clk.AfterFunc(400*time.Millisecond, func() { respond([]byte("ok"), nil) })
+				case "bad":
+					respond([]byte("corrupt"), nil)
+				case "down":
+					respond(nil, iface.Errorf(iface.CodeInternal, "disk"))
+				default:
+					respond([]byte("ok"), nil)
+				}
+			}, iface.ServeOpts{})
+		}
+		mk := func(ids ...iface.NodeID) []iface.Call {
+			var out []iface.Call
+			for _, id := range ids {
+				out = append(out, iface.Call{To: id, Addr: env.Addr(id), Kind: "test.gather"})
+			}
+			return out
+		}
+		okBody := func(_ int, r iface.Result) bool { return string(r.Body) == "ok" }
+		const long = time.Hour
+
+		tests := []struct {
+			name     string
+			calls    []iface.Call
+			after    time.Duration
+			accepted int
+			launched int
+			pending  int // the call that must still be running, or -1
+		}{
+			{"all fast: nothing extra sent", mk("fast1", "fast2", "slow"), long, 2, 2, -1},
+			{"slow among the first: the next is sent after `after`", mk("slow", "fast1", "fast2"), 50 * time.Millisecond, 2, 3, 0},
+			{"error: replaced at once", mk("down", "fast1", "fast2"), long, 2, 3, -1},
+			{"rejected answer: replaced at once", mk("bad", "fast1", "fast2"), long, 2, 3, -1},
+			{"not enough acceptable", mk("bad", "down", "fast1"), long, 1, 3, -1},
+		}
+		for _, tc := range tests {
+			t.Run(tc.name, func(t *testing.T) {
+				g := env.Caller().Gather(ctx, tc.calls, 2, 2, tc.after, okBody)
+				if len(g.Accepted) != tc.accepted || g.Launched != tc.launched {
+					t.Fatalf("accepted %v launched %d, want %d and %d (%+v)", g.Accepted, g.Launched, tc.accepted, tc.launched, g.Results)
+				}
+				for i := range g.Launched {
+					if g.Results[i].Pending != (i == tc.pending) {
+						t.Fatalf("call %d pending = %v (%+v)", i, g.Results[i].Pending, g.Results)
+					}
+				}
+				for _, i := range g.Accepted {
+					if g.Results[i].Latency >= 400*time.Millisecond {
+						t.Fatalf("accepted call %d took %v", i, g.Results[i].Latency)
+					}
+				}
+			})
+		}
+	})
+
 	t.Run("async call from inside a handler", func(t *testing.T) {
 		env := newEnv(t)
 		env.Server("s1").Serve("s1", "test.echo", echo, iface.ServeOpts{})

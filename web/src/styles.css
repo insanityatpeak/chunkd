@@ -429,6 +429,28 @@ td.actions button + button {
   stroke: var(--accent);
 }
 
+/* EC: parity shards in the metadata colour, data shards in the accent. */
+.grid-cell.has.parity {
+  fill: var(--meta);
+  stroke: var(--meta);
+}
+
+svg text.grid-shard {
+  font-size: 10px;
+  font-weight: 600;
+  fill: var(--panel);
+  pointer-events: none;
+}
+
+.policy {
+  font-size: 0.9em;
+  color: var(--muted);
+}
+
+.policy select {
+  margin-left: 4px;
+}
+
 .served {
   fill: none;
   stroke: var(--meta);

@@ -34,7 +34,7 @@ chunk C (4 MiB) ─ stripe ID L = sha256("chunkd-ec-4+2:" ‖ sha256(C))
 
 The client claims `L` with the 6 shard IDs before writing (ADR-0015 unchanged: the claim marks every shard for GC). Commit needs 5 shards reported on alive nodes. The chunk record keeps the 6 shard IDs, and the state derives a shard → (stripe, slot) index from them. Each shard is a block with a copy target of 1: GC marking, fenced deletes, trims, scrub and drain see an ordinary block, and repair rebuilds it instead of copying (ADR-0023).
 
-A read fetches the 4 data shards in one batch. If any is missing, fails or does not verify, the client fetches parity and decodes from any 4; once no untried shard is left, a shard that timed out is asked once more, since a lost message is not a lost shard (bugs-found #25). The decoded chunk is checked against `L`, and the file against its SHA-256. With 3 or more shards gone the read fails with the stripe and its readable count.
+A read asks for the 4 data shards at once (`Caller.Gather`, the k-of-n form of the replica hedge). A shard that is missing, fails or does not verify is replaced at once by parity, and one still outstanding after the hedge delay (the recent p95 read) brings in the next shard too, so a node that died a moment ago costs a hedge delay, not a call timeout. The client decodes from any 4. A shard that only timed out is asked once more in a second pass, since a lost message is not a lost shard (bugs-found #25). The decoded chunk is checked against `L`, and the file against its SHA-256. With 3 or more shards gone the read fails with the stripe and its readable count.
 
 ## Consequences
 
@@ -43,7 +43,7 @@ A read fetches the 4 data shards in one batch. If any is missing, fails or does 
 | Stored bytes per logical byte | 3.0× | 1.5× (+33 B per MiB of headers) |
 | Losses survived | any 2 copies | any 2 shards |
 | Nodes needed | 3 (2 to commit) | 6 (5 to commit) |
-| Normal read | 1 copy, hedged | 4 shards in parallel |
+| Normal read | 1 copy, hedged | 4 shards in parallel, hedged |
 | Degraded read | another copy | 4 shards + decode |
 | Repair one lost unit | read 1 × 4 MiB | read 4 × 1 MiB, decode |
 | Dedup | across replicated uploads | across EC uploads only |

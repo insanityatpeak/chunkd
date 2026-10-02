@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'preact/hooks';
-import type { ClusterAPI, DeletedFile, FileInfo, Manifest, NodeView, VersionInfo } from './api/cluster';
+import type { ChunkRef, ClusterAPI, DeletedFile, FileInfo, Manifest, NodeView, Redundancy, VersionInfo } from './api/cluster';
 import { formatBytes, sha256Hex } from './verify';
 
 const MAX_UPLOAD = 50 << 20;
@@ -31,6 +31,7 @@ export function Files({ api, files, deleted = [], epoch = 0, nodes, refresh }: P
   const [busy, setBusy] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [versions, setVersions] = useState<VersionInfo[] | null>(null);
+  const [policy, setPolicy] = useState<Redundancy>('');
 
   // Replicas this page corrupted ("node/chunk"), red until the cluster
   // quarantines them and they leave the placement.
@@ -79,7 +80,7 @@ export function Files({ api, files, deleted = [], epoch = 0, nodes, refresh }: P
     }
     void run(`Uploading ${file.name}`, async () => {
       const data = new Uint8Array(await file.arrayBuffer());
-      const m = await api.upload('/' + file.name, data);
+      const m = await api.upload('/' + file.name, data, policy);
       setSelected(m.path);
       setVerified(null);
     });
@@ -121,6 +122,13 @@ export function Files({ api, files, deleted = [], epoch = 0, nodes, refresh }: P
     <section class="files" aria-label="Files">
       <div class="files-head">
         <h2>Files</h2>
+        <label class="policy">
+          Store as{' '}
+          <select value={policy} onChange={(e) => setPolicy((e.currentTarget as HTMLSelectElement).value as Redundancy)} disabled={!!busy}>
+            <option value="">3 copies (3×)</option>
+            <option value="ec-4+2">EC 4+2 (1.5×, needs 6 nodes)</option>
+          </select>
+        </label>
         <label class="upload">
           <input type="file" onChange={onUpload} disabled={!!busy} />
           <span>Upload a file (up to 50 MiB)</span>
@@ -129,7 +137,10 @@ export function Files({ api, files, deleted = [], epoch = 0, nodes, refresh }: P
       {busy && <p class="busy">{busy}…</p>}
       {error && <p class="error">{error}</p>}
       {files.length === 0 ? (
-        <p class="muted">No files yet. Upload one: it is split into 4 MiB chunks, each stored on 3 nodes in different racks.</p>
+        <p class="muted">
+          No files yet. Upload one: it is split into 4 MiB chunks, each stored on 3 nodes in different racks, or with EC 4+2 as 4 data
+          and 2 parity shards on 6 nodes.
+        </p>
       ) : (
         <table>
           <thead>
@@ -138,7 +149,7 @@ export function Files({ api, files, deleted = [], epoch = 0, nodes, refresh }: P
               <th>Version</th>
               <th>Size</th>
               <th>Chunks</th>
-              <th title="Fewest copies of any chunk on alive nodes, of 3">Replicas</th>
+              <th title="Fewest copies of any chunk on alive nodes, of 3; for EC, fewest shards of any stripe, of 6">Replicas</th>
               <th />
             </tr>
           </thead>
@@ -274,20 +285,54 @@ function Versions({ path, versions, epoch, busy, onRestore }: VersionsProps) {
   );
 }
 
+const SHARDS = 6;
+const DATA_SHARDS = 4;
+
 // Replicas is the file's weakest chunk: RF copies is healthy, fewer is
 // under-replicated (repair pending), none alive means reads use suspect
-// nodes or fail.
+// nodes or fail. For an EC file it counts shards: 6 is healthy, 4 or 5
+// still reads (decoding from parity), below 4 is unreadable.
 function Replicas({ file }: { file: FileInfo }) {
   if (file.minLive === undefined) return <span class="muted">–</span>;
   if (file.chunks === 0) return <span class="rep ok">empty</span>;
-  const cls = file.minLive === 0 ? 'lost' : file.minLive < RF ? 'under' : 'ok';
-  const detail = file.underReplicated ? `, ${file.underReplicated} of ${file.chunks} chunks below ${RF}` : '';
+  const ec = file.redundancy === 'ec-4+2';
+  const target = ec ? SHARDS : RF;
+  const floor = ec ? DATA_SHARDS : 1;
+  const cls = file.minLive < floor ? 'lost' : file.minLive < target ? 'under' : 'ok';
+  const unit = ec ? 'shards of a stripe' : 'copies';
+  const detail = file.underReplicated ? `, ${file.underReplicated} of ${file.chunks} chunks below ${target}` : '';
   return (
-    <span class={`rep ${cls}`} title={`fewest alive copies ${file.minLive}${detail}`}>
-      {file.minLive}/{RF}
+    <span class={`rep ${cls}`} title={`fewest alive ${unit} ${file.minLive}${detail}`}>
+      {file.minLive}/{target}
+      {ec && ' EC'}
       {file.underReplicated ? ` · ${file.underReplicated} low` : ''}
     </span>
   );
+}
+
+interface Held {
+  id: string; // the block on the node: the chunk, or one shard
+  has: boolean; // stored there now; a rejected one may already be gone
+  shard?: number;
+  parity?: boolean;
+  served: boolean;
+  bad: boolean;
+}
+
+// holding is what node stores of chunk c: a copy, a shard (EC), or nothing.
+// A rejected copy or shard still counts, so its cross shows.
+function holding(c: ChunkRef, node: string): Held | null {
+  for (const s of c.shards ?? []) {
+    const has = (s.replicas ?? []).includes(node);
+    const bad = (s.rejected ?? []).includes(node);
+    if (has || bad) {
+      return { id: s.id, has, shard: s.index, parity: s.index >= DATA_SHARDS, served: s.servedBy === node, bad };
+    }
+  }
+  const has = (c.replicas ?? []).includes(node);
+  const bad = (c.rejected ?? []).includes(node);
+  if (!has && !bad) return null;
+  return { id: c.id, has, served: c.servedBy === node, bad };
 }
 
 interface GridProps {
@@ -314,6 +359,9 @@ function ChunkGrid({ manifest, nodes, rotted, onCorrupt }: GridProps) {
       <figcaption>
         {manifest.path} v{manifest.version}: {chunks.length} chunks × replicas. Filled = holds the chunk; ring = served the
         last download; cross = failed verification; red = corrupted here, not yet found.
+        {chunks.some((c) => (c.shards ?? []).length > 0) &&
+          ' EC: a cell shows the shard the node holds, 0-3 data and 4-5 parity; any 4 rebuild the chunk.'}
+        {chunks.some((c) => c.decoded) && ' * = decoded from parity on the last download.'}
         {onCorrupt && ' Click a filled cell to corrupt that copy.'}
       </figcaption>
       <svg viewBox={`0 0 ${w} ${h}`} style={{ maxWidth: `${w * 1.4}px` }} role={onCorrupt ? "group" : "img"} aria-label="Chunk placement grid">
@@ -326,13 +374,14 @@ function ChunkGrid({ manifest, nodes, rotted, onCorrupt }: GridProps) {
           <g key={c.index}>
             <text class="grid-label" x={labelW - 8} y={headH + i * cell + cell / 2 + 4} text-anchor="end">
               #{c.index}
+              {c.decoded && '*'}
             </text>
             {nodes.map((n, j) => {
-              const has = (c.replicas ?? []).includes(n.id);
-              const rot = has && rotted.has(`${n.id}/${c.id}`);
-              const click = has && onCorrupt && !rot ? () => onCorrupt(n.id, c.id) : undefined;
-              const served = c.servedBy === n.id;
-              const bad = (c.rejected ?? []).includes(n.id);
+              const held = holding(c, n.id);
+              const has = held?.has ?? false;
+              const rot = has && rotted.has(`${n.id}/${held!.id}`);
+              const click = has && onCorrupt && !rot ? () => onCorrupt(n.id, held!.id) : undefined;
+              const what = held?.shard === undefined ? 'copy' : `shard ${held.shard}`;
               const x = labelW + j * cell;
               const y = headH + i * cell;
               return (
@@ -341,13 +390,25 @@ function ChunkGrid({ manifest, nodes, rotted, onCorrupt }: GridProps) {
                   class={click ? 'clickable' : undefined}
                   role={click ? 'button' : undefined}
                   tabIndex={click ? 0 : undefined}
-                  aria-label={click ? `Corrupt ${n.id}'s copy of chunk ${c.index}` : undefined}
+                  aria-label={click ? `Corrupt ${n.id}'s ${what} of chunk ${c.index}` : undefined}
                   onClick={click}
                   onKeyDown={click ? (e) => (e.key === 'Enter' || e.key === ' ') && click() : undefined}
                 >
-                  <rect class={`grid-cell ${has ? 'has' : ''} ${rot ? 'rot' : ''}`} x={x + 2} y={y + 2} width={cell - 4} height={cell - 4} rx="3" />
-                  {served && <circle class="served" cx={x + cell / 2} cy={y + cell / 2} r={cell / 2 - 1} />}
-                  {bad && <path class="bad" d={`M${x + 5} ${y + 5}L${x + cell - 5} ${y + cell - 5}M${x + cell - 5} ${y + 5}L${x + 5} ${y + cell - 5}`} />}
+                  <rect
+                    class={`grid-cell ${has ? 'has' : ''} ${has && held?.parity ? 'parity' : ''} ${rot ? 'rot' : ''}`}
+                    x={x + 2}
+                    y={y + 2}
+                    width={cell - 4}
+                    height={cell - 4}
+                    rx="3"
+                  />
+                  {has && held?.shard !== undefined && (
+                    <text class="grid-shard" x={x + cell / 2} y={y + cell / 2 + 4} text-anchor="middle">
+                      {held.shard}
+                    </text>
+                  )}
+                  {held?.served && <circle class="served" cx={x + cell / 2} cy={y + cell / 2} r={cell / 2 - 1} />}
+                  {held?.bad && <path class="bad" d={`M${x + 5} ${y + 5}L${x + cell - 5} ${y + cell - 5}M${x + cell - 5} ${y + 5}L${x + 5} ${y + cell - 5}`} />}
                 </g>
               );
             })}

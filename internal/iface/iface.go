@@ -104,6 +104,22 @@ type Caller interface {
 	// has failed or been rejected. It returns at the first result accept
 	// takes; accept runs on the caller's goroutine.
 	Hedge(ctx context.Context, calls []Call, after time.Duration, accept func(i int, r Result) bool) HedgeResult
+	// Gather is Hedge for need answers out of many: it sends calls[:first]
+	// at once, the next call at once when one fails or is rejected, and the
+	// next after another `after` passes with no new accepted answer. It
+	// returns once need results are accepted or every call sent has settled
+	// and none is left; accept runs on the caller's goroutine.
+	Gather(ctx context.Context, calls []Call, first, need int, after time.Duration, accept func(i int, r Result) bool) GatherResult
+}
+
+// GatherResult is the outcome of Caller.Gather.
+type GatherResult struct {
+	// Accepted indexes the accepted results, in the order they arrived.
+	Accepted []int
+	// Results has one entry per call; only the first Launched were sent. A
+	// call still running when Gather returned is Pending.
+	Results  []Result
+	Launched int
 }
 
 // AsyncCaller issues requests from inside an event loop, where blocking

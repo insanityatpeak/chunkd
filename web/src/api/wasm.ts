@@ -1,4 +1,4 @@
-import { ChunkdError, type ClusterAPI, type ClusterView, type Download, type Manifest, type ScenarioInfo, type VersionInfo } from './cluster';
+import { ChunkdError, type ClusterAPI, type ClusterView, type Download, type Manifest, type Redundancy, type ScenarioInfo, type VersionInfo } from './cluster';
 import type { FromWorker, Method, ToWorker } from './protocol';
 
 // WasmClusterAPI runs the simulated cluster in a Web Worker so ticking and
@@ -55,8 +55,8 @@ export class WasmClusterAPI implements ClusterAPI {
     return () => this.subs.delete(fn);
   }
 
-  upload(path: string, data: Uint8Array): Promise<Manifest> {
-    return this.call('upload', [path, data]) as Promise<Manifest>;
+  upload(path: string, data: Uint8Array, redundancy: Redundancy = ''): Promise<Manifest> {
+    return this.call('upload', [path, data, redundancy]) as Promise<Manifest>;
   }
 
   download(path: string): Promise<Download> {

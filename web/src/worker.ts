@@ -15,7 +15,7 @@ interface ChunkdGlobal {
   start(seed: number): void;
   tick(ms: number): void;
   state(afterSeq: number): string;
-  upload(path: string, data: Uint8Array): string;
+  upload(path: string, data: Uint8Array, redundancy: string): string;
   download(path: string): { manifest: string; data?: Uint8Array };
   stat(path: string): string;
   remove(path: string): string;
@@ -106,7 +106,7 @@ function call(method: Method, args: unknown[]): { value: unknown; transfer: Tran
   const none = { value: null, transfer: [] };
   switch (method) {
     case 'upload':
-      return { value: parse(api.upload(a, b as Uint8Array)), transfer: [] };
+      return { value: parse(api.upload(a, b as Uint8Array, (args[2] as string) ?? '')), transfer: [] };
     case 'download': {
       const r = api.download(a);
       const manifest = parse(r.manifest);

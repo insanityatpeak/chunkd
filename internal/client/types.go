@@ -134,6 +134,8 @@ type RepairCopy struct {
 	Target    string `json:"target"`
 	Bytes     int64  `json:"bytes"`
 	StartedMs int64  `json:"startedMs"`
+	// RebuildFrom names the 4 nodes a shard rebuild reads; Source is then empty.
+	RebuildFrom []string `json:"rebuildFrom,omitempty"`
 }
 
 // Event is one entry of the metadata server's recent-event timeline.

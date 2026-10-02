@@ -67,7 +67,15 @@ export function Replication({ view }: { view: ClusterView }) {
                   <code>{c.chunk.slice(0, 12)}</code>
                 </td>
                 <td>
-                  {c.source} → {c.target}
+                  {c.rebuildFrom?.length ? (
+                    <span title="shard rebuild: the target reads 4 shards and decodes">
+                      rebuild from {c.rebuildFrom.join(', ')} → {c.target}
+                    </span>
+                  ) : (
+                    <>
+                      {c.source} → {c.target}
+                    </>
+                  )}
                 </td>
                 <td>{formatBytes(c.bytes)}</td>
                 <td>{((view.nowMs - c.startedMs) / 1000).toFixed(1)} s</td>

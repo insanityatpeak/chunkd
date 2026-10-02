@@ -293,3 +293,13 @@ Related: with 1% message loss a copy command or its completion report can be los
 | Root cause | A rebuild reads 4 shards: 8 messages, where a copy sends 2. The node asked the next source only after a read failed, and a lost request or answer fails only at the 10 s call timeout, which is also the scheduler's copy timeout. So one lost message (the sim drops 1%) let the copy time out, and the late result was not counted as the copy's. |
 | Fix | Every 2 s while it is unfinished, a rebuild also asks the next source (`rebuildHedge`). |
 | Regression test | `TestECBenchmark` requires bytes read to be exactly 4× bytes written and written to equal what the dead node held; a timed-out rebuild breaks both. |
+
+## 30. A read of a stripe waited a full call timeout on a node that had just died
+
+| | |
+|---|---|
+| Symptom | The first draft of the dashboard's `ec` scenario: reads of a 3-stripe file took 20 s, 10 s and 40 s after node-3 and later node-5 were killed, where a replicated file read in the same moments takes under a second. |
+| Repro | `go test -run 'TestScenarioGolden/ec$' ./internal/sim/cluster/ -update`, then the reads in `web/e2e/golden/ec.json`, before the fix. |
+| Root cause | For its first 3 s a killed node is still alive to the detector, so the metadata server lists its shards and the client asks for them. The stripe read sent its 4 reads as one `Caller.Do` batch, which returns only when every call has answered or timed out, so each chunk with a shard there waited the 10 s call timeout before parity was asked. A replicated read hedges to a second copy after the recent p95 instead. The code said so in a SIMPLIFIED note. |
+| Fix | `iface.Caller.Gather`, the k-of-n form of `Hedge` (sim and gRPC, both under the RPC conformance suite): it sends the first 4, replaces a failed or rejected call at once, and sends one more after the hedge delay without a new accepted answer. The stripe read uses it. In the scenario the slowest degraded read is now 706 ms. |
+| Regression test | `ifacetest.RPC` "gather" cases on both transports; the `ec` golden, replayed in the browser by Playwright, records the read times. |

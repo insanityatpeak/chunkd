@@ -62,13 +62,13 @@ func (c *Direct) putStripe(ctx context.Context, ch chunk.Chunk, shards []ec.Shar
 }
 
 // fetchStripe reads one erasure-coded chunk: any 4 shards, data shards on
-// alive nodes first, then parity, then shards only a suspect node holds.
-// A shard that fails, is missing or does not verify is replaced by the next
-// one in that order; once none is left, a shard that timed out is asked
-// again (a lost message is not a lost shard). Decoding is needed only when
-// a data shard is not used. The result is checked against the stripe ID (ADR-0022).
-// SIMPLIFIED: no hedging within a stripe: a slow shard costs its timeout
-// before the next is asked for. HDFS-EC's striped reader hedges per cell.
+// alive nodes first, then parity, then shards only a suspect node holds. A
+// shard that fails or does not verify is replaced at once by the next in
+// that order, and one still outstanding after the hedge delay (the recent
+// p95 read) brings in the next too, as fetch hedges a replica. A second pass
+// asks again the shards that only timed out: a lost message is not a lost
+// shard. Decoding is needed only when a data shard is not used. The result
+// is checked against the stripe ID (ADR-0022).
 func (c *Direct) fetchStripe(ctx context.Context, loc *chunkdv1.ChunkLocation, ref *ChunkRef) ([]byte, error) {
 	logical, err := wire.ChunkID(loc.GetId())
 	if err != nil {
@@ -78,41 +78,54 @@ func (c *Direct) fetchStripe(ctx context.Context, loc *chunkdv1.ChunkLocation, r
 	if len(locs) != ec.TotalShards {
 		return nil, iface.Errorf(iface.CodeInternal, "chunk %d: %d shard locations, want %d", ref.Index, len(locs), ec.TotalShards)
 	}
-	size := int(loc.GetSize())
-	payloads := make([][]byte, ec.TotalShards)
-	tries := make([]map[string]int, ec.TotalShards)
-	for j := range tries {
-		tries[j] = map[string]int{}
+	after := c.health.hedgeDelay()
+	if c.opts.NoHedge {
+		after = noHedge
 	}
-	var errs []error
+	payloads := make([][]byte, ec.TotalShards)
 	have := 0
-	for have < ec.DataShards {
-		calls, idx := c.nextShards(locs, payloads, tries, ec.DataShards-have)
+	var errs []error
+	retry := map[int]bool{} // shards whose every read failed transiently
+	for pass := 0; pass < 2 && have < ec.DataShards; pass++ {
+		calls, idx := c.shardCalls(locs, payloads, retry, pass)
 		if len(calls) == 0 {
 			break
 		}
+		clear(retry)
 		var mismatch []iface.Call
-		for k, res := range c.caller.Do(ctx, calls) {
-			j, node := idx[k], string(calls[k].To)
+		g := c.caller.Gather(ctx, calls, ec.DataShards-have, ec.DataShards-have, after, func(k int, res iface.Result) bool {
+			j := idx[k]
+			if payloads[j] != nil {
+				return false // another replica of this shard won
+			}
 			data, err := shardPayload(res, locs[j].GetId(), logical, j)
-			c.health.observe(node, res, err == nil)
-			sr := &ref.Shards[j]
 			if err != nil {
-				errs = append(errs, fmt.Errorf("shard %d on %s: %w", j, node, err))
-				if code := iface.CodeOf(err); code != iface.CodeUnavailable && code != iface.CodeRetry {
-					tries[j][node] = shardTries // not worth asking again
-				}
-				if errors.Is(err, errShardMismatch) || iface.CodeOf(err) == iface.CodeCorrupt {
-					sr.Rejected = append(sr.Rejected, node)
-				}
+				errs = append(errs, fmt.Errorf("shard %d on %s: %w", j, calls[k].To, err))
+				ref.Shards[j].Rejected = append(ref.Shards[j].Rejected, string(calls[k].To))
 				if errors.Is(err, errShardMismatch) {
 					mismatch = append(mismatch, calls[k])
 				}
+				return false
+			}
+			payloads[j], ref.Shards[j].ServedBy = data, string(calls[k].To)
+			have++
+			return true
+		})
+		for k := range g.Launched {
+			r, j := g.Results[k], idx[k]
+			c.health.observe(string(calls[k].To), r, slices.Contains(g.Accepted, k))
+			if r.Err == nil || r.Pending {
 				continue
 			}
-			payloads[j], sr.ServedBy = data, node
-			have++
+			errs = append(errs, fmt.Errorf("shard %d on %s: %w", j, calls[k].To, r.Err))
+			switch iface.CodeOf(r.Err) {
+			case iface.CodeUnavailable, iface.CodeRetry:
+				retry[j] = true
+			case iface.CodeCorrupt:
+				ref.Shards[j].Rejected = append(ref.Shards[j].Rejected, string(calls[k].To))
+			}
 		}
+		ref.Hedged = ref.Hedged || g.Launched > ec.DataShards
 		for _, call := range mismatch {
 			var req chunkdv1.GetChunkRequest
 			wire.Decode(call.Body, &req)
@@ -124,7 +137,7 @@ func (c *Direct) fetchStripe(ctx context.Context, loc *chunkdv1.ChunkLocation, r
 			ref.Index, ref.ID[:12], have, ec.TotalShards, ec.DataShards, ec.ErrUnrecoverable, errors.Join(errs...))
 	}
 	ref.Decoded = slices.ContainsFunc(payloads[:ec.DataShards], func(p []byte) bool { return p == nil })
-	data, err := c.codec.Join(payloads, size)
+	data, err := c.codec.Join(payloads, int(loc.GetSize()))
 	if err != nil {
 		return nil, iface.Errorf(iface.CodeInternal, "chunk %d: %v", ref.Index, err)
 	}
@@ -136,43 +149,39 @@ func (c *Direct) fetchStripe(ctx context.Context, loc *chunkdv1.ChunkLocation, r
 	return data, nil
 }
 
-// shardTries bounds the reads of one shard replica: a timeout or an
-// unavailable node may answer the second time, as in fetch.
-const shardTries = 2
-
-// nextShards picks up to n shards to read next and, for each, its best
-// replica with tries left: shards not yet asked before retries, then alive
-// data shards, alive parity, then suspect ones.
-func (c *Direct) nextShards(locs []*chunkdv1.ShardLocation, payloads [][]byte, tries []map[string]int, n int) ([]iface.Call, []int) {
+// shardCalls lists the reads of one pass in preference order. The first
+// pass asks every missing shard's replicas: alive data shards, alive parity,
+// then shards only a suspect node holds, a shard's other replicas last. The
+// second asks only the shards in retry, those whose reads timed out.
+func (c *Direct) shardCalls(locs []*chunkdv1.ShardLocation, payloads [][]byte, retry map[int]bool, pass int) ([]iface.Call, []int) {
 	type pick struct {
-		j       int
+		j, rank int
 		rep     *chunkdv1.Replica
-		suspect bool
-		tries   int
 	}
 	var picks []pick
 	for j, sl := range locs {
-		if payloads[j] != nil {
+		if payloads[j] != nil || (pass > 0 && !retry[j]) {
 			continue
 		}
-		for _, r := range c.health.order(sl.GetReplicas()) {
-			if t := tries[j][r.GetNode()]; t < shardTries {
-				picks = append(picks, pick{j, r, r.GetSuspect(), t})
-				break
+		for n, r := range c.health.order(sl.GetReplicas()) {
+			rank := 0
+			switch {
+			case n > 0:
+				rank = 2
+			case r.GetSuspect():
+				rank = 1
 			}
+			picks = append(picks, pick{j, rank, r})
 		}
 	}
-	// Stable: within each group, data shards (lower indexes) first.
-	slices.SortStableFunc(picks, func(a, b pick) int {
-		return cmp.Or(cmp.Compare(a.tries, b.tries), cmp.Compare(btoi(a.suspect), btoi(b.suspect)))
-	})
-	var calls []iface.Call
-	var idx []int
-	for _, p := range picks[:min(n, len(picks))] {
-		tries[p.j][p.rep.GetNode()]++
-		calls = append(calls, iface.Call{To: iface.NodeID(p.rep.GetNode()), Addr: p.rep.GetAddr(), Kind: wire.KindGetChunk,
-			Body: wire.Marshal(&chunkdv1.GetChunkRequest{Id: locs[p.j].GetId()})})
-		idx = append(idx, p.j)
+	// Stable: within a rank, data shards (lower indexes) first.
+	slices.SortStableFunc(picks, func(a, b pick) int { return cmp.Compare(a.rank, b.rank) })
+	calls := make([]iface.Call, len(picks))
+	idx := make([]int, len(picks))
+	for k, p := range picks {
+		calls[k] = iface.Call{To: iface.NodeID(p.rep.GetNode()), Addr: p.rep.GetAddr(), Kind: wire.KindGetChunk,
+			Body: wire.Marshal(&chunkdv1.GetChunkRequest{Id: locs[p.j].GetId()})}
+		idx[k] = p.j
 	}
 	return calls, idx
 }
@@ -218,11 +227,4 @@ func ParseRedundancy(s string) (Redundancy, error) {
 		return EC42, nil
 	}
 	return "", iface.Errorf(iface.CodeInvalid, "unknown redundancy %q: want replicated or %s", s, EC42)
-}
-
-func btoi(b bool) int {
-	if b {
-		return 1
-	}
-	return 0
 }

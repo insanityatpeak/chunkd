@@ -462,6 +462,74 @@ loop:
 	return out
 }
 
+// Gather implements iface.Caller. Calls still running when it returns are
+// cancelled.
+func (c *Caller) Gather(ctx context.Context, calls []iface.Call, first, need int, after time.Duration, accept func(int, iface.Result) bool) iface.GatherResult {
+	out := iface.GatherResult{Results: make([]iface.Result, len(calls))}
+	if len(calls) == 0 || need <= 0 {
+		return out
+	}
+	ctx, cancel := context.WithCancel(ctx)
+	defer cancel()
+	type done struct {
+		i int
+		r iface.Result
+	}
+	ch := make(chan done, len(calls)) // buffered: stragglers finish after we return
+	starts := make([]time.Time, len(calls))
+	settled := make([]bool, len(calls))
+	finished := 0
+	timer := time.NewTimer(after)
+	defer timer.Stop()
+	launch := func() {
+		i := out.Launched
+		out.Launched++
+		starts[i] = time.Now()
+		go func() {
+			r := c.one(ctx, calls[i])
+			r.Latency = time.Since(starts[i])
+			ch <- done{i, r}
+		}()
+		timer.Reset(after)
+	}
+	for out.Launched < min(max(first, 1), len(calls)) {
+		launch()
+	}
+loop:
+	for len(out.Accepted) < need {
+		select {
+		case d := <-ch:
+			out.Results[d.i], settled[d.i] = d.r, true
+			finished++
+			if d.r.Err == nil && accept(d.i, d.r) {
+				out.Accepted = append(out.Accepted, d.i)
+				timer.Reset(after)
+			} else if out.Launched < len(calls) {
+				launch() // a replacement, at once
+			}
+			if finished == out.Launched && len(out.Accepted) < need {
+				if out.Launched == len(calls) {
+					break loop
+				}
+				launch() // nothing outstanding: no point waiting
+			}
+		case <-timer.C:
+			if out.Launched < len(calls) {
+				launch()
+			}
+		case <-ctx.Done():
+			break loop
+		}
+	}
+	for i := range out.Launched {
+		if !settled[i] {
+			out.Results[i] = iface.Result{Err: iface.Errorf(iface.CodeUnavailable, "%s to %s: abandoned", calls[i].Kind, calls[i].To),
+				Latency: time.Since(starts[i]), Pending: true}
+		}
+	}
+	return out
+}
+
 func (c *Caller) one(ctx context.Context, call iface.Call) iface.Result {
 	addr := call.Addr
 	c.mu.Lock()

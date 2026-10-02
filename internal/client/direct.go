@@ -603,7 +603,7 @@ func ClusterFromProto(resp *chunkdv1.ClusterResponse) Cluster {
 	}
 	for _, c := range resp.GetCopies() {
 		out.Copies = append(out.Copies, RepairCopy{ID: c.GetId(), Chunk: hex.EncodeToString(c.GetChunkId()), Source: c.GetSource(),
-			Target: c.GetTarget(), Bytes: c.GetBytes(), StartedMs: c.GetStartedMs()})
+			Target: c.GetTarget(), Bytes: c.GetBytes(), StartedMs: c.GetStartedMs(), RebuildFrom: c.GetRebuildFrom()})
 	}
 	for _, e := range resp.GetEvents() {
 		out.Events = append(out.Events, Event{Seq: e.GetSeq(), AtMs: e.GetAtMs(), Kind: e.GetKind(), Node: e.GetNode(), Text: e.GetText()})

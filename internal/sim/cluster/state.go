@@ -74,12 +74,13 @@ type NodeView struct {
 
 // FileView is one committed file and its replication state.
 type FileView struct {
-	Path            string `json:"path"`
-	Version         uint64 `json:"version"`
-	Size            int64  `json:"size"`
-	Chunks          int    `json:"chunks"`
-	UnderReplicated int    `json:"underReplicated"`
-	MinLive         int    `json:"minLive"`
+	Path            string            `json:"path"`
+	Version         uint64            `json:"version"`
+	Size            int64             `json:"size"`
+	Chunks          int               `json:"chunks"`
+	UnderReplicated int               `json:"underReplicated"`
+	MinLive         int               `json:"minLive"`
+	Redundancy      client.Redundancy `json:"redundancy,omitempty"`
 }
 
 // State returns the current snapshot with every retained event.
@@ -132,7 +133,8 @@ func (c *Cluster) StateSince(seq uint64) State {
 	}
 	for _, e := range srv.State().List("/") {
 		h := health[e.Path]
-		s.Files = append(s.Files, FileView{Path: e.Path, Version: e.V, Size: e.Size, Chunks: len(e.Chunks), UnderReplicated: h.UnderReplicated, MinLive: h.MinLive})
+		s.Files = append(s.Files, FileView{Path: e.Path, Version: e.V, Size: e.Size, Chunks: len(e.Chunks), UnderReplicated: h.UnderReplicated, MinLive: h.MinLive,
+			Redundancy: h.Redundancy})
 	}
 	return s
 }

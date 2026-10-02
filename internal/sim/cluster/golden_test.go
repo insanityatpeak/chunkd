@@ -21,7 +21,7 @@ var goldens = []struct {
 	name  string
 	until time.Duration
 }{{"kill-node", 120 * time.Second}, {"corrupt-chunk", 120 * time.Second}, {"gc", 200 * time.Second}, {"kill-leader", 120 * time.Second},
-	{"add-node", 120 * time.Second}, {"drain", 120 * time.Second}}
+	{"add-node", 120 * time.Second}, {"drain", 120 * time.Second}, {"ec", 120 * time.Second}}
 
 // Golden is a scenario's timeline as the dashboard must show it.
 type Golden struct {

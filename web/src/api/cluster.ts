@@ -8,9 +8,24 @@ export interface FileInfo {
   size: number;
   sha256?: string;
   chunks: number;
-  // Replication: chunks below RF, and the fewest alive copies of any chunk.
+  // Replication: chunks below RF, and the fewest alive copies of any chunk;
+  // for an EC file, stripes below 6 shards and the fewest alive shards.
   underReplicated?: number;
   minLive?: number;
+  redundancy?: Redundancy;
+}
+
+// Redundancy is how a file survives node loss (ADR-0022): absent or empty
+// for 3 copies, ec-4+2 for 4 data and 2 parity shards on 6 nodes.
+export type Redundancy = '' | 'ec-4+2';
+
+// ShardRef is one shard of an erasure-coded chunk: 0-3 data, 4-5 parity.
+export interface ShardRef {
+  index: number;
+  id: string;
+  replicas: string[] | null;
+  servedBy?: string;
+  rejected?: string[] | null;
 }
 
 export interface ChunkRef {
@@ -20,6 +35,9 @@ export interface ChunkRef {
   replicas: string[] | null;
   servedBy?: string;
   rejected?: string[] | null;
+  // EC: the 6 shards, replicas empty; decoded when a read used parity.
+  shards?: ShardRef[] | null;
+  decoded?: boolean;
 }
 
 export interface Manifest extends FileInfo {
@@ -90,6 +108,8 @@ export interface RepairCopy {
   target: string;
   bytes: number;
   startedMs: number;
+  // A shard rebuild: the 4 nodes read; source is empty.
+  rebuildFrom?: string[] | null;
 }
 
 export interface TimelineEvent {
@@ -226,7 +246,7 @@ export interface ClusterAPI {
   start(seed: number, scenario?: string): Promise<void>;
   scenarios(): Promise<ScenarioInfo[]>;
   subscribe(fn: (v: ClusterView) => void): () => void;
-  upload(path: string, data: Uint8Array): Promise<Manifest>;
+  upload(path: string, data: Uint8Array, redundancy?: Redundancy): Promise<Manifest>;
   download(path: string): Promise<Download>;
   stat(path: string): Promise<Manifest>;
   remove(path: string): Promise<void>;

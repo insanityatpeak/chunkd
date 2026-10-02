@@ -396,6 +396,87 @@ func (c *Caller) Hedge(ctx context.Context, calls []iface.Call, after time.Durat
 	return out
 }
 
+// Gather implements iface.Caller on the sim clock, like Hedge.
+func (c *Caller) Gather(ctx context.Context, calls []iface.Call, first, need int, after time.Duration, accept func(int, iface.Result) bool) iface.GatherResult {
+	out := iface.GatherResult{Results: make([]iface.Result, len(calls))}
+	ids := make([]uint64, len(calls))
+	settled := make([]bool, len(calls))
+	var lastNews iface.Instant // the last launch or accepted answer
+	launch := func() {
+		i := out.Launched
+		ids[i] = c.send(calls[i], &out.Results[i])
+		out.Launched++
+		lastNews = c.net.clock.Now()
+	}
+	for out.Launched < min(max(first, 1), len(calls)) {
+		launch()
+	}
+	for ctx.Err() == nil && len(out.Accepted) < need {
+		now := c.net.clock.Now()
+		outstanding, replace := 0, 0
+		for i := range out.Launched {
+			if settled[i] {
+				continue
+			}
+			p, open := c.pending[ids[i]]
+			if open && now >= p.deadline {
+				c.expire(ids[i], calls[i], ctx)
+				open = false
+			}
+			if open {
+				outstanding++
+				continue
+			}
+			settled[i] = true
+			if out.Results[i].Err == nil && accept(i, out.Results[i]) {
+				out.Accepted = append(out.Accepted, i)
+				lastNews = now
+			} else {
+				replace++
+			}
+		}
+		if len(out.Accepted) >= need {
+			break
+		}
+		for ; replace > 0 && out.Launched < len(calls); replace-- {
+			launch()
+			outstanding++
+		}
+		more := out.Launched < len(calls)
+		if more && (outstanding == 0 || now >= lastNews.Add(after)) {
+			launch()
+			continue
+		}
+		if outstanding == 0 {
+			break
+		}
+		// Wake at the next launch, the next deadline, or the next event.
+		wake := iface.Instant(-1)
+		if more {
+			wake = lastNews.Add(after)
+		}
+		for i := range out.Launched {
+			if p, open := c.pending[ids[i]]; open && (wake < 0 || p.deadline < wake) {
+				wake = p.deadline
+			}
+		}
+		if next, ok := c.net.clock.Next(); ok && next <= wake {
+			c.net.clock.Step()
+		} else {
+			c.net.clock.Advance(wake.Sub(now))
+		}
+	}
+	now := c.net.clock.Now()
+	for i := range out.Launched {
+		if p, open := c.pending[ids[i]]; open {
+			delete(c.pending, ids[i])
+			out.Results[i] = iface.Result{Err: iface.Errorf(iface.CodeUnavailable, "%s to %s: abandoned", calls[i].Kind, calls[i].To),
+				Latency: now.Sub(p.sent), Pending: true}
+		}
+	}
+	return out
+}
+
 // AsyncCaller returns an iface.AsyncCaller for code running as node id.
 // Responses are matched by request ID before id's Listen handler sees them.
 func (n *Net) AsyncCaller(id iface.NodeID, timeout time.Duration) iface.AsyncCaller {

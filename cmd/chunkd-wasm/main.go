@@ -6,7 +6,7 @@
 //	start(seed)             build a cluster
 //	tick(ms)                advance simulated time
 //	state(afterSeq)         JSON snapshot with timeline events after afterSeq
-//	upload(path, bytes)     JSON manifest; runs the real client, advancing sim time
+//	upload(path, bytes[, redundancy])  JSON manifest; runs the real client, advancing sim time
 //	download(path)          {manifest: JSON, data: Uint8Array}; verified by the client
 //	stat(path)              JSON manifest with replica locations
 //	remove(path)            JSON {version}
@@ -94,7 +94,14 @@ func main() {
 		"upload": needCluster(func(args []js.Value) any {
 			data := make([]byte, args[1].Get("length").Int())
 			js.CopyBytesToGo(data, args[1])
-			m, err := c.Client().Put(ctx, args[0].String(), bytes.NewReader(data), int64(len(data)), client.PutOptions{Overwrite: true})
+			opts := client.PutOptions{Overwrite: true}
+			if len(args) > 2 && args[2].Type() == js.TypeString {
+				var err error
+				if opts.Redundancy, err = client.ParseRedundancy(args[2].String()); err != nil {
+					return jsonValue(client.Manifest{}, err)
+				}
+			}
+			m, err := c.Client().Put(ctx, args[0].String(), bytes.NewReader(data), int64(len(data)), opts)
 			return jsonValue(m, err)
 		}),
 		"download": needCluster(func(args []js.Value) any {

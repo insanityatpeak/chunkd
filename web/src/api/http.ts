@@ -16,6 +16,7 @@ import {
   type DeletedFile,
   type MetaPeerView,
   type MetaState,
+  type Redundancy,
 } from './cluster';
 import { sha256Hex } from '../verify';
 
@@ -179,8 +180,9 @@ export class HttpClusterAPI implements ClusterAPI {
     return (await resp.json()) as T;
   }
 
-  upload(path: string, data: Uint8Array): Promise<Manifest> {
-    return this.json<Manifest>(`/files${encodePath(path)}`, { method: 'POST', body: data as BodyInit });
+  upload(path: string, data: Uint8Array, redundancy: Redundancy = ''): Promise<Manifest> {
+    const q = redundancy ? `?redundancy=${encodeURIComponent(redundancy)}` : '';
+    return this.json<Manifest>(`/files${encodePath(path)}${q}`, { method: 'POST', body: data as BodyInit });
   }
 
   stat(path: string): Promise<Manifest> {
