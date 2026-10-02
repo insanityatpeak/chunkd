@@ -8,6 +8,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/insanityatpeak/chunkd/internal/client"
 	"github.com/insanityatpeak/chunkd/internal/iface"
 	"github.com/insanityatpeak/chunkd/internal/sim/cluster"
 )
@@ -242,5 +243,29 @@ func TestCheckerSeesRot(t *testing.T) {
 	}
 	if n := c.Nodes()[0].Stats().Corrupt; n != uint64(len(rotted)) {
 		t.Fatalf("node-1 quarantined %d of %d", n, len(rotted))
+	}
+}
+
+// Bugs-found #17: after a metadata failover the new leader's counters start
+// below the old one's; last minus first underflowed to 2^64 - 60.
+func TestLeaderDeltasAcrossFailover(t *testing.T) {
+	h := func(repaired, found uint64) client.Health {
+		return client.Health{RepairCompleted: repaired, CorruptReplicas: found}
+	}
+	d := leaderDeltas{prev: h(50, 2), leader: "meta-1"}
+	for _, p := range []struct {
+		leader string
+		h      client.Health
+	}{
+		{"meta-1", h(53, 3)}, // +3, +1
+		{"", h(0, 0)},        // election: nothing
+		{"meta-2", h(0, 0)},  // new process
+		{"meta-2", h(4, 1)},  // +4, +1
+		{"meta-2", h(4, 1)},
+	} {
+		d.add(p.leader, p.h)
+	}
+	if d.repaired != 7 || d.found != 2 {
+		t.Fatalf("repaired %d, found %d; want 7 and 2", d.repaired, d.found)
 	}
 }

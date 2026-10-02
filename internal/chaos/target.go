@@ -87,12 +87,7 @@ func RunTarget(s Scenario, t Target, bound time.Duration, logf func(string, ...a
 	var underSince time.Time
 	var polls, lost int
 	var last client.Health
-	// Repair and corruption counters are the answering leader's, since its
-	// process started: across a leader change they restart, so the run adds
-	// up per-leader deltas. Copies in the second before a new leader's first
-	// poll are not counted.
-	prev, prevLeader := h0, c0.MetaLeader
-	var repaired, found uint64
+	counts := leaderDeltas{prev: h0, leader: c0.MetaLeader}
 	allAlive := false
 	stop := make(chan struct{})
 	polled := make(chan struct{})
@@ -108,11 +103,7 @@ func RunTarget(s Scenario, t Target, bound time.Duration, logf func(string, ...a
 			if err == nil {
 				polls++
 				last = h
-				if cl.MetaLeader == prevLeader && h.RepairCompleted >= prev.RepairCompleted && h.CorruptReplicas >= prev.CorruptReplicas {
-					repaired += h.RepairCompleted - prev.RepairCompleted
-					found += h.CorruptReplicas - prev.CorruptReplicas
-				}
-				prev, prevLeader = h, cl.MetaLeader
+				counts.add(cl.MetaLeader, h)
 				if l := cl.MetaLeader; l != "" && (len(r.Leaders) == 0 || r.Leaders[len(r.Leaders)-1] != l) {
 					r.Leaders = append(r.Leaders, l)
 				}
@@ -223,7 +214,7 @@ func RunTarget(s Scenario, t Target, bound time.Duration, logf func(string, ...a
 	quiet := time.Now()
 	for {
 		mu.Lock()
-		h, alive, seen := last, allAlive, int(found)
+		h, alive, seen := last, allAlive, int(counts.found)
 		mu.Unlock()
 		// Settled also means every node is alive: a returning node is
 		// suspect first, and until then its extra copies do not count as
@@ -262,7 +253,7 @@ func RunTarget(s Scenario, t Target, bound time.Duration, logf func(string, ...a
 	if r.LongestUnder > bound {
 		errs = append(errs, fmt.Errorf("chunks under-replicated for %v, bound %v", r.LongestUnder, bound))
 	}
-	r.RepairCopies = repaired
+	r.RepairCopies = counts.repaired
 	if s.NoRepair && r.RepairCopies > 0 {
 		errs = append(errs, fmt.Errorf("%d repair copies for a transient fault", r.RepairCopies))
 	}
@@ -372,4 +363,22 @@ func writes(from, to time.Duration) []Op {
 func sorted(ops []Op) []Op {
 	slices.SortStableFunc(ops, func(a, b Op) int { return cmp.Compare(a.At, b.At) })
 	return ops
+}
+
+// leaderDeltas adds up repair and corruption counts across leader changes.
+// The counters are the answering leader's, since its process started: they
+// restart with a new leader, so only deltas within one leader count. Copies
+// in the second before a new leader's first poll are lost.
+type leaderDeltas struct {
+	prev            client.Health
+	leader          string
+	repaired, found uint64
+}
+
+func (d *leaderDeltas) add(leader string, h client.Health) {
+	if leader == d.leader && h.RepairCompleted >= d.prev.RepairCompleted && h.CorruptReplicas >= d.prev.CorruptReplicas {
+		d.repaired += h.RepairCompleted - d.prev.RepairCompleted
+		d.found += h.CorruptReplicas - d.prev.CorruptReplicas
+	}
+	d.prev, d.leader = h, leader
 }
