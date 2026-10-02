@@ -106,6 +106,8 @@ type Op struct {
 	Kind OpKind
 	Path string
 	Size int64 // Put
+	// EC stores a Put as RS(4,2) stripes (ADR-0022).
+	EC bool
 	// Minority sends the op from a client pinned to the peer a CutLeader
 	// fault has partitioned off, when one is: the client on the small side.
 	Minority bool
@@ -113,10 +115,12 @@ type Op struct {
 
 // Scenario is a fault schedule plus a workload over a fixed cluster shape.
 type Scenario struct {
-	Name   string // set for hand-written scenarios
-	Seed   uint64
-	Nodes  int
-	Metas  int // metadata peers; 0 or 1 is a single server
+	Name  string // set for hand-written scenarios
+	Seed  uint64
+	Nodes int
+	Metas int // metadata peers; 0 or 1 is a single server
+	// EC: about half the puts are erasure-coded (ECShape).
+	EC     bool
 	Length time.Duration
 	Faults []Fault
 	Ops    []Op
@@ -139,6 +143,9 @@ func (s Scenario) String() string {
 	if s.Metas > 1 {
 		fmt.Fprintf(&b, "%d metas, ", s.Metas)
 	}
+	if s.EC {
+		fmt.Fprintf(&b, "%d EC puts, ", s.ecPuts())
+	}
 	fmt.Fprintf(&b, "%v, %d ops\n", s.Length, len(s.Ops))
 	for _, f := range s.Faults {
 		b.WriteString("  " + f.String() + "\n")
@@ -158,6 +165,9 @@ type Shape struct {
 	// Admin is the most membership episodes (add a node, drain, drain and
 	// kill, add and kill the leader mid-rebalance); 0 draws none.
 	Admin int
+	// EC draws about half the puts as erasure-coded, from a stream of their
+	// own.
+	EC bool
 }
 
 // DefaultShape is a 5-node cluster, 2 simulated minutes, 40 operations on
@@ -175,6 +185,15 @@ func MetaShape() Shape {
 	return sh
 }
 
+// ECShape is DefaultShape on 7 nodes with about half the puts
+// erasure-coded: a stripe spans 6, and the seventh gives a dead node's
+// shards somewhere to be rebuilt.
+func ECShape() Shape {
+	sh := DefaultShape()
+	sh.Nodes, sh.EC = 7, true
+	return sh
+}
+
 // elections is the episode kind for repeated leader kills; it has no Fault
 // kind of its own.
 const elections Kind = "elections"
@@ -189,16 +208,20 @@ type episode struct {
 // Generate builds a scenario from seed. Safety rules keep every invariant
 // achievable, so a violation is a bug rather than an impossible schedule:
 //
-//   - at most 2 nodes killed or frozen at once (RF 3 leaves one copy);
+//   - at most 2 nodes killed or frozen at once (RF 3 leaves one copy; a
+//     stripe committed at 5 of 6 shards keeps 3, readable again once a
+//     node returns);
 //   - at most one wipe per scenario (commit at 2 of 3 survives one lost
-//     disk; two lost disks can destroy an acknowledged chunk by design);
+//     disk, as does commit at 5 of 6 shards; two lost disks can destroy an
+//     acknowledged chunk by design);
 //   - one lossy window at a time;
 //   - every impairment ends 10 s before the scenario does;
 //   - with a metadata group, at most one peer is down, frozen or cut off at
 //     once (a majority of 3 always stands), so leader faults never overlap;
 //   - rot (applied by the runner) only hits a chunk that keeps 2 intact
-//     copies on other nodes this scenario never wipes: rot on the last
-//     copies is detected loudly by design (TestAllReplicasCorrupt), not
+//     copies on other nodes this scenario never wipes, or a shard whose
+//     stripe keeps 5 intact shards on such nodes: rot on the last copies
+//     is detected loudly by design (TestAllReplicasCorrupt), not
 //     survivable.
 func Generate(seed uint64, sh Shape) Scenario {
 	rng := sim.NewRand(seed ^ 0x9e3779b97f4a7c15) // independent of the cluster's stream
@@ -324,6 +347,13 @@ func Generate(seed uint64, sh Shape) Scenario {
 		s.Ops = append(s.Ops, op)
 	}
 	slices.SortStableFunc(s.Ops, func(a, b Op) int { return cmp.Compare(a.At, b.At) })
+	if sh.EC {
+		s.EC = true
+		ecRng := sim.NewRand(seed ^ 0xec42_5717_19e5_0b5e)
+		for i := range s.Ops {
+			s.Ops[i].EC = s.Ops[i].Kind == Put && ecRng.IntN(2) == 0
+		}
+	}
 	// Half the ops issued while a leader is cut off come from the client on its side.
 	for i, op := range s.Ops {
 		if slices.ContainsFunc(cuts, func(e episode) bool { return op.At >= e.start && op.At < e.end }) {
@@ -405,4 +435,14 @@ func admin(seed uint64, sh Shape, eps *[]episode, overlapping func(time.Duration
 		}
 	}
 	return out
+}
+
+func (s Scenario) ecPuts() int {
+	n := 0
+	for _, op := range s.Ops {
+		if op.EC {
+			n++
+		}
+	}
+	return n
 }

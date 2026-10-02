@@ -83,6 +83,8 @@ type Cluster struct {
 	badTrims []error
 	// killedAt and wipedAt are each node's latest kill and wipe.
 	killedAt map[iface.NodeID]iface.Instant
+	// trimSent is when each trim delete was last sent (metaNet).
+	trimSent map[trimKey]iface.Instant
 	wipedAt  map[iface.NodeID]iface.Instant
 	// admin sends AdminAsync commands; adminQ holds each node's, in order.
 	admin    iface.AsyncCaller
@@ -105,7 +107,7 @@ type Node struct {
 // go to w; pass io.Discard to silence them.
 func New(seed uint64, cfg Config, w io.Writer) *Cluster {
 	c := &Cluster{seed: seed, cfg: cfg, clock: sim.NewClock(), rng: sim.NewRand(seed), log: w, acked: map[string]*acked{},
-		written: map[string][][32]byte{}, killedAt: map[iface.NodeID]iface.Instant{}, wipedAt: map[iface.NodeID]iface.Instant{}}
+		written: map[string][][32]byte{}, killedAt: map[iface.NodeID]iface.Instant{}, trimSent: map[trimKey]iface.Instant{}, wipedAt: map[iface.NodeID]iface.Instant{}}
 	c.net = sim.NewNet(c.clock, c.rng, cfg.Faults)
 	for i := range max(cfg.Metas, 1) { // all of them exist before any starts: each needs the full peer list
 		c.metas = append(c.metas, &metaPeer{id: metaName(i), store: sim.NewMetaStore()})
@@ -369,7 +371,7 @@ func (c *Cluster) startMeta(p *metaPeer) error {
 	if len(c.metas) > 1 {
 		cfg.Peers = c.MetaIDs()
 	}
-	srv, err := meta.NewServer(context.Background(), meta.Deps{Clock: c.clock, Net: c.net, Store: p.store, Rand: c.rng, Log: c.logger(p.id)}, cfg)
+	srv, err := meta.NewServer(context.Background(), meta.Deps{Clock: c.clock, Net: metaNet{c.net, c}, Store: p.store, Rand: c.rng, Log: c.logger(p.id)}, cfg)
 	if err != nil {
 		return err
 	}

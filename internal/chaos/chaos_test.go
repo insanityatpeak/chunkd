@@ -349,3 +349,49 @@ func TestGenerateAdminRules(t *testing.T) {
 		}
 	}
 }
+
+// EC puts survive the same faults: reads decode around missing shards,
+// repair rebuilds them, and the invariants count shards.
+func TestChaosECSeeds(t *testing.T) {
+	n := min(*seeds, 10)
+	if testing.Short() {
+		n = 3
+	}
+	ecPuts, rebuilds := 0, uint64(0)
+	for seed := uint64(1); seed <= uint64(n); seed++ {
+		r := Run(Generate(seed, ECShape()), io.Discard)
+		if r.Err != nil {
+			t.Fatal(r.Err)
+		}
+		ecPuts += r.Ops["put-ec ok"]
+		rebuilds += r.Repair.Rebuilds
+	}
+	if ecPuts == 0 || rebuilds == 0 {
+		t.Fatalf("%d EC puts acknowledged, %d shards rebuilt: the shape does not exercise EC", ecPuts, rebuilds)
+	}
+}
+
+// Seeds that found bugs-found #25-#28.
+func TestChaosECRegressions(t *testing.T) {
+	meta := ECShape()
+	meta.Metas, meta.Episodes = 3, MetaShape().Episodes
+	for _, c := range []struct {
+		seed  uint64
+		shape Shape
+	}{{946, ECShape()}, {586, ECShape()}, {405, ECShape()}, {244, meta}} {
+		if r := Run(Generate(c.seed, c.shape), io.Discard); r.Err != nil {
+			t.Fatal(r.Err)
+		}
+	}
+}
+
+func TestSameSeedSameTraceEC(t *testing.T) {
+	a := Run(Generate(7, ECShape()), io.Discard)
+	b := Run(Generate(7, ECShape()), io.Discard)
+	if a.Trace != b.Trace || a.Repair != b.Repair {
+		t.Fatalf("seed 7 replayed differently: %s vs %s", a.Trace, b.Trace)
+	}
+	if !strings.Contains(Replay(Generate(7, ECShape())), "--ec") {
+		t.Fatal("the replay command drops --ec")
+	}
+}

@@ -301,8 +301,8 @@ func (c *Cluster) UnderReplicated() int {
 	return n
 }
 
-// OverReplicated counts chunks of live files with more than Replicas
-// reported locations on alive nodes, or for a stripe, a shard with more than one.
+// OverReplicated counts chunks of live files with more than Replicas kept
+// copies (keptCopies), or for a stripe, a shard with more than one.
 func (c *Cluster) OverReplicated() int {
 	n := 0
 	seen := map[iface.ChunkID]bool{}
@@ -313,12 +313,12 @@ func (c *Cluster) OverReplicated() int {
 			}
 			seen[id] = true
 			if shards, ok := c.Meta().State().Stripe(id); ok {
-				if slices.ContainsFunc(shards, func(sh iface.ChunkID) bool { return c.aliveCopies(sh) > 1 }) {
+				if slices.ContainsFunc(shards, func(sh iface.ChunkID) bool { return c.keptCopies(sh) > 1 }) {
 					n++
 				}
 				continue
 			}
-			if c.aliveCopies(id) > c.cfg.Meta.Replicas {
+			if c.keptCopies(id) > c.cfg.Meta.Replicas {
 				n++
 			}
 		}
@@ -462,4 +462,18 @@ func (c *Cluster) copyTarget(id iface.ChunkID) (int, bool) {
 	}
 	ci, ok := st.Chunk(b.Ref.Stripe)
 	return 1, ok && ci.Refcount > 0
+}
+
+// keptCopies counts id's copies on alive nodes that GC has not authorized
+// deleting. A copy under a pending GC delete is gone to repair (bugs-found
+// #28): counting it as surplus would wait on GC, not on a trim.
+func (c *Cluster) keptCopies(id iface.ChunkID) int {
+	cl, st := c.Meta().Cluster(), c.Meta().State()
+	n := 0
+	for _, nd := range cl.Locations(id) {
+		if _, gc := st.GCPending(id, nd); cl.Alive(nd) && !gc {
+			n++
+		}
+	}
+	return n
 }

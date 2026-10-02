@@ -148,3 +148,28 @@ func TestExtraShardCopyIsTrimmed(t *testing.T) {
 		t.Fatalf("trims %+v, want one of shard 0", trims)
 	}
 }
+
+// Two shards of one stripe on one node (left by a copy GC was deleting):
+// a rebuild reading both must stay within that node's source slots
+// (bugs-found #26).
+func TestRebuildCountsSlotsPerNode(t *testing.T) {
+	w := newWorld(8)
+	w.addStripe(10, 1, 2, 2, 4, 5, 6) // n02 holds shards 1 and 2
+	h := newHarness(t, unthrottled(), w, -1)
+	h.s.src[node(2)] = 1
+	w.kill(node(1), 0)
+	h.s.Scan()
+	h.clock.Advance(21 * time.Second) // 5 shards left: the delay applies
+	if len(h.copies) != 1 {
+		t.Fatalf("%d copies, want 1", len(h.copies))
+	}
+	n2 := 0
+	for _, s := range h.copies[0].Rebuild.Sources[:ec.DataShards] {
+		if s.Node == node(2) {
+			n2++
+		}
+	}
+	if n2 != 1 || h.s.src[node(2)] > h.s.cfg.PerSource {
+		t.Fatalf("n02 is %d of the first 4 sources, %d slots held", n2, h.s.src[node(2)])
+	}
+}

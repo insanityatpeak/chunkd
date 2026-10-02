@@ -33,6 +33,8 @@ jobs:
         run: go run ./tools/task chaos --seeds=1000 --artifacts=chaos-artifacts
       - name: chaos, 500 sim seeds over a 3-peer metadata group (leader kills, freezes, partitions, repeated elections), histories checked
         run: go run ./tools/task chaos --seeds=500 --metas=3 --artifacts=chaos-artifacts/meta
+      - name: chaos, 500 sim seeds on 7 nodes with about half the puts erasure-coded, histories checked
+        run: go run ./tools/task chaos --seeds=500 --ec --artifacts=chaos-artifacts/ec
       - name: upload non-linearizable histories
         if: failure()
         uses: actions/upload-artifact@v4

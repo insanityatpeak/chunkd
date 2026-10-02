@@ -727,11 +727,13 @@ func (s *Scheduler) pickSources(sibs []sibling) ([]ShardSource, bool) {
 		free  bool
 	}
 	var cs []choice
+	planned := map[iface.NodeID]int{} // slots this rebuild would take
 	for _, sb := range sibs {
 		best := choice{src: ShardSource{Index: sb.index, Shard: sb.shard, Node: sb.holders[0].Node}, state: sb.holders[0].State}
 		for _, h := range sb.holders {
-			if s.src[h.Node] < s.cfg.PerSource {
+			if s.src[h.Node]+planned[h.Node] < s.cfg.PerSource {
 				best = choice{src: ShardSource{Index: sb.index, Shard: sb.shard, Node: h.Node}, state: h.State, free: true}
+				planned[h.Node]++
 				break
 			}
 		}

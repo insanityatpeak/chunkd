@@ -4,6 +4,7 @@
 //	chunkd-chaos -seeds 500            seeds 1..500 in parallel (sim)
 //	chunkd-chaos -seed 63 -v           one seed, with its schedule and logs
 //	chunkd-chaos -seeds 500 -metas 3   over a 3-peer metadata group, with leader faults
+//	chunkd-chaos -seeds 500 -ec        7 nodes, about half the puts erasure-coded
 //	chunkd-chaos -mode real -short     the real-mode suite against docker compose
 //
 // Every failure prints the command that replays it.
@@ -63,6 +64,7 @@ func main() {
 	project := flag.String("project", "chunkd", "real mode: compose project name")
 	bound := flag.Duration("bound", 90*time.Second, "real mode: longest allowed under-replication, and settle time after quiet")
 	metas := flag.Int("metas", 1, "sim mode: metadata peers; 3 adds leader kills, freezes, partitions and repeated elections")
+	ecPuts := flag.Bool("ec", false, "sim mode: 7 nodes, about half the puts erasure-coded (RS 4+2)")
 	artifacts := flag.String("artifacts", "", "directory for the visualization of a history that is not linearizable")
 	flag.Parse()
 
@@ -78,6 +80,9 @@ func main() {
 	if *metas > 1 {
 		shape = chaos.MetaShape()
 		shape.Metas = *metas
+	}
+	if *ecPuts {
+		shape.Nodes, shape.EC = chaos.ECShape().Nodes, true
 	}
 
 	if *seed != 0 {
@@ -103,6 +108,7 @@ func main() {
 	var failed []chaos.Report
 	var worst time.Duration
 	rotted, leaderFaults, minorityOps, admin, midMove := 0, 0, 0, 0, 0
+	ecOK, ecFailed, rebuilds := 0, 0, uint64(0)
 	var wg sync.WaitGroup
 	for range max(*parallel, 1) {
 		wg.Add(1)
@@ -121,6 +127,9 @@ func main() {
 				minorityOps += r.MinorityOps
 				admin += r.Admin
 				midMove += r.MidMove
+				ecOK += r.Ops["put-ec ok"]
+				ecFailed += r.Ops["put-ec failed"]
+				rebuilds += r.Repair.Rebuilds
 				if *verbose {
 					fmt.Printf("seed %d: trace %s restored %v\n", sd, r.Trace, r.Restored)
 				}
@@ -139,6 +148,9 @@ func main() {
 	summary += fmt.Sprintf(", %d membership faults", admin)
 	if shape.Metas > 1 {
 		summary += fmt.Sprintf(", %d leader faults (%d mid-rebalance), %d minority-side ops", leaderFaults, midMove, minorityOps)
+	}
+	if shape.EC {
+		summary += fmt.Sprintf(", %d EC puts acknowledged (%d failed), %d shards rebuilt", ecOK, ecFailed, rebuilds)
 	}
 	fmt.Println(summary)
 	for _, r := range failed {

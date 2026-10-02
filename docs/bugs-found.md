@@ -243,3 +243,43 @@ Related: with 1% message loss a copy command or its completion report can be los
 | Root cause | The transport pools one gRPC connection per address name (`node-1:7000`). gRPC re-resolves a name only when its connection breaks. The old node-1 container went away; when the connection reconnected to the old IP, another node's new container was already listening there, so the connection worked again, now to the wrong process. That process dropped every message for an ID it does not host and still answered OK, so the sender never found out. |
 | Fix | A process refuses a message or call for an ID it does not host, with a distinct gRPC status. The sender drops that pooled connection and retries once on a fresh one, which resolves the name again. The wrong process ran nothing, so the retry is safe. |
 | Regression test | `grpcnet.TestMisroutedConnectionIsDropped`: unary, streamed and one-way messages to the wrong process are refused and their connection is dropped; a handler error on the right process keeps it. It fails on the old code. `TestStreamSendEOFYieldsServerStatus`: a refused streamed put fails its next Send with a bare `io.EOF`, which must be turned into the refusal or the retry never happens; the first fix missed this, and the compose run failed with `chunk.put to node-5: EOF`. The CI compose job runs the demo after the short suite. |
+
+## 25. A stripe read gave up on a shard after one lost message
+
+| | |
+|---|---|
+| Symptom | The first erasure-coded chaos sweep (`chaos --seeds=1000 --ec`): 9 seeds ended with an acknowledged or committed file unreadable, `3 of 6 shards readable, 4 needed`, every missing shard a `chunk.get ... timed out after 10s` from a node that was alive. |
+| Repro | `go run ./tools/task chaos --seed=946 --ec` before the fix. |
+| Root cause | The sim network drops 1% of messages, so one request or its answer is lost about 2% of the time. The replicated read makes two passes over 3 replicas. The stripe read needs 4 of 6 shards and asked each shard once, so any 3 lost messages in one read failed it: about 1.6 × 10⁻⁴ per read, a handful in a sweep of 10⁵ stripe reads. |
+| Fix | A shard that timed out or was unavailable is asked again once no untried shard is left. A mismatch, `not_found` or `corrupt` answer is final. |
+| Regression test | `chaos.TestChaosECRegressions` (seed 946); the EC sweep runs in CI. |
+
+## 26. A shard rebuild could take two source slots on one node
+
+| | |
+|---|---|
+| Symptom | EC chaos seed 586: `repair limits exceeded: peaks 4/3/2, limits 8/2/2`. |
+| Repro | `go run ./tools/task chaos --seed=586 --ec` before the fix. |
+| Root cause | A node can briefly hold two shards of one stripe: the scheduler does not count a copy under a pending GC delete (it may vanish), so a rebuild may land on the node holding it. `pickSources` checked each sibling's node against its slot limit on its own, so a node at 1 of 2 slots passed twice and was charged 3. |
+| Fix | `pickSources` counts the slots it plans to take on each node as it picks. |
+| Regression test | `repair.TestRebuildCountsSlotsPerNode` (fails on the old code); `chaos.TestChaosECRegressions` (seed 586). |
+
+## 27. The trim watcher blamed a trim for a failure after it (harness)
+
+| | |
+|---|---|
+| Symptom | EC chaos seed 405: `a trim on node-1 ... left chunk bbc044deab63 with 2 intact copies on running nodes, want >= 3`. The chunk is replicated; the 7-node EC shape only produced the schedule. |
+| Repro | `go run ./tools/task chaos --seed=405 --ec` before the fix. |
+| Root cause | node-1 was frozen at 64.4 s. At 65.0 s node-6 returned and the leader, still seeing node-1 alive, authorized trimming node-1's surplus copy: safe then. node-5, another holder, was killed at 65.8 s. node-1 thawed at 90 s and ran the delete at 93 s, while node-5's absence was still inside the repair delay. The watcher excused only failures within its grace before the delete ran, so a failure after a correct decision counted against the trim. |
+| Fix | The harness records when each trim delete is sent (`metaNet`), and failures from the grace before that moment on are excused. The leader's rule is unchanged: it cannot recall a message a frozen node has queued, and the copies left are the ones repair counts. |
+| Regression test | `chaos.TestChaosECRegressions` (seed 405). |
+
+## 28. The harness counted a copy GC was deleting as surplus (harness)
+
+| | |
+|---|---|
+| Symptom | EC chaos over a 3-peer group, seed 244: `replication not restored 45.25s after faults and workload ended (bound 45.06s): 0 under, 1 over`. |
+| Repro | `go run ./tools/task chaos --seed=244 --metas=3 --ec` before the fix. |
+| Root cause | A shard's copy on node-3 had a GC delete pending from when its stripe was unreferenced; a later upload of the same bytes referenced it again. Repair counts a copy under a pending GC delete as gone and rebuilt the shard on node-6. `OverReplicated` still counted node-3's copy, so the run waited for GC, which does not run on the repair bound, not for a trim. |
+| Fix | `OverReplicated` skips copies GC has authorized deleting, as repair does. If the node keeps its copy (it wrote it after the fence), the pending delete clears, the copy counts again and a real surplus is trimmed. |
+| Regression test | `chaos.TestChaosECRegressions` (seed 244). |

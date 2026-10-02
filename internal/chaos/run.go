@@ -12,6 +12,8 @@ import (
 	"slices"
 	"time"
 
+	"github.com/insanityatpeak/chunkd/internal/client"
+	"github.com/insanityatpeak/chunkd/internal/core/ec"
 	"github.com/insanityatpeak/chunkd/internal/core/meta"
 	"github.com/insanityatpeak/chunkd/internal/core/repair"
 	"github.com/insanityatpeak/chunkd/internal/core/scrub"
@@ -62,6 +64,9 @@ func Replay(s Scenario) string {
 	cmd := fmt.Sprintf("go run ./tools/task chaos --seed=%d", s.Seed)
 	if s.Metas > 1 {
 		cmd += fmt.Sprintf(" --metas=%d", s.Metas)
+	}
+	if s.EC {
+		cmd += " --ec"
 	}
 	return cmd
 }
@@ -209,14 +214,28 @@ func RunOpts(s Scenario, w io.Writer, opts Options) Report {
 		case Clean:
 			c.Net().SetFaults(base)
 		case Corrupt:
-			rotted := c.RotNode(f.Node, f.Count, f.Pick, func(ch iface.ChunkID) bool {
-				intact := 0
-				for _, n := range c.Nodes() {
-					if n.ID() != f.Node && !wipes[n.ID()] && c.Intact(n.ID(), ch) {
-						intact++
+			intact := func(ch iface.ChunkID) int {
+				n := 0
+				for _, nd := range c.Nodes() {
+					if nd.ID() != f.Node && !wipes[nd.ID()] && c.Intact(nd.ID(), ch) {
+						n++
 					}
 				}
-				return intact >= 2
+				return n
+			}
+			rotted := c.RotNode(f.Node, f.Count, f.Pick, func(ch iface.ChunkID) bool {
+				ref, shard := c.Meta().State().ShardOf(ch)
+				if !shard {
+					return intact(ch) >= 2
+				}
+				shards, _ := c.Meta().State().Stripe(ref.Stripe)
+				others := 0
+				for _, sh := range shards {
+					if sh != ch && intact(sh) > 0 {
+						others++
+					}
+				}
+				return others >= ec.CommitShards
 			})
 			r.Rotted += len(rotted)
 		}
@@ -230,7 +249,11 @@ func RunOpts(s Scenario, w io.Writer, opts Options) Report {
 		}
 		switch op.Kind {
 		case Put:
-			_, _, err = sess.UploadRandom(op.Path, op.Size)
+			policy := client.Replicated
+			if op.EC {
+				policy = client.EC42
+			}
+			_, _, err = sess.UploadAs(op.Path, c.RandomData(op.Path, op.Size), policy)
 		case Get:
 			_, _, err = sess.Download(op.Path)
 		case Delete:
@@ -243,7 +266,11 @@ func RunOpts(s Scenario, w io.Writer, opts Options) Report {
 		case err != nil:
 			outcome = "failed"
 		}
-		r.Ops[string(op.Kind)+" "+outcome]++
+		kind := string(op.Kind)
+		if op.EC {
+			kind += "-ec"
+		}
+		r.Ops[kind+" "+outcome]++
 	}
 
 	// Faults are clock events, so they fire on time even while a client

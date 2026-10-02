@@ -2,6 +2,7 @@ package client
 
 import (
 	"bytes"
+	"cmp"
 	"context"
 	"crypto/sha256"
 	"errors"
@@ -63,8 +64,9 @@ func (c *Direct) putStripe(ctx context.Context, ch chunk.Chunk, shards []ec.Shar
 // fetchStripe reads one erasure-coded chunk: any 4 shards, data shards on
 // alive nodes first, then parity, then shards only a suspect node holds.
 // A shard that fails, is missing or does not verify is replaced by the next
-// one in that order; decoding is needed only when a data shard is not used.
-// The result is checked against the stripe ID (ADR-0022).
+// one in that order; once none is left, a shard that timed out is asked
+// again (a lost message is not a lost shard). Decoding is needed only when
+// a data shard is not used. The result is checked against the stripe ID (ADR-0022).
 // SIMPLIFIED: no hedging within a stripe: a slow shard costs its timeout
 // before the next is asked for. HDFS-EC's striped reader hedges per cell.
 func (c *Direct) fetchStripe(ctx context.Context, loc *chunkdv1.ChunkLocation, ref *ChunkRef) ([]byte, error) {
@@ -78,14 +80,14 @@ func (c *Direct) fetchStripe(ctx context.Context, loc *chunkdv1.ChunkLocation, r
 	}
 	size := int(loc.GetSize())
 	payloads := make([][]byte, ec.TotalShards)
-	tried := make([]map[string]bool, ec.TotalShards)
-	for j := range tried {
-		tried[j] = map[string]bool{}
+	tries := make([]map[string]int, ec.TotalShards)
+	for j := range tries {
+		tries[j] = map[string]int{}
 	}
 	var errs []error
 	have := 0
 	for have < ec.DataShards {
-		calls, idx := c.nextShards(locs, payloads, tried, ec.DataShards-have)
+		calls, idx := c.nextShards(locs, payloads, tries, ec.DataShards-have)
 		if len(calls) == 0 {
 			break
 		}
@@ -97,6 +99,9 @@ func (c *Direct) fetchStripe(ctx context.Context, loc *chunkdv1.ChunkLocation, r
 			sr := &ref.Shards[j]
 			if err != nil {
 				errs = append(errs, fmt.Errorf("shard %d on %s: %w", j, node, err))
+				if code := iface.CodeOf(err); code != iface.CodeUnavailable && code != iface.CodeRetry {
+					tries[j][node] = shardTries // not worth asking again
+				}
 				if errors.Is(err, errShardMismatch) || iface.CodeOf(err) == iface.CodeCorrupt {
 					sr.Rejected = append(sr.Rejected, node)
 				}
@@ -131,13 +136,19 @@ func (c *Direct) fetchStripe(ctx context.Context, loc *chunkdv1.ChunkLocation, r
 	return data, nil
 }
 
-// nextShards picks up to n shards to read next and, for each, its
-// best untried replica: alive data shards, alive parity, then suspect ones.
-func (c *Direct) nextShards(locs []*chunkdv1.ShardLocation, payloads [][]byte, tried []map[string]bool, n int) ([]iface.Call, []int) {
+// shardTries bounds the reads of one shard replica: a timeout or an
+// unavailable node may answer the second time, as in fetch.
+const shardTries = 2
+
+// nextShards picks up to n shards to read next and, for each, its best
+// replica with tries left: shards not yet asked before retries, then alive
+// data shards, alive parity, then suspect ones.
+func (c *Direct) nextShards(locs []*chunkdv1.ShardLocation, payloads [][]byte, tries []map[string]int, n int) ([]iface.Call, []int) {
 	type pick struct {
 		j       int
 		rep     *chunkdv1.Replica
 		suspect bool
+		tries   int
 	}
 	var picks []pick
 	for j, sl := range locs {
@@ -145,26 +156,20 @@ func (c *Direct) nextShards(locs []*chunkdv1.ShardLocation, payloads [][]byte, t
 			continue
 		}
 		for _, r := range c.health.order(sl.GetReplicas()) {
-			if !tried[j][r.GetNode()] {
-				picks = append(picks, pick{j, r, r.GetSuspect()})
+			if t := tries[j][r.GetNode()]; t < shardTries {
+				picks = append(picks, pick{j, r, r.GetSuspect(), t})
 				break
 			}
 		}
 	}
 	// Stable: within each group, data shards (lower indexes) first.
 	slices.SortStableFunc(picks, func(a, b pick) int {
-		switch {
-		case a.suspect == b.suspect:
-			return 0
-		case a.suspect:
-			return 1
-		}
-		return -1
+		return cmp.Or(cmp.Compare(a.tries, b.tries), cmp.Compare(btoi(a.suspect), btoi(b.suspect)))
 	})
 	var calls []iface.Call
 	var idx []int
 	for _, p := range picks[:min(n, len(picks))] {
-		tried[p.j][p.rep.GetNode()] = true
+		tries[p.j][p.rep.GetNode()]++
 		calls = append(calls, iface.Call{To: iface.NodeID(p.rep.GetNode()), Addr: p.rep.GetAddr(), Kind: wire.KindGetChunk,
 			Body: wire.Marshal(&chunkdv1.GetChunkRequest{Id: locs[p.j].GetId()})})
 		idx = append(idx, p.j)
@@ -213,4 +218,11 @@ func ParseRedundancy(s string) (Redundancy, error) {
 		return EC42, nil
 	}
 	return "", iface.Errorf(iface.CodeInvalid, "unknown redundancy %q: want replicated or %s", s, EC42)
+}
+
+func btoi(b bool) int {
+	if b {
+		return 1
+	}
+	return 0
 }
