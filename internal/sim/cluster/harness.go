@@ -14,6 +14,7 @@ import (
 	"time"
 
 	"github.com/insanityatpeak/chunkd/internal/client"
+	"github.com/insanityatpeak/chunkd/internal/core/ec"
 	"github.com/insanityatpeak/chunkd/internal/history"
 	"github.com/insanityatpeak/chunkd/internal/iface"
 	"github.com/insanityatpeak/chunkd/internal/sim"
@@ -134,9 +135,14 @@ func (s *Session) UploadRandom(path string, size int64) (client.Manifest, []byte
 
 // Upload is Cluster.Upload through this client.
 func (s *Session) Upload(path string, data []byte) (client.Manifest, []byte, error) {
+	return s.UploadAs(path, data, client.Replicated)
+}
+
+// UploadAs is Upload with a redundancy policy.
+func (s *Session) UploadAs(path string, data []byte, r client.Redundancy) (client.Manifest, []byte, error) {
 	c := s.c
 	call := int64(c.clock.Now())
-	m, err := s.cl.Put(context.Background(), path, bytes.NewReader(data), int64(len(data)), client.PutOptions{Overwrite: true})
+	m, err := s.cl.Put(context.Background(), path, bytes.NewReader(data), int64(len(data)), client.PutOptions{Overwrite: true, Redundancy: r})
 	sum := sha256.Sum256(data)
 	if c.rec != nil {
 		c.rec.Put(s.id, path, sum, call, int64(c.clock.Now()), m.Version, err)
@@ -247,20 +253,17 @@ func (c *Cluster) AssertInvariants() error {
 	}
 	st := c.Meta().State()
 	now := c.clock.Now()
-	cl := c.Meta().Cluster()
 	for _, e := range st.List("/") {
 		if _, _, err := c.Download(e.Path); err != nil {
 			errs = append(errs, fmt.Errorf("committed %s v%d unreadable: %w", e.Path, e.V, err))
 		}
 		for i, id := range e.Chunks {
-			live := 0
-			for _, n := range cl.Locations(id) {
-				if cl.Alive(n) {
-					live++
-				}
+			live, need := c.aliveCopies(id), c.cfg.Meta.MinReplicas
+			if shards, ok := st.Stripe(id); ok {
+				live, need = c.aliveShards(shards), ec.CommitShards
 			}
-			if live < c.cfg.Meta.MinReplicas {
-				errs = append(errs, fmt.Errorf("%s chunk %d (%s) has %d live replicas, want >= %d", e.Path, i, hex.EncodeToString(id[:6]), live, c.cfg.Meta.MinReplicas))
+			if live < need {
+				errs = append(errs, fmt.Errorf("%s chunk %d (%s) has %d live replicas, want >= %d", e.Path, i, hex.EncodeToString(id[:6]), live, need))
 			}
 			if ci, ok := st.Chunk(id); !ok || ci.Refcount == 0 {
 				errs = append(errs, fmt.Errorf("%s chunk %d has no durable record", e.Path, i))
@@ -274,10 +277,9 @@ func (c *Cluster) AssertInvariants() error {
 }
 
 // UnderReplicated counts chunks of live files with fewer than Replicas
-// reported copies on alive nodes.
+// reported copies on alive nodes, or for a stripe, fewer than 6 shards with one.
 func (c *Cluster) UnderReplicated() int {
 	n := 0
-	cl := c.Meta().Cluster()
 	seen := map[iface.ChunkID]bool{}
 	for _, e := range c.Meta().State().List("/") {
 		for _, id := range e.Chunks {
@@ -285,13 +287,13 @@ func (c *Cluster) UnderReplicated() int {
 				continue
 			}
 			seen[id] = true
-			live := 0
-			for _, nd := range cl.Locations(id) {
-				if cl.Alive(nd) {
-					live++
+			if shards, ok := c.Meta().State().Stripe(id); ok {
+				if c.aliveShards(shards) < ec.TotalShards {
+					n++
 				}
+				continue
 			}
-			if live < c.cfg.Meta.Replicas {
+			if c.aliveCopies(id) < c.cfg.Meta.Replicas {
 				n++
 			}
 		}
@@ -300,10 +302,9 @@ func (c *Cluster) UnderReplicated() int {
 }
 
 // OverReplicated counts chunks of live files with more than Replicas
-// reported locations on alive nodes.
+// reported locations on alive nodes, or for a stripe, a shard with more than one.
 func (c *Cluster) OverReplicated() int {
 	n := 0
-	cl := c.Meta().Cluster()
 	seen := map[iface.ChunkID]bool{}
 	for _, e := range c.Meta().State().List("/") {
 		for _, id := range e.Chunks {
@@ -311,13 +312,13 @@ func (c *Cluster) OverReplicated() int {
 				continue
 			}
 			seen[id] = true
-			live := 0
-			for _, nd := range cl.Locations(id) {
-				if cl.Alive(nd) {
-					live++
+			if shards, ok := c.Meta().State().Stripe(id); ok {
+				if slices.ContainsFunc(shards, func(sh iface.ChunkID) bool { return c.aliveCopies(sh) > 1 }) {
+					n++
 				}
+				continue
 			}
-			if live > c.cfg.Meta.Replicas {
+			if c.aliveCopies(id) > c.cfg.Meta.Replicas {
 				n++
 			}
 		}
@@ -325,12 +326,21 @@ func (c *Cluster) OverReplicated() int {
 	return n
 }
 
-// BytesOn sums the sizes of live files' chunks reported on node id.
+// BytesOn sums the sizes of live files' chunks (and shards) reported on node id.
 func (c *Cluster) BytesOn(id iface.NodeID) int64 {
 	var total int64
 	seen := map[iface.ChunkID]bool{}
 	for _, e := range c.Meta().State().List("/") {
 		for _, ch := range e.Chunks {
+			if shards, ok := c.Meta().State().Stripe(ch); ok && !seen[ch] {
+				seen[ch] = true
+				ci, _ := c.Meta().State().Chunk(ch)
+				for _, sh := range shards {
+					if slices.Contains(c.Meta().Cluster().Locations(sh), id) {
+						total += ec.BlockSize(ci.Size)
+					}
+				}
+			}
 			if seen[ch] || !slices.Contains(c.Meta().Cluster().Locations(ch), id) {
 				continue
 			}
@@ -413,4 +423,27 @@ func (c *Cluster) AssertMetaAgree() error {
 		return fmt.Errorf("seed %d at t=%v: %w", c.seed, c.clock.Now(), err)
 	}
 	return nil
+}
+
+// aliveCopies counts id's reported copies on alive nodes.
+func (c *Cluster) aliveCopies(id iface.ChunkID) int {
+	cl := c.Meta().Cluster()
+	n := 0
+	for _, nd := range cl.Locations(id) {
+		if cl.Alive(nd) {
+			n++
+		}
+	}
+	return n
+}
+
+// aliveShards counts the shards with a copy on an alive node.
+func (c *Cluster) aliveShards(shards []iface.ChunkID) int {
+	n := 0
+	for _, sh := range shards {
+		if c.aliveCopies(sh) > 0 {
+			n++
+		}
+	}
+	return n
 }

@@ -64,6 +64,12 @@ func (h *handler) put(w http.ResponseWriter, r *http.Request) {
 		}
 		opts = client.PutOptions{ExpectedVersion: v}
 	}
+	policy, err := client.ParseRedundancy(r.URL.Query().Get("redundancy"))
+	if err != nil {
+		writeError(w, err, 0)
+		return
+	}
+	opts.Redundancy = policy
 	m, err := h.api.Put(r.Context(), filePath(r), r.Body, r.ContentLength, opts)
 	if err != nil {
 		writeError(w, err, 0)

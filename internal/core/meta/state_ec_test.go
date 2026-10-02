@@ -26,7 +26,9 @@ func beginEC(path string, expected uint64, size int64, nodes ...string) *chunkdv
 }
 
 // shardOf names shard j of the stripe commit(_, _, tag) commits as chunk i.
-func shardOf(tag byte, i, j int) iface.ChunkID { return sha256.Sum256([]byte{tag, byte(i), 's', byte(j)}) }
+func shardOf(tag byte, i, j int) iface.ChunkID {
+	return sha256.Sum256([]byte{tag, byte(i), 's', byte(j)})
+}
 
 // claimEC claims chunk i as the stripe chunkOf(tag, i) with shards
 // shardOf(shardTag, i, 0..5).

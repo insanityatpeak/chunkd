@@ -16,6 +16,7 @@ import (
 	"google.golang.org/protobuf/proto"
 
 	"github.com/insanityatpeak/chunkd/internal/core/chunk"
+	"github.com/insanityatpeak/chunkd/internal/core/ec"
 	"github.com/insanityatpeak/chunkd/internal/core/wire"
 	"github.com/insanityatpeak/chunkd/internal/iface"
 	chunkdv1 "github.com/insanityatpeak/chunkd/proto/gen/chunkd/v1"
@@ -57,6 +58,7 @@ type Direct struct {
 	caller iface.Caller
 	opts   Options
 	health *health
+	codec  *ec.Codec
 	peers  []MetaPeer
 	// leader indexes the peer that answered last, or the one a follower named.
 	leader atomic.Int32
@@ -76,7 +78,7 @@ func New(caller iface.Caller, opts Options) *Direct {
 	if len(peers) == 0 {
 		peers = []MetaPeer{{ID: opts.Meta, Addr: opts.MetaAddr}}
 	}
-	return &Direct{caller: caller, opts: opts, health: newHealth(), peers: peers}
+	return &Direct{caller: caller, opts: opts, health: newHealth(), codec: ec.New(), peers: peers}
 }
 
 // meta calls the metadata service, finding its leader and riding out
@@ -166,10 +168,17 @@ func (c *Direct) Put(ctx context.Context, path string, r io.Reader, size int64, 
 		}
 	}
 	var begin chunkdv1.BeginUploadResponse
-	if err := c.meta(ctx, wire.KindBegin, &chunkdv1.BeginUploadRequest{Path: path, ExpectedVersion: expected, Size: size, LastWriterWins: opts.LastWriterWins, RequestId: c.requestID()}, &begin); err != nil {
+	if err := c.meta(ctx, wire.KindBegin, &chunkdv1.BeginUploadRequest{Path: path, ExpectedVersion: expected, Size: size, LastWriterWins: opts.LastWriterWins, RequestId: c.requestID(), Redundancy: opts.Redundancy.proto()}, &begin); err != nil {
 		return Manifest{}, err
 	}
-	m, err := c.upload(ctx, path, r, size, &begin)
+	var m Manifest
+	var err error
+	if begin.GetRedundancy() != opts.Redundancy.proto() {
+		// A server that predates EC ignores the field and places copies.
+		err = iface.Errorf(iface.CodeInvalid, "asked for %q, the metadata server opened a %v upload", opts.Redundancy, begin.GetRedundancy())
+	} else {
+		m, err = c.upload(ctx, path, r, size, &begin)
+	}
 	if err != nil {
 		// Best effort: an upload left pending is invisible anyway and is
 		// reclaimed by GC (Phase 4).
@@ -183,7 +192,8 @@ func (c *Direct) Put(ctx context.Context, path string, r io.Reader, size int64, 
 func (c *Direct) upload(ctx context.Context, path string, r io.Reader, size int64, begin *chunkdv1.BeginUploadResponse) (Manifest, error) {
 	chunkSize := int(begin.GetChunkSize())
 	split := chunk.NewSplitter(r, chunkSize)
-	m := Manifest{FileInfo: FileInfo{Path: path, Size: size}, ChunkSize: chunkSize}
+	stripes := begin.GetRedundancy() == chunkdv1.Redundancy_REDUNDANCY_EC_4_2
+	m := Manifest{FileInfo: FileInfo{Path: path, Size: size, Redundancy: redundancy(begin.GetRedundancy())}, ChunkSize: chunkSize}
 	var ids [][]byte
 	for {
 		ch, err := split.Next()
@@ -196,22 +206,41 @@ func (c *Direct) upload(ctx context.Context, path string, r io.Reader, size int6
 		if ch.Index >= len(begin.GetPlacement()) {
 			return Manifest{}, iface.Errorf(iface.CodeInvalid, "input longer than the declared %d bytes", size)
 		}
+		id := ch.ID
+		cl := &chunkdv1.ChunkClaim{Index: int32(ch.Index), Id: id[:]}
+		var shards []ec.Shard
+		if stripes {
+			// The claim names the stripe and its shards, so it is encoded first.
+			if shards, err = c.codec.Encode(ch.Data); err != nil {
+				return Manifest{}, err
+			}
+			id = ec.LogicalID(ch.ID)
+			cl.Id = id[:]
+			for _, s := range shards {
+				cl.Shards = append(cl.Shards, s.ID[:])
+			}
+		}
 		var claim chunkdv1.ClaimChunksResponse
-		if err := c.meta(ctx, wire.KindClaim, &chunkdv1.ClaimChunksRequest{UploadId: begin.GetUploadId(),
-			Claims: []*chunkdv1.ChunkClaim{{Index: int32(ch.Index), Id: ch.ID[:]}}}, &claim); err != nil {
+		if err := c.meta(ctx, wire.KindClaim, &chunkdv1.ClaimChunksRequest{UploadId: begin.GetUploadId(), Claims: []*chunkdv1.ChunkClaim{cl}}, &claim); err != nil {
 			return Manifest{}, err
 		}
 		var ref ChunkRef
-		if len(claim.GetPresent()) == 1 && claim.GetPresent()[0] {
-			ref = ChunkRef{Index: ch.Index, ID: ch.ID.String(), Size: int64(len(ch.Data)), Deduped: true}
+		switch {
+		case len(claim.GetPresent()) == 1 && claim.GetPresent()[0]:
+			ref = ChunkRef{Index: ch.Index, ID: id.String(), Size: int64(len(ch.Data)), Deduped: true}
 			for _, r := range claim.GetLocations()[0].GetReplicas() {
 				ref.Replicas = append(ref.Replicas, r.GetNode())
 			}
-		} else if ref, err = c.putChunk(ctx, ch, begin.GetPlacement()[ch.Index], int(begin.GetMinReplicas())); err != nil {
+		case stripes:
+			ref, err = c.putStripe(ctx, ch, shards, begin.GetPlacement()[ch.Index], int(begin.GetMinReplicas()))
+		default:
+			ref, err = c.putChunk(ctx, ch, begin.GetPlacement()[ch.Index], int(begin.GetMinReplicas()))
+		}
+		if err != nil {
 			return Manifest{}, err
 		}
 		m.Chunk = append(m.Chunk, ref)
-		ids = append(ids, ch.ID[:])
+		ids = append(ids, id[:])
 	}
 	if split.Total() != size {
 		return Manifest{}, iface.Errorf(iface.CodeInvalid, "read %d bytes, declared %d", split.Total(), size)
@@ -287,7 +316,8 @@ func (c *Direct) StatVersion(ctx context.Context, path string, version uint64) (
 
 func manifest(st *chunkdv1.StatResponse) Manifest {
 	return Manifest{
-		FileInfo:  FileInfo{Path: st.GetPath(), Version: st.GetVersion(), Size: st.GetSize(), SHA256: hex.EncodeToString(st.GetSha256()), Chunks: len(st.GetChunks())},
+		FileInfo: FileInfo{Path: st.GetPath(), Version: st.GetVersion(), Size: st.GetSize(), SHA256: hex.EncodeToString(st.GetSha256()), Chunks: len(st.GetChunks()),
+			Redundancy: redundancy(st.GetRedundancy())},
 		ChunkSize: int(st.GetChunkSize()),
 	}
 }
@@ -296,6 +326,13 @@ func chunkRef(i int, loc *chunkdv1.ChunkLocation) ChunkRef {
 	ref := ChunkRef{Index: i, ID: hex.EncodeToString(loc.GetId()), Size: loc.GetSize()}
 	for _, r := range loc.GetReplicas() {
 		ref.Replicas = append(ref.Replicas, r.GetNode())
+	}
+	for j, sl := range loc.GetShards() {
+		sr := ShardRef{Index: j, ID: hex.EncodeToString(sl.GetId()), Replicas: []string{}}
+		for _, r := range sl.GetReplicas() {
+			sr.Replicas = append(sr.Replicas, r.GetNode())
+		}
+		ref.Shards = append(ref.Shards, sr)
 	}
 	return ref
 }
@@ -315,7 +352,8 @@ func (c *Direct) Log(ctx context.Context, path string) ([]VersionInfo, error) {
 	}
 	out := make([]VersionInfo, 0, len(resp.GetVersions()))
 	for _, v := range resp.GetVersions() {
-		vi := VersionInfo{Version: v.GetVersion(), Size: v.GetSize(), Chunks: int(v.GetChunkCount()), Deleted: v.GetTombstone(), Retired: v.GetRetired(), ExpiresEpoch: v.GetExpiresEpoch()}
+		vi := VersionInfo{Version: v.GetVersion(), Size: v.GetSize(), Chunks: int(v.GetChunkCount()), Deleted: v.GetTombstone(), Retired: v.GetRetired(), ExpiresEpoch: v.GetExpiresEpoch(),
+			Redundancy: redundancy(v.GetRedundancy())}
 		if !vi.Deleted {
 			vi.SHA256 = hex.EncodeToString(v.GetSha256())
 		}
@@ -341,7 +379,13 @@ func (c *Direct) GetVersion(ctx context.Context, path string, version uint64, w 
 	file := sha256.New()
 	for i, loc := range st.GetChunks() {
 		ref := chunkRef(i, loc)
-		data, err := c.fetch(ctx, loc, &ref)
+		var data []byte
+		var err error
+		if len(loc.GetShards()) > 0 {
+			data, err = c.fetchStripe(ctx, loc, &ref)
+		} else {
+			data, err = c.fetch(ctx, loc, &ref)
+		}
 		if err != nil {
 			return m, err
 		}
@@ -461,7 +505,8 @@ func (c *Direct) List(ctx context.Context, prefix string) ([]FileInfo, error) {
 	}
 	out := make([]FileInfo, 0, len(resp.GetFiles()))
 	for _, f := range resp.GetFiles() {
-		out = append(out, FileInfo{Path: f.GetPath(), Version: f.GetVersion(), Size: f.GetSize(), SHA256: hex.EncodeToString(f.GetSha256()), Chunks: int(f.GetChunkCount())})
+		out = append(out, FileInfo{Path: f.GetPath(), Version: f.GetVersion(), Size: f.GetSize(), SHA256: hex.EncodeToString(f.GetSha256()), Chunks: int(f.GetChunkCount()),
+			Redundancy: redundancy(f.GetRedundancy())})
 	}
 	return out, nil
 }
@@ -554,7 +599,7 @@ func ClusterFromProto(resp *chunkdv1.ClusterResponse) Cluster {
 		CorruptReplicas: h.GetCorruptReplicas(), RepairEvacuated: h.GetRepairEvacuated(), RepairMoved: h.GetRepairMoved()}
 	for _, f := range resp.GetFileHealth() {
 		out.FileHealth = append(out.FileHealth, FileHealth{Path: f.GetPath(), Chunks: int(f.GetChunks()),
-			UnderReplicated: int(f.GetUnderReplicated()), MinLive: int(f.GetMinLive())})
+			UnderReplicated: int(f.GetUnderReplicated()), MinLive: int(f.GetMinLive()), Redundancy: redundancy(f.GetRedundancy())})
 	}
 	for _, c := range resp.GetCopies() {
 		out.Copies = append(out.Copies, RepairCopy{ID: c.GetId(), Chunk: hex.EncodeToString(c.GetChunkId()), Source: c.GetSource(),

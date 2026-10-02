@@ -16,6 +16,8 @@ type FileInfo struct {
 	Size    int64  `json:"size"`
 	SHA256  string `json:"sha256"` // hex
 	Chunks  int    `json:"chunks"`
+	// Redundancy is empty for replicated files.
+	Redundancy Redundancy `json:"redundancy,omitempty"`
 }
 
 // ChunkRef is one chunk of a file and the nodes reported to hold it.
@@ -32,7 +34,31 @@ type ChunkRef struct {
 	Rejected []string `json:"rejected,omitempty"`
 	// Hedged is set when Get read more than one replica for this chunk.
 	Hedged bool `json:"hedged,omitempty"`
+	// Shards lists an erasure-coded chunk's 6 shards; Replicas is then empty.
+	Shards []ShardRef `json:"shards,omitempty"`
+	// Decoded is set when Get rebuilt a data shard from parity.
+	Decoded bool `json:"decoded,omitempty"`
 }
+
+// ShardRef is one shard of an erasure-coded chunk: indexes 0-3 hold data,
+// 4-5 parity.
+type ShardRef struct {
+	Index    int      `json:"index"`
+	ID       string   `json:"id"` // hex SHA-256 of the shard block
+	Replicas []string `json:"replicas"`
+	ServedBy string   `json:"servedBy,omitempty"`
+	Rejected []string `json:"rejected,omitempty"`
+}
+
+// Redundancy is how a file's chunks survive node loss (ADR-0022).
+type Redundancy string
+
+const (
+	// Replicated stores RF full copies of each chunk.
+	Replicated Redundancy = ""
+	// EC42 stores each chunk as 4 data and 2 parity shards on 6 nodes.
+	EC42 Redundancy = "ec-4+2"
+)
 
 // Manifest is a file's metadata including its chunk layout.
 type Manifest struct {
@@ -93,10 +119,11 @@ type Health struct {
 
 // FileHealth is one committed file's replication state.
 type FileHealth struct {
-	Path            string `json:"path"`
-	Chunks          int    `json:"chunks"`
-	UnderReplicated int    `json:"underReplicated"`
-	MinLive         int    `json:"minLive"` // fewest alive copies of any chunk
+	Path            string     `json:"path"`
+	Chunks          int        `json:"chunks"`
+	UnderReplicated int        `json:"underReplicated"`
+	MinLive         int        `json:"minLive"` // fewest alive copies (EC: shards) of any chunk
+	Redundancy      Redundancy `json:"redundancy,omitempty"`
 }
 
 // RepairCopy is one re-replication in flight.
@@ -180,6 +207,8 @@ type PutOptions struct {
 	// LastWriterWins commits over whatever is live at commit time, with no
 	// version check. A concurrent update is silently lost (ADR-0014).
 	LastWriterWins bool
+	// Redundancy chooses copies or erasure coding for the new version.
+	Redundancy Redundancy
 }
 
 // VersionInfo is one entry of a file's history.
@@ -192,8 +221,9 @@ type VersionInfo struct {
 	Deleted bool `json:"deleted,omitempty"`
 	// Retired versions were superseded; undelete can restore them until
 	// the metadata epoch reaches ExpiresEpoch.
-	Retired      bool   `json:"retired,omitempty"`
-	ExpiresEpoch uint64 `json:"expiresEpoch,omitempty"`
+	Retired      bool       `json:"retired,omitempty"`
+	ExpiresEpoch uint64     `json:"expiresEpoch,omitempty"`
+	Redundancy   Redundancy `json:"redundancy,omitempty"`
 }
 
 // API is implemented by the direct client and the HTTP gateway client.

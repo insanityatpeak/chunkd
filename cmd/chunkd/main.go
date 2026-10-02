@@ -53,6 +53,7 @@ func main() {
 	expected := fs.Uint64("expected", 0, "put/rm: expected live version (compare-and-swap); 0 with put means overwrite")
 	create := fs.Bool("create", false, "put: fail if the path exists")
 	lww := fs.Bool("lww", false, "put: last writer wins, no version check (a concurrent update is lost)")
+	redundancy := fs.String("redundancy", "replicated", "put: replicated (3 copies) or ec-4+2 (4 data + 2 parity shards on 6 nodes, 1.5x storage)")
 	version := fs.Uint64("version", 0, "get: download this version instead of the live one; undelete: the version to restore (default newest)")
 	expectSHA := fs.String("expect-sha256", "", "get: fail unless the content has this SHA-256")
 	asJSON := fs.Bool("json", false, "print JSON")
@@ -104,7 +105,9 @@ func main() {
 	switch cmd := args[0]; {
 	case cmd == "put" && len(args) == 3:
 		opts := client.PutOptions{Overwrite: *expected == 0 && !*create, ExpectedVersion: *expected, LastWriterWins: *lww}
-		err = put(ctx, api, args[1], args[2], opts, out)
+		if opts.Redundancy, err = client.ParseRedundancy(*redundancy); err == nil {
+			err = put(ctx, api, args[1], args[2], opts, out)
+		}
 	case cmd == "get" && len(args) == 3:
 		err = get(ctx, api, args[1], args[2], *version, *expectSHA, out)
 	case cmd == "undelete" && len(args) == 2:
@@ -189,7 +192,11 @@ func put(ctx context.Context, api client.API, local, path string, opts client.Pu
 		out.print(m)
 		return nil
 	}
-	fmt.Printf("put %s v%d  %s in %d chunks  %.1fs\nsha256 %s\n", m.Path, m.Version, human(m.Size), m.Chunks, time.Since(start).Seconds(), m.SHA256)
+	policy := "replicated"
+	if m.Redundancy != client.Replicated {
+		policy = string(m.Redundancy)
+	}
+	fmt.Printf("put %s v%d  %s in %d chunks (%s)  %.1fs\nsha256 %s\n", m.Path, m.Version, human(m.Size), m.Chunks, policy, time.Since(start).Seconds(), m.SHA256)
 	return nil
 }
 

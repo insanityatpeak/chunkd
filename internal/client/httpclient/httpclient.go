@@ -80,6 +80,9 @@ func (c *Client) Put(ctx context.Context, path string, r io.Reader, size int64, 
 	case !opts.Overwrite:
 		q.Set("expected", strconv.FormatUint(opts.ExpectedVersion, 10))
 	}
+	if opts.Redundancy != client.Replicated {
+		q.Set("redundancy", string(opts.Redundancy))
+	}
 	var m client.Manifest
 	_, err := c.do(ctx, http.MethodPost, c.url(filesURL(path), q), r, size, &m)
 	return m, err

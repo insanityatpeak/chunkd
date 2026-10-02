@@ -11,9 +11,9 @@ import (
 	"google.golang.org/protobuf/proto"
 
 	"github.com/insanityatpeak/chunkd/internal/core/chunk"
-	"github.com/insanityatpeak/chunkd/internal/core/ec"
 	"github.com/insanityatpeak/chunkd/internal/core/consensus"
 	"github.com/insanityatpeak/chunkd/internal/core/detector"
+	"github.com/insanityatpeak/chunkd/internal/core/ec"
 	"github.com/insanityatpeak/chunkd/internal/core/placement"
 	"github.com/insanityatpeak/chunkd/internal/core/repair"
 	"github.com/insanityatpeak/chunkd/internal/core/wire"
