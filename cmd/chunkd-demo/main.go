@@ -74,9 +74,9 @@ func (d *demo) run(size int64) error {
 	ctx := context.Background()
 	d.say("chunkd demo: break a node, watch the cluster repair itself\n")
 
-	// 1. Cluster up, every node alive.
+	// 1. Cluster up, every node alive. A decommissioned node may be off for good.
 	if err := d.until(ctx, 60*time.Second, "all nodes alive", func(c client.Cluster) bool {
-		return len(c.Nodes) > 0 && !slices.ContainsFunc(c.Nodes, func(n client.NodeInfo) bool { return n.State != "alive" }) &&
+		return len(c.Nodes) > 0 && !slices.ContainsFunc(c.Nodes, func(n client.NodeInfo) bool { return n.State != "alive" && n.Admin != "decommissioned" }) &&
 			c.Health.UnderReplicated == 0 && c.Health.OverReplicated == 0
 	}); err != nil {
 		return err
