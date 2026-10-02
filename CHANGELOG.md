@@ -1,5 +1,24 @@
 # Changelog
 
+## Unreleased
+
+### Erasure coding
+- An upload can store each chunk as a Reed-Solomon stripe, 4 data and 2 parity shards on 6 distinct nodes, racks filled round-robin: 1.5× the bytes of the data, against 3× for copies, and any 2 shards may be lost. `chunkd put -redundancy=ec-4+2`, the gateway's `?redundancy=ec-4+2`, and a choice in the dashboard. Commit needs 5 shards on alive nodes. ADR-0022.
+- Each shard is a block of its own: a 33-byte header (slot, stripe ID) and the payload, named by its SHA-256, so the block store's checks, scrubbing, GC fencing, drain and trims treat it as any block. Claims carry the 6 shard IDs, which keeps every shard GC-marked from the claim on.
+- Reads ask for 4 shards at once, alive data shards first, replace a failed or unverified one with parity, hedge past a slow one after the recent p95, and decode only when a data shard is missing. With fewer than 4 readable the read fails and names the count.
+- Repair rebuilds a lost shard on a node outside its stripe from 4 others: after the repair delay while the stripe has 5, at once with 4. The 4 reads hold source slots and are charged to the byte bucket. ADR-0023.
+- New transport call `Caller.Gather`, the k-of-n form of `Hedge`, under the RPC conformance suite for both transports.
+- **Wire changes:** additive only. `Redundancy` on begin, versions, stat, list, log and file health; shard IDs on claims and chunk records; `ShardLocation` in stat; `RebuildShard` to nodes; `rebuild_from` on repair copies. v0.3.0 data directories replay unchanged.
+
+### Proof: erasure coding
+- Codec tables: any 2 losses decode, 3 fail, every slot rebuilds, equal payloads get distinct block IDs. State, server, scheduler and node rebuild tests; sim round trips with 2 nodes and 3 nodes lost.
+- `chaos --ec`: 7 nodes with about half the puts erasure-coded, 500 seeds per push.
+- `docs/benchmarks/ec.md`: stored bytes and repair traffic against replication.
+- Six more entries in `docs/bugs-found.md` (#25–#30).
+
+### Demo: erasure coding
+- A "Store as" choice on upload; the Replicas column counts shards of 6; the chunk grid shows which shard each node holds, parity in blue, and marks chunks a download decoded; rebuilds show their 4 sources. A shareable `ec` scenario. Existing scenario links replay unchanged.
+
 ## v0.3.0 (2026-10-02)
 
 ### Rebalancing, drain and decommission

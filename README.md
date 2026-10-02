@@ -11,7 +11,7 @@ A fault-tolerant distributed file store in Go, in the style of GFS and HDFS.
 
 **[Try it in your browser →](https://insanityatpeak.github.io/chunkd/)** A simulated cluster running the same core code, compiled to WebAssembly. Kill nodes, rot a disk, partition the network, and watch it recover. Nothing to install.
 
-chunkd splits files into 4 MiB chunks named by their SHA-256 and keeps three copies of each, on nodes in different racks. A metadata group of three Raft peers tracks versions and where every copy lives; killing, freezing or cutting off its leader loses no acknowledged write. Nodes can join, or be drained and retired, while the cluster serves: a balancer moves copies toward rack-feasible targets, and no chunk drops below three copies on the way. Identical chunks are stored once, every file keeps its recent versions, a delete can be undone for a retention window, and garbage collection reclaims what nothing references. It is built to stay correct while things break. A node can crash, freeze, turn slow or come back with an empty disk, and a disk can silently rot bits. Throughout, acknowledged data stays readable, every read is verified end to end, and lost copies are rebuilt within a stated time bound, at a capped rate, without copying anything for a node that only rebooted. Every claim below is a test that runs in CI: 1,000 seeded chaos schedules on every push in a deterministic simulator that replays any failure from its seed, 500 more over the metadata group with leader faults and every client history checked for linearizability, plus a real-mode suite that kills, freezes and corrupts Docker containers, the metadata leader included.
+chunkd splits files into 4 MiB chunks named by their SHA-256 and keeps three copies of each, on nodes in different racks. A metadata group of three Raft peers tracks versions and where every copy lives; killing, freezing or cutting off its leader loses no acknowledged write. Nodes can join, or be drained and retired, while the cluster serves: a balancer moves copies toward rack-feasible targets, and no chunk drops below three copies on the way. An upload can instead store each chunk as a Reed-Solomon stripe, 4 data and 2 parity shards on six nodes: half the bytes of three copies, still readable with any two shards gone, and a lost shard is rebuilt from four others. Identical chunks are stored once, every file keeps its recent versions, a delete can be undone for a retention window, and garbage collection reclaims what nothing references. It is built to stay correct while things break. A node can crash, freeze, turn slow or come back with an empty disk, and a disk can silently rot bits. Throughout, acknowledged data stays readable, every read is verified end to end, and lost copies are rebuilt within a stated time bound, at a capped rate, without copying anything for a node that only rebooted. Every claim below is a test that runs in CI: 1,000 seeded chaos schedules on every push in a deterministic simulator that replays any failure from its seed, 500 more over the metadata group with leader faults and every client history checked for linearizability, plus a real-mode suite that kills, freezes and corrupts Docker containers, the metadata leader included.
 
 ## Architecture
 
@@ -32,6 +32,7 @@ From a Go toolchain:
 
 ```
 go run ./cmd/chunkd put ./photo.jpg /photos/photo.jpg
+go run ./cmd/chunkd put -redundancy=ec-4+2 ./scan.tif /scans/scan.tif   # 1.5x: 4 data + 2 parity shards on 6 nodes
 go run ./cmd/chunkd stat /photos/photo.jpg        # version, SHA-256, replicas per chunk
 go run ./cmd/chunkd get /photos/photo.jpg ./copy.jpg
 go run ./cmd/chunkd cluster status                # detector state, replication, repair
@@ -55,11 +56,12 @@ More ways to break it:
 go run ./tools/task chaos --seeds=1000                 # 1,000 random fault schedules in the simulator
 go run ./tools/task chaos --seed=63 -v                 # replay one, with its schedule and logs
 go run ./tools/task chaos --seeds=500 --metas=3        # leader kills, freezes, partitions; histories checked
+go run ./tools/task chaos --seeds=500 --ec             # 7 nodes, about half the puts erasure-coded
 go run ./tools/task chaos --mode=real --short          # kill, blip, rot and freeze real containers, and the metadata leader
 docker compose exec node-2 chunkd debug corrupt -n 3   # rot 3 chunk files; the scrubber finds them
 ```
 
-Shared dashboard links replay exactly: [kill a node](https://insanityatpeak.github.io/chunkd/?seed=7&scenario=kill-node&speed=10), [silent bit rot](https://insanityatpeak.github.io/chunkd/?seed=7&scenario=corrupt-chunk&speed=10), [lose a rack](https://insanityatpeak.github.io/chunkd/?seed=7&scenario=rack-loss&speed=10), [slow node](https://insanityatpeak.github.io/chunkd/?seed=7&scenario=slow-node&speed=10), [kill the metadata leader](https://insanityatpeak.github.io/chunkd/?seed=7&scenario=kill-leader&speed=10), [add a node](https://insanityatpeak.github.io/chunkd/?seed=7&scenario=add-node&speed=10), [drain a node](https://insanityatpeak.github.io/chunkd/?seed=7&scenario=drain&speed=10).
+Shared dashboard links replay exactly: [kill a node](https://insanityatpeak.github.io/chunkd/?seed=7&scenario=kill-node&speed=10), [silent bit rot](https://insanityatpeak.github.io/chunkd/?seed=7&scenario=corrupt-chunk&speed=10), [lose a rack](https://insanityatpeak.github.io/chunkd/?seed=7&scenario=rack-loss&speed=10), [slow node](https://insanityatpeak.github.io/chunkd/?seed=7&scenario=slow-node&speed=10), [kill the metadata leader](https://insanityatpeak.github.io/chunkd/?seed=7&scenario=kill-leader&speed=10), [add a node](https://insanityatpeak.github.io/chunkd/?seed=7&scenario=add-node&speed=10), [drain a node](https://insanityatpeak.github.io/chunkd/?seed=7&scenario=drain&speed=10), [erasure coding](https://insanityatpeak.github.io/chunkd/?seed=7&scenario=ec&speed=10).
 
 ## What's proven
 
@@ -92,6 +94,9 @@ Shared dashboard links replay exactly: [kill a node](https://insanityatpeak.gith
 | A node joining moves at most ½·L1 plus one chunk per node (½·L1 is the least any plan can move), and every chunk stays at RF throughout | `TestAddNodeConverges`, `TestRebalanceBenchmark` ([docs/benchmarks/rebalance.md](docs/benchmarks/rebalance.md)), `add-node` (containers) | go, compose |
 | Draining a node never takes a chunk below RF, even when another node dies mid-drain; decommission is refused until every chunk has RF copies elsewhere | `TestDrainNeverDropsRF`, `drain-node` (containers) | go, compose |
 | Only a committed trim deletes a copy: a deposed leader cannot trim, a new leader trusts the logged TrimDone, and a trim waits while its chunk is short elsewhere | `TestDeposedLeaderCannotTrim`, `TestNewLeaderTrustsLoggedTrimDone`, `TestStaleTrimWaitsForRepair`; every chaos run checks RF at each trim delete | go |
+| An erasure-coded file reads with any 2 of a stripe's 6 shards gone, decoding from parity, and fails loudly with 3 gone | `TestECReadSurvivesTwoLostNodesNotThree`, `TestECReadDecodesAroundARottedShard`, `ec.TestJoinSurvivesAnyTwoLosses`; every size round-trips as stripes over real gRPC and disk (`e2e.TestRoundTripEC`) | go |
+| A dead node's shards are rebuilt, each from 4 others, onto nodes outside the stripe within the repair bound; EC stores 1.50× against 3.00×, and repair reads 4 bytes per byte rebuilt | `TestECRepairRebuildsLostShards`, `TestECBenchmark` ([docs/benchmarks/ec.md](docs/benchmarks/ec.md)) | go |
+| Under random faults with about half the puts erasure-coded, the same invariants hold, counted per shard | 500 chaos seeds with `--ec` per push | go |
 | A seed replays the same run, in Go and in the browser | `TestSameSeedSameTrace`, `TestScenarioGolden` + Playwright replay | go, web |
 | The demo runs with only Docker installed | `docker compose run --rm demo` | compose |
 
@@ -133,6 +138,13 @@ Bugs these tests caught, with root causes and fixes: [docs/bugs-found.md](docs/b
 | Balance targets are bytes, not capacity: every node is assumed to have the same disk | The compose and sim nodes are identical | Report capacity in heartbeats and weight targets by it, as HDFS's balancer does with utilization percent |
 | The band is at least two of the largest chunk, so a small cluster stops far from its target (node-6 at 12 of 20 MiB on the demo set) | It is what stops a chunk bouncing between two nodes near their targets; at 10% of 100 MiB the floor no longer matters | None at this scale |
 | No balancing while membership is unsettled: a suspect node, or a dead one inside the repair delay, pauses all moves | A node that returns with its data would otherwise have copies moved only to be moved back | Plan around a node that is likely gone, as Ceph does after `mon_osd_down_out_interval` |
+| Erasure coding is chosen per upload; nothing moves cold data from copies to stripes later | The choice is the uploader's, and both forms read the same | Background tiering by age, as Facebook's f4 and HDFS storage policies do |
+| The same bytes uploaded replicated and erasure-coded are stored twice: dedup works within a policy | A stripe's record is keyed by its own ID, so one record never mixes copies and shards (ADR-0022) | Convert in place when a second policy references a chunk |
+| An erasure-coded upload needs 6 placeable nodes, and the begin is refused with fewer | Two shards on one node would turn one failure into two | Wider clusters, or a narrower code for small ones |
+| A small file still takes 6 shards (a 1-byte file stores 6 × 34 bytes) | Negligible at 4 MiB chunks | Keep small objects replicated or inline, as S3 and MinIO do |
+| The balancer leaves shards where they are; a joining node gets shards only from rebuilds | A shard is a quarter of a chunk, and upload placement already spreads stripes | A planner that keeps a stripe on distinct nodes, as Ceph's balancer moves EC placement groups |
+| No real-mode chaos scenario uses erasure coding | Compose runs 5 nodes and a stripe needs 6; the sim runs 500 EC seeds per push, and `e2e.TestRoundTripEC` covers the real transport and disks | A compose profile with 7 nodes and an EC scenario in the short suite |
+| The client encodes stripes, and the cluster trusts the shard IDs it claims | A wrong claim fails its read-time check against the stripe ID, as a wrong chunk ID already does | Encode on a server, as Ceph's primary OSD does |
 | A decommissioned node stays in the metadata log; starting one again with the same ID needs an undrain | It takes nothing while decommissioned, which is the safe default; the compose add-node path undrains it | Remove a decommissioned node from the log once its last copy is trimmed |
 
 ## Project layout
@@ -160,7 +172,8 @@ Every command runs through `go run ./tools/task <name>`, the same on Windows, Li
 - [x] High-availability metadata with Raft (replicated log, leader election, term fencing, linearizable histories)
 - [x] Deduplication, versioned files with compare-and-swap, undelete, garbage collection
 - [x] Rebalancing when nodes join, drain and decommission
-- [ ] Erasure coding for cold data
+- [x] Erasure coding, chosen per upload (Reed-Solomon 4+2)
+- [ ] Moving cold data from copies to erasure coding in the background
 
 ## License
 

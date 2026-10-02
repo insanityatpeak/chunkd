@@ -1,6 +1,20 @@
 # Status
 
-Current phase: **Phase 6 complete** (rebalancing, drain and decommission), released as [v0.3.0](https://github.com/insanityatpeak/chunkd/releases/tag/v0.3.0). Phase 5 was released as [v0.2.0](https://github.com/insanityatpeak/chunkd/releases/tag/v0.2.0). Next: Phase 7, breadth features.
+Current phase: **Phase 6 complete** (rebalancing, drain and decommission), released as [v0.3.0](https://github.com/insanityatpeak/chunkd/releases/tag/v0.3.0). Phase 5 was released as [v0.2.0](https://github.com/insanityatpeak/chunkd/releases/tag/v0.2.0). Phase 7 (breadth features) is in progress on the `phase7` branch.
+
+## Phase 7 (in progress, branch `phase7`)
+
+Erasure coding (item A) is built. An upload can store each chunk as an RS(4,2) stripe on 6 distinct nodes; each shard is a block of its own with a slot-and-stripe header, so GC, scrub, drain and trims treat it as any block. Reads gather 4 shards with hedging and decode from parity; repair rebuilds a lost shard from 4 others on a node outside the stripe. ADRs 0022–0023. Dashboard: a "Store as" choice, shard counts, a shard-level chunk grid, rebuild sources, and a shareable `ec` scenario. Next: resumable uploads (B), auth and quotas (D), versioning UX and CLI polish (C/E).
+
+| Criterion | Evidence |
+|---|---|
+| Any 2 shards lost reads; 3 lost fails loudly | Codec tables; `TestECReadSurvivesTwoLostNodesNotThree`, `TestECReadDecodesAroundARottedShard`; `e2e.TestRoundTripEC` over real gRPC and disk, 0 B to 37 MiB |
+| Lost shards rebuilt within the repair bound, stripes on distinct nodes | `TestECRepairRebuildsLostShards`; scheduler and node rebuild tests |
+| Storage and repair cost measured | `docs/benchmarks/ec.md`: 1.50× against 3.00× stored; repair read 80.1 MiB for 20.0 MiB rebuilt (4×) |
+| Chaos with EC puts | `chaos --seeds=500 --ec` per push (CI); locally 3,000 EC seeds and 1,500 with the metadata group, 0 failed |
+| Goldens and replay | The 7 existing goldens unchanged; `ec` added; Playwright replays all 7 plus an EC UI check (Edge) |
+
+Bugs found: #25 (a stripe read gave up on a shard after one lost message), #26 (a rebuild could take two source slots on one node), #27 (the trim watcher blamed a trim for a later failure), #28 (the harness counted a copy GC was deleting as surplus), #29 (one lost message stalled a rebuild past its copy timeout), #30 (a stripe read waited a call timeout on a node that had just died).
 
 ## Phase 6 (complete)
 
@@ -100,6 +114,7 @@ Chunked, replicated upload and download; see ADRs 0005–0009. `TestRoundTrip`, 
 - [ ] Skip trims of chunks a pending upload has claimed (closes the trim-vs-dedup race in Known limitations)
 - [ ] Acknowledged incremental block reports (removes the up-to-30 s commit delay after a lost report)
 - [ ] Overlap chunk uploads (window of chunks in flight)
+- [ ] A real-mode EC chaos scenario: compose runs 5 nodes and a stripe needs 6 (real processes are covered by `e2e.TestRoundTripEC` on 6 in-process nodes)
 - [ ] Per-step safety check in the chaos harness (real copies never below RF − 1, meta never counts a copy the store lacks); bugs #6 and #7 slipped past the end-state checker
 
 ## Open decisions

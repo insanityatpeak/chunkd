@@ -44,17 +44,29 @@ func random(n int64, seed uint64) []byte {
 }
 
 // roundTrip uploads, stats and downloads every size through api.
-func roundTrip(t *testing.T, api client.API) {
+func roundTrip(t *testing.T, api client.API) { roundTripAs(t, api, client.Replicated) }
+
+// roundTripAs is roundTrip under a redundancy policy. Erasure-coded chunks
+// must come back as 6 shards, none as replicas.
+func roundTripAs(t *testing.T, api client.API, policy client.Redundancy) {
 	ctx := context.Background()
 	for i, sz := range sizes {
 		t.Run(sz.name, func(t *testing.T) {
 			data := random(sz.n, uint64(i))
 			path := fmt.Sprintf("/rt/%d", i)
-			m, err := api.Put(ctx, path, bytes.NewReader(data), sz.n, client.PutOptions{})
+			m, err := api.Put(ctx, path, bytes.NewReader(data), sz.n, client.PutOptions{Redundancy: policy})
 			if err != nil {
 				t.Fatal(err)
 			}
 			want := sha256.Sum256(data)
+			if m.Redundancy != policy {
+				t.Fatalf("stored as %q, asked for %q", m.Redundancy, policy)
+			}
+			for _, ch := range m.Chunk {
+				if ec := policy == client.EC42; ec != (len(ch.Shards) == 6) || ec != (len(ch.Replicas) == 0) {
+					t.Fatalf("chunk %d: %d shards, %d replicas under %q", ch.Index, len(ch.Shards), len(ch.Replicas), policy)
+				}
+			}
 			if m.Version != 1 || m.Size != sz.n || m.SHA256 != fmt.Sprintf("%x", want) {
 				t.Fatalf("put manifest %+v", m.FileInfo)
 			}
@@ -168,4 +180,15 @@ func TestUploadsUnderMessageLoss(t *testing.T) {
 			t.Fatalf("replay with seed %d: %v", seed, err)
 		}
 	}
+}
+
+// TestRoundTripEC stores every size as RS(4,2) stripes over real gRPC and
+// disk block stores: shard puts, gathered shard reads and decoding.
+func TestRoundTripEC(t *testing.T) {
+	c, err := local.Start(t.TempDir(), 6, meta.DefaultConfig(""))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer c.Close()
+	roundTripAs(t, c.Client, client.EC42)
 }
