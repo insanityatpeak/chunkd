@@ -1,8 +1,8 @@
 # Status
 
-Current phase: **Phase 5 complete** (Raft metadata group), to ship as v0.2.0 once CI is green. Next: Phase 6, rebalancing.
+Current phase: **Phase 5 complete** (Raft metadata group), released as [v0.2.0](https://github.com/insanityatpeak/chunkd/releases/tag/v0.2.0). Next: Phase 6, rebalancing.
 
-## Phase 5 (complete, CI pending)
+## Phase 5 (complete)
 
 The metadata service is a group of three Raft peers on etcd raft's `RawNode`, the same code in the sim, the browser and the real processes. Election timers are seeded and driven by the event loop; followers are never ticked, so the vote lease and the leader's quorum check are done in `core/consensus`. Writes commit through the log, reads are read-index reads, commands to nodes are fenced by the Raft term (kept on each node's disk), and GC deletes are logged intents sent only after they commit. ADRs 0017–0019. Dashboard: the group with roles, terms and log indexes, peer and leader faults, elections on the timeline, and a shareable `kill-leader` scenario; the browser runs three peers.
 
@@ -11,10 +11,10 @@ The metadata service is a group of three Raft peers on etcd raft's `RawNode`, th
 | `TestKillLeaderMidUpload` (real, 3 meta): kill the leader between chunk writes and commit; every acknowledged upload reads back | Sim over 12 seeds; `e2e.TestKillLeaderMidUploadReal` against in-process real peers; `kill-meta-leader` in the compose short suite, with a failover required |
 | `TestStaleLeaderCannotCommit` | Sim (4 seeds) and consensus: the woken leader's write fails and leaves nothing, and a node refuses its old-term command (`Fenced` counter) |
 | `TestMinorityPartitionRejectsWrites` | Passes; the cut-off side refuses, a write sent before it noticed never commits |
-| Porcupine: 500 sim histories plus a real short suite, all linearizable; CI fails and uploads the visualization | CI runs `chaos --seeds=500 --metas=3` next to the 1,000-seed step; 3,000 meta seeds green locally. Every real-mode scenario records and checks its history |
+| Porcupine: 500 sim histories plus a real short suite, all linearizable; CI fails and uploads the visualization | Green in CI at `dde2a2c` (500 meta seeds in 44 s, 0 failed; the compose short suite with `kill-meta-leader`). CI runs `chaos --seeds=500 --metas=3` next to the 1,000-seed step; 3,000 meta seeds green locally. Every real-mode scenario records and checks its history |
 | Log bounded under 10k ops; a restarted follower catches up from a snapshot | `TestLogBoundedUnder10kOps`, `consensus.TestSnapshotBoundsLogAndCatchesUp`, `Status.SnapshotsInstalled` |
 | Dashboard: group view, kill and partition the leader, re-election on the timeline | Playwright replays `kill-node`, `corrupt-chunk`, `gc` and `kill-leader` against `TestScenarioGolden` (goldens regenerated for 3 peers); `TestDashboardLeaderCut`; checked by hand in LIVE mode against compose, killing the leader twice |
-| WASM under 15 MiB; Lighthouse on Pages ≥ 80 performance, ≥ 90 accessibility | 10.09 MiB. Lighthouse: after the push |
+| WASM under 15 MiB; Lighthouse on Pages ≥ 80 performance, ≥ 90 accessibility | 10.09 MiB. Performance 100, accessibility 100, best practices 96 (LCP 1.3 s, TBT 20 ms, CLS 0.047), Lighthouse 12.8 in headless Edge against the live URL at `dde2a2c` |
 
 Bugs found: #13 (a granted pre-vote renewed the voter's lease and dropped the real vote), #14 (a snapshot from before a membership change refused by a new voter), #15 (sim peers started before all existed), #16 (the agreement check compared peers at one instant), #17 (real-mode repair counts underflowed across a failover).
 

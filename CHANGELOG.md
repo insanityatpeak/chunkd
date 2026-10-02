@@ -1,6 +1,6 @@
 # Changelog
 
-## v0.2.0 (unreleased)
+## v0.2.0 (2026-10-02)
 
 ### Metadata high availability
 - The metadata service is a group of three Raft peers (etcd raft's `RawNode`), one implementation in the simulator, the browser and the real processes. Election timers are seeded, so a failover replays from its seed. ADRs 0017–0019.
