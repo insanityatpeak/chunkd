@@ -13,7 +13,9 @@ import (
 
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/backoff"
+	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/credentials/insecure"
+	"google.golang.org/grpc/status"
 
 	"github.com/insanityatpeak/chunkd/internal/iface"
 	"github.com/insanityatpeak/chunkd/internal/real/runtime"
@@ -114,17 +116,25 @@ func (t *Transport) Send(to iface.NodeID, m iface.Message) {
 		return
 	}
 	go func() {
-		conn, err := t.pool.get(addr)
-		if err != nil {
-			t.log.Debug("dial failed", "to", to, "addr", addr, "err", err)
-			return
-		}
 		ctx, cancel := context.WithTimeout(context.Background(), sendTimeout)
 		defer cancel()
 		env := toEnvelope(m)
 		env.FromAddr = t.selfAddr
-		if _, err := rpcv1.NewTransportServiceClient(conn).Deliver(ctx, &chunkdv1.DeliverRequest{Envelope: env}); err != nil {
+		// A second try only after a misroute, on a fresh connection.
+		for range 2 {
+			conn, err := t.pool.get(addr)
+			if err != nil {
+				t.log.Debug("dial failed", "to", to, "addr", addr, "err", err)
+				return
+			}
+			_, err = rpcv1.NewTransportServiceClient(conn).Deliver(ctx, &chunkdv1.DeliverRequest{Envelope: env})
+			if err == nil {
+				return
+			}
 			t.log.Debug("deliver failed", "to", to, "kind", m.Kind, "err", err)
+			if !t.pool.evictIfMisrouted(addr, conn, err) {
+				return
+			}
 		}
 	}()
 }
@@ -141,7 +151,7 @@ func (t *Transport) Deliver(_ context.Context, req *chunkdv1.DeliverRequest) (*c
 	t.mu.Unlock()
 	if h == nil {
 		t.log.Warn("message for unknown local node", "to", m.To, "kind", m.Kind)
-		return &chunkdv1.DeliverResponse{}, nil
+		return nil, misrouted(m.To)
 	}
 	t.loop.Post(func() { h(m) })
 	return &chunkdv1.DeliverResponse{}, nil
@@ -149,6 +159,9 @@ func (t *Transport) Deliver(_ context.Context, req *chunkdv1.DeliverRequest) (*c
 
 // Call serves a unary request.
 func (t *Transport) Call(ctx context.Context, req *chunkdv1.CallRequest) (*chunkdv1.CallResponse, error) {
+	if to := iface.NodeID(req.GetEnvelope().GetTo()); !t.hosts(to) {
+		return nil, misrouted(to)
+	}
 	body, err := t.dispatch(ctx, fromEnvelope(req.GetEnvelope()))
 	return &chunkdv1.CallResponse{Envelope: responseEnvelope(body, err)}, nil
 }
@@ -160,6 +173,9 @@ func (t *Transport) CallStream(stream rpcv1.TransportService_CallStreamServer) e
 		return err
 	}
 	m := fromEnvelope(first.GetHeader())
+	if !t.hosts(m.To) {
+		return misrouted(m.To)
+	}
 	body := append([]byte(nil), first.GetData()...)
 	for {
 		f, err := stream.Recv()
@@ -210,6 +226,37 @@ func (t *Transport) dispatch(ctx context.Context, m iface.Message) ([]byte, erro
 	case <-ctx.Done():
 		return nil, iface.Errorf(iface.CodeUnavailable, "%s: %v", m.Kind, ctx.Err())
 	}
+}
+
+// hosts reports whether this process serves id: a listener or any RPC.
+func (t *Transport) hosts(id iface.NodeID) bool {
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	if _, ok := t.handlers[id]; ok {
+		return true
+	}
+	for k := range t.rpcs {
+		if k.id == id {
+			return true
+		}
+	}
+	return false
+}
+
+// misroutedMsg marks a refusal for an ID this process does not host. The
+// sender's connection reached the wrong process: a container recreated with
+// a new IP, its old IP now another node's. gRPC re-resolves a name only when
+// a connection breaks, and this one works, so without the refusal every
+// message to that ID would reach the wrong node for good.
+const misroutedMsg = "chunkd: misrouted: this process does not host "
+
+func misrouted(to iface.NodeID) error {
+	return status.Error(codes.FailedPrecondition, misroutedMsg+string(to))
+}
+
+func isMisrouted(err error) bool {
+	s, ok := status.FromError(err)
+	return ok && s.Code() == codes.FailedPrecondition && strings.HasPrefix(s.Message(), misroutedMsg)
 }
 
 // Close releases client connections.
@@ -269,6 +316,22 @@ func (p *pool) get(addr string) (*grpc.ClientConn, error) {
 	}
 	p.conns[addr] = c
 	return c, nil
+}
+
+// evictIfMisrouted drops conn when err says it reached a process that does
+// not host the addressee, so the next get dials again and re-resolves addr.
+// It reports whether err was such a refusal.
+func (p *pool) evictIfMisrouted(addr string, conn *grpc.ClientConn, err error) bool {
+	if !isMisrouted(err) {
+		return false
+	}
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	if p.conns[addr] == conn {
+		delete(p.conns, addr)
+		_ = conn.Close()
+	}
+	return true
 }
 
 func (p *pool) close() {
@@ -411,12 +474,24 @@ func (c *Caller) one(ctx context.Context, call iface.Call) iface.Result {
 	if addr == "" {
 		return iface.Result{Err: iface.Errorf(iface.CodeUnavailable, "no address for %s", call.To)}
 	}
-	conn, err := c.pool.get(addr)
-	if err != nil {
-		return iface.Result{Err: iface.Errorf(iface.CodeUnavailable, "dial %s: %v", addr, err)}
-	}
 	ctx, cancel := context.WithTimeout(ctx, c.timeout)
 	defer cancel()
+	// A misrouted connection is dropped; one retry dials afresh and
+	// re-resolves addr. The wrong process ran nothing, so it is safe.
+	r, retry := c.attempt(ctx, addr, call)
+	if retry {
+		r, _ = c.attempt(ctx, addr, call)
+	}
+	return r
+}
+
+// attempt runs call once over the pooled connection to addr. retry reports
+// that the connection reached the wrong process and was dropped.
+func (c *Caller) attempt(ctx context.Context, addr string, call iface.Call) (r iface.Result, retry bool) {
+	conn, err := c.pool.get(addr)
+	if err != nil {
+		return iface.Result{Err: iface.Errorf(iface.CodeUnavailable, "dial %s: %v", addr, err)}, false
+	}
 	client := rpcv1.NewTransportServiceClient(conn)
 	env := &chunkdv1.Envelope{To: string(call.To), Kind: call.Kind}
 
@@ -431,12 +506,27 @@ func (c *Caller) one(ctx context.Context, call iface.Call) iface.Result {
 		resp, body = r.GetEnvelope(), r.GetEnvelope().GetBody()
 	}
 	if err != nil {
-		return iface.Result{Err: iface.Errorf(iface.CodeUnavailable, "%s to %s: %v", call.Kind, call.To, err)}
+		retry = c.pool.evictIfMisrouted(addr, conn, err)
+		return iface.Result{Err: iface.Errorf(iface.CodeUnavailable, "%s to %s: %v", call.Kind, call.To, err)}, retry
 	}
 	if resp.GetErrCode() != 0 {
-		return iface.Result{Err: &iface.Error{Code: iface.Code(resp.GetErrCode()), Msg: resp.GetErrMsg()}}
+		return iface.Result{Err: &iface.Error{Code: iface.Code(resp.GetErrCode()), Msg: resp.GetErrMsg()}}, false
 	}
-	return iface.Result{Body: body}
+	return iface.Result{Body: body}, false
+}
+
+// sendFailed turns a failed stream Send into the server's status. Send
+// returns io.EOF once the server has ended the stream, and the reason (a
+// misroute refusal, say) is what Recv returns then.
+func sendFailed(s interface {
+	Recv() (*chunkdv1.CallStreamResponse, error)
+}, err error) error {
+	if errors.Is(err, io.EOF) {
+		if _, rerr := s.Recv(); rerr != nil {
+			return rerr
+		}
+	}
+	return err
 }
 
 func stream(ctx context.Context, client rpcv1.TransportServiceClient, env *chunkdv1.Envelope, body []byte) (*chunkdv1.Envelope, []byte, error) {
@@ -445,11 +535,11 @@ func stream(ctx context.Context, client rpcv1.TransportServiceClient, env *chunk
 		return nil, nil, err
 	}
 	if err := s.Send(&chunkdv1.CallStreamRequest{Header: env}); err != nil {
-		return nil, nil, err
+		return nil, nil, sendFailed(s, err)
 	}
 	for off := 0; off < len(body); off += FrameSize {
 		if err := s.Send(&chunkdv1.CallStreamRequest{Data: body[off:min(off+FrameSize, len(body))]}); err != nil {
-			return nil, nil, err
+			return nil, nil, sendFailed(s, err)
 		}
 	}
 	if err := s.CloseSend(); err != nil {

@@ -223,3 +223,23 @@ Related: with 1% message loss a copy command or its completion report can be los
 | Root cause | A drain sent during an election waits and retries. The undrain that followed found a leader at once and committed first, then the retried drain committed over it. The command log was right; the client reordered the commands. |
 | Fix | The sim sends one node's admin commands one at a time, in call order (`Cluster.AdminAsync`). The compose target and the CLI were never affected: they wait for each call. Never committed. |
 | Regression test | Every chaos run with membership faults: the node must end active and every chunk at exactly RF. |
+
+## 23. The demo waited for a removed node to come back (harness)
+
+| | |
+|---|---|
+| Symptom | CI on `aaf9559`: all 7 real-mode scenarios passed, then `docker compose run --rm demo` failed with `all nodes alive: not within 1m0s`. |
+| Repro | `go run ./tools/task chaos --mode=real --short`, then `docker compose run --rm demo`, before the fix. |
+| Root cause | The `add-node` scenario ends by draining, decommissioning and removing node-6. The leader keeps every node it has heard from in its view, so node-6 stays there, dead and decommissioned, until the leader restarts. The demo's first check waited for every node in the view to be alive. The chaos runner's settle check had been taught to skip decommissioned nodes; the demo had not. |
+| Fix | The demo skips decommissioned nodes as well: one may be switched off for good. |
+| Regression test | The CI compose job runs the demo right after the short suite. |
+
+## 24. A recreated container's old IP routed one node's commands to another
+
+| | |
+|---|---|
+| Symptom | Reproducing #23 locally, after `docker compose up --build` had recreated the node containers but not the metadata peers: one repair copy timed out every 10 s for minutes, and the chunk stayed at 2 copies. node-1 logged `message for unknown local node` for heartbeat acks addressed to node-3. |
+| Repro | Recreate the node containers without restarting the metadata peers, so Docker hands out their IPs in a different order, then kill a node and wait for repair. The short suite's own kills, restarts and the node-6 add and remove shuffle IPs too: on a fresh cluster, the demo run right after it failed its upload with `no handler for chunk.put on node-5` (and on node-1 and node-3), sent by the gateway over stale connections. |
+| Root cause | The transport pools one gRPC connection per address name (`node-1:7000`). gRPC re-resolves a name only when its connection breaks. The old node-1 container went away; when the connection reconnected to the old IP, another node's new container was already listening there, so the connection worked again, now to the wrong process. That process dropped every message for an ID it does not host and still answered OK, so the sender never found out. |
+| Fix | A process refuses a message or call for an ID it does not host, with a distinct gRPC status. The sender drops that pooled connection and retries once on a fresh one, which resolves the name again. The wrong process ran nothing, so the retry is safe. |
+| Regression test | `grpcnet.TestMisroutedConnectionIsDropped`: unary, streamed and one-way messages to the wrong process are refused and their connection is dropped; a handler error on the right process keeps it. It fails on the old code. `TestStreamSendEOFYieldsServerStatus`: a refused streamed put fails its next Send with a bare `io.EOF`, which must be turned into the refusal or the retry never happens; the first fix missed this, and the compose run failed with `chunk.put to node-5: EOF`. The CI compose job runs the demo after the short suite. |
