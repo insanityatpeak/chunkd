@@ -234,6 +234,69 @@ func TestLeaderKilledAndRestarted(t *testing.T) {
 	}
 }
 
+// The dashboard's group view and timeline: the leader reports every voter's
+// match index and last contact, a follower only itself, and a follower that
+// stops hearing from the leader reports the loss once before campaigning.
+func TestPeersAndLeaderLost(t *testing.T) {
+	g := newGroup(t, 6, sim.Faults{MinDelay: time.Millisecond, MaxDelay: 5 * time.Millisecond}, nil, 1, 2, 3)
+	type loss struct {
+		by, leader iface.NodeID
+		silent     time.Duration
+	}
+	var lost []loss
+	for id, n := range g.nodes {
+		n.OnLeaderLost(func(leader iface.NodeID, silent time.Duration) { lost = append(lost, loss{name(id), leader, silent}) })
+	}
+	l := g.waitLeader()
+	for i := range 3 {
+		g.propose(l, fmt.Sprintf("a%d", i))
+	}
+	g.run(time.Second)
+	if len(lost) != 0 {
+		t.Fatalf("leader lost reported with a working leader: %+v", lost)
+	}
+	if st := l.Status(); st.Role != "leader" {
+		t.Fatalf("leader's role %q", st.Role)
+	}
+	peers := l.Peers()
+	if len(peers) != 3 {
+		t.Fatalf("leader sees %d peers, want 3", len(peers))
+	}
+	for _, p := range peers {
+		if p.Match != l.lastIndex() || !p.Heard || p.HeardAgo >= time.Second {
+			t.Errorf("leader's view of %s: %+v, want match %d heard recently", p.Node, p, l.lastIndex())
+		}
+	}
+	for _, n := range g.nodes {
+		if n != l {
+			if ps := n.Peers(); len(ps) != 1 || ps[0].ID != n.cfg.ID {
+				t.Errorf("follower %d tracks %+v, want only itself", n.cfg.ID, ps)
+			}
+			if r := n.Status().Role; r != "follower" {
+				t.Errorf("follower %d role %q", n.cfg.ID, r)
+			}
+		}
+	}
+
+	old := l.cfg.ID
+	g.kill(old)
+	nl := g.waitLeader()
+	g.run(5 * time.Second)
+	if len(lost) == 0 || len(lost) > 2 {
+		t.Fatalf("leader loss reported %d times: %+v", len(lost), lost)
+	}
+	for _, x := range lost {
+		if x.leader != name(old) || x.silent < time.Second || x.by == name(old) {
+			t.Errorf("bad report %+v", x)
+		}
+	}
+	for _, p := range nl.Peers() {
+		if p.ID == old && p.Heard && p.HeardAgo < 5*time.Second {
+			t.Errorf("new leader heard from the dead peer %v ago", p.HeardAgo)
+		}
+	}
+}
+
 // The deposed leader accepts a proposal into its own log while cut off. It
 // must never commit, and once healed it must adopt the new leader's log.
 func TestStaleLeaderCannotCommit(t *testing.T) {

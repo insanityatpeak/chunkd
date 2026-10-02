@@ -17,6 +17,11 @@
 //	slow(node, ms)          add ms to every message to or from node; 0 clears
 //	partition(node, on)     cut node off from the metadata server, or heal
 //	corrupt(node, chunkHex) flip a byte in node's copy of a chunk
+//	killMeta(id), reviveMeta(id)  stop a metadata peer (log kept); start a new process over it
+//	cutMeta(id, on)         partition a metadata peer from the other peers, or heal
+//
+// An empty metadata peer id means the current leader; with none (during an
+// election) the call returns an error.
 //
 // Errors come back as {"error": "..."} JSON. The worker only calls tick with
 // a fixed step, so a seed always yields the same state sequence.
@@ -70,7 +75,7 @@ func main() {
 			if len(args) > 0 && args[0].Type() == js.TypeNumber {
 				seed = uint64(args[0].Float())
 			}
-			c = cluster.New(seed, cluster.DefaultConfig(), io.Discard)
+			c = cluster.New(seed, cluster.DashboardConfig(), io.Discard)
 			return nil
 		}),
 		"tick": needCluster(func(args []js.Value) any {
@@ -140,10 +145,42 @@ func main() {
 			c.Partition(iface.NodeID(args[0].String()), args[1].Bool())
 			return nil
 		}),
+		"killMeta": needCluster(func(args []js.Value) any {
+			id, err := metaPeer(args[0].String())
+			if err == nil {
+				c.KillMeta(id)
+			}
+			return jsonValue(struct{}{}, err)
+		}),
+		"reviveMeta": needCluster(func(args []js.Value) any {
+			return jsonValue(struct{}{}, c.ReviveMeta(iface.NodeID(args[0].String())))
+		}),
+		"cutMeta": needCluster(func(args []js.Value) any {
+			id, err := metaPeer(args[0].String())
+			if err == nil {
+				if args[1].Bool() {
+					c.CutMeta(id)
+				} else {
+					c.HealMeta(id)
+				}
+			}
+			return jsonValue(struct{}{}, err)
+		}),
 		"corrupt": needCluster(func(args []js.Value) any {
 			return jsonValue(struct{}{}, c.CorruptReplica(iface.NodeID(args[0].String()), args[1].String()))
 		}),
 	}
 	js.Global().Set("chunkd", js.ValueOf(api))
 	select {} // keep the Go runtime alive for callbacks
+}
+
+// metaPeer resolves "" to the current metadata leader.
+func metaPeer(id string) (iface.NodeID, error) {
+	if id != "" {
+		return iface.NodeID(id), nil
+	}
+	if l := c.MetaLeader(); l != "" {
+		return l, nil
+	}
+	return "", iface.Errorf(iface.CodeUnavailable, "no metadata leader: an election is running")
 }

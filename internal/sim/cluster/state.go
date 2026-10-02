@@ -16,6 +16,7 @@ type State struct {
 	Seed     uint64              `json:"seed"`
 	NowMs    int64               `json:"nowMs"`
 	Meta     MetaView            `json:"meta"`
+	Metas    []MetaPeerView      `json:"metas"`
 	Nodes    []NodeView          `json:"nodes"`
 	Files    []FileView          `json:"files"`
 	Net      sim.NetStats        `json:"net"`
@@ -35,11 +36,27 @@ type State struct {
 	Deleted         []client.DeletedFile `json:"deleted"`
 }
 
-// MetaView is the metadata server's summary.
+// MetaView is the peer the dashboard reads: the leader, or during an
+// election the live peer that has applied the most.
 type MetaView struct {
 	ID      iface.NodeID `json:"id"`
 	Applied uint64       `json:"applied"`
 	Pending int          `json:"pendingUploads"`
+}
+
+// MetaPeerView is one metadata peer: its Raft view plus injected faults.
+type MetaPeerView struct {
+	ID iface.NodeID `json:"id"`
+	// State is the Raft role (leader, follower, candidate, pre-candidate),
+	// or down or frozen while that fault holds.
+	State string `json:"state"`
+	// Leader: leads with a quorum and has applied its term's first entry,
+	// so it serves. A cut-off leader keeps its role but not this.
+	Leader  bool   `json:"leader"`
+	CutOff  bool   `json:"cutOff"`
+	Term    uint64 `json:"term"`
+	Commit  uint64 `json:"commit"`
+	Applied uint64 `json:"applied"`
 }
 
 // NodeView is one storage node, as the metadata server sees it plus the
@@ -71,10 +88,13 @@ func (c *Cluster) State() State { return c.StateSince(0) }
 // StateSince returns the current snapshot with the events after seq.
 func (c *Cluster) StateSince(seq uint64) State {
 	now := c.clock.Now()
-	view := client.ClusterFromProto(c.Meta().ClusterView(seq))
+	srv := c.Meta()
+	// The merged log replaces the peer's own events; ask it for none.
+	view := client.ClusterFromProto(srv.ClusterView(srv.EventSeq()))
+	events, eventSeq := c.eventsSince(seq)
 	s := State{Seed: c.seed, NowMs: int64(now) / int64(time.Millisecond), Net: c.net.Stats(), Files: []FileView{},
-		Meta:   MetaView{ID: c.metaID(c.Meta()), Applied: uint64(c.Meta().Applied()), Pending: c.Meta().State().PendingUploads()},
-		Health: view.Health, Copies: view.Copies, Events: view.Events, EventSeq: view.EventSeq, Reads: slices.Clone(c.readLog),
+		Meta:   MetaView{ID: c.metaID(srv), Applied: uint64(srv.Applied()), Pending: srv.State().PendingUploads()},
+		Health: view.Health, Copies: view.Copies, Events: events, EventSeq: eventSeq, Reads: slices.Clone(c.readLog),
 		ReferencedBytes: view.ReferencedBytes, DistinctBytes: view.DistinctBytes, Epoch: view.Epoch, GC: view.GC, Deleted: view.Deleted}
 	if s.Reads == nil {
 		s.Reads = []client.Event{}
@@ -90,16 +110,39 @@ func (c *Cluster) StateSince(seq uint64) State {
 		}
 		info.Rack = n.Rack
 		s.Nodes = append(s.Nodes, NodeView{NodeInfo: info, Crashed: c.net.Crashed(n.ID()), Frozen: c.net.Frozen(n.ID()),
-			SlowMs: int64(c.net.Slow(n.ID()) / time.Millisecond), Partitioned: c.net.Blocked(n.ID(), MetaID),
+			SlowMs: int64(c.net.Slow(n.ID()) / time.Millisecond), Partitioned: c.nodeCut(n.ID()),
 			Heartbeats: n.Stats().Heartbeats, Acks: n.Stats().Acks})
 	}
 	health := map[string]client.FileHealth{}
 	for _, f := range view.FileHealth {
 		health[f.Path] = f
 	}
-	for _, e := range c.Meta().State().List("/") {
+	for _, p := range c.metas {
+		st := p.srv.Raft()
+		v := MetaPeerView{ID: p.id, State: st.Role, CutOff: c.MetaCut(p.id), Term: st.Term, Commit: st.Commit, Applied: st.Applied}
+		switch {
+		case c.net.Crashed(p.id):
+			v.State = "down"
+		case c.net.Frozen(p.id):
+			v.State = "frozen"
+		default:
+			v.Leader = st.Ready
+		}
+		s.Metas = append(s.Metas, v)
+	}
+	for _, e := range srv.State().List("/") {
 		h := health[e.Path]
 		s.Files = append(s.Files, FileView{Path: e.Path, Version: e.V, Size: e.Size, Chunks: len(e.Chunks), UnderReplicated: h.UnderReplicated, MinLive: h.MinLive})
 	}
 	return s
+}
+
+// nodeCut reports whether node id is cut off from every metadata peer.
+func (c *Cluster) nodeCut(id iface.NodeID) bool {
+	for _, m := range c.MetaIDs() {
+		if !c.net.Blocked(id, m) {
+			return false
+		}
+	}
+	return true
 }

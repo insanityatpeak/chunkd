@@ -44,6 +44,9 @@ func (e *events) since(after uint64) []Event {
 	return out
 }
 
+// EventSeq is the latest event's seq.
+func (s *Server) EventSeq() uint64 { return s.events.next }
+
 // Events returns the retained events after seq, and the latest seq. A
 // latest below after means the server restarted and the sequence reset.
 func (s *Server) Events(after uint64) ([]Event, uint64) {

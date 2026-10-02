@@ -133,7 +133,7 @@ export function App() {
       <p class={`banner ${sim ? '' : 'real'}`} role="note">
         {sim ? (
           <>
-            A simulated cluster running in your browser: 1 metadata server and 5 storage nodes on a lossy network, the same core Go
+            A simulated cluster running in your browser: a 3-peer Raft metadata group and 5 storage nodes on a lossy network, the same core Go
             code as the real multi-process cluster (<code>docker compose up</code>), compiled to WebAssembly. Nothing leaves this tab.{' '}
             <button type="button" class="link-button" onClick={() => setTour(true)}>
               Take the 5-step tour
@@ -199,7 +199,7 @@ export function App() {
         <>
           <HealthBar view={view} />
           <ClusterView view={view} sim={sim} />
-          <NodeControls api={api} nodes={view.nodes} onError={setError} />
+          <NodeControls api={api} nodes={view.nodes} metas={view.metas ?? []} onError={setError} />
           <div class="panels">
             <Replication view={view} />
             <EventTimeline view={view} sim={sim} />

@@ -132,6 +132,13 @@ type Cluster struct {
 	// during an election; MetaTerm is its Raft term.
 	MetaLeader string `json:"metaLeader"`
 	MetaTerm   uint64 `json:"metaTerm"`
+	// MetaPeer is the answering peer, whose clock and event sequence the
+	// view uses; MetaRole, MetaCommit and MetaApplied are its own.
+	MetaPeer    string         `json:"metaPeer"`
+	MetaRole    string         `json:"metaRole"`
+	MetaCommit  uint64         `json:"metaCommit"`
+	MetaApplied uint64         `json:"metaApplied"`
+	MetaPeers   []MetaPeerInfo `json:"metaPeers"`
 }
 
 // GCStats are the sweep's counters and the retention settings.
@@ -206,4 +213,12 @@ type API interface {
 type ManifestWriter interface {
 	io.Writer
 	SetManifest(Manifest)
+}
+
+// MetaPeerInfo is one metadata peer as the answering peer sees it. Match is the
+// last index known in its log; HeardAgoMs is -1 if never heard from.
+type MetaPeerInfo struct {
+	ID         string `json:"id"`
+	Match      uint64 `json:"match"`
+	HeardAgoMs int64  `json:"heardAgoMs"`
 }

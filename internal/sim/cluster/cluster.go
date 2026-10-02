@@ -51,6 +51,14 @@ func DefaultConfig() Config {
 	}
 }
 
+// DashboardConfig is DefaultConfig with a group of 3 metadata peers, as the
+// browser runs it: a leader can be killed or cut off and the group re-elects.
+func DashboardConfig() Config {
+	cfg := DefaultConfig()
+	cfg.Metas = 3
+	return cfg
+}
+
 // Cluster is a running simulation. Like the sim, it is single-threaded.
 type Cluster struct {
 	seed   uint64
@@ -70,6 +78,7 @@ type Cluster struct {
 	written  map[string][][32]byte
 	badReads []error
 	rotPick  uint64
+	timeline timeline
 	script   []scriptedStep // due scripted client calls, in time order
 	readLog  []client.Event // results of scripted client calls, newest last
 	readSeq  uint64
@@ -267,6 +276,7 @@ func (c *Cluster) RestartMeta() error { return c.startMeta(c.metas[0]) }
 
 // KillMeta stops a metadata peer's process and cuts it off. Its log survives.
 func (c *Cluster) KillMeta(id iface.NodeID) {
+	c.pullEvents() // its events since the last Tick die with it
 	p := c.metaPeer(id)
 	p.srv.Stop()
 	c.net.Crash(id)
@@ -276,6 +286,40 @@ func (c *Cluster) KillMeta(id iface.NodeID) {
 func (c *Cluster) ReviveMeta(id iface.NodeID) error {
 	c.net.Restart(id)
 	return c.startMeta(c.metaPeer(id))
+}
+
+// CutMeta partitions metadata peer id from the other peers, both ways.
+// Nodes and clients still reach it, so a cut leader goes on answering until
+// its quorum check fails, and can no longer commit.
+func (c *Cluster) CutMeta(id iface.NodeID) { c.net.Partition([]iface.NodeID{id}, c.otherMetas(id)) }
+
+// HealMeta undoes CutMeta.
+func (c *Cluster) HealMeta(id iface.NodeID) {
+	for _, p := range c.otherMetas(id) {
+		c.net.Unblock(id, p)
+		c.net.Unblock(p, id)
+	}
+}
+
+// MetaCut reports whether peer id is cut off from every other peer.
+func (c *Cluster) MetaCut(id iface.NodeID) bool {
+	rest := c.otherMetas(id)
+	for _, p := range rest {
+		if !c.net.Blocked(id, p) {
+			return false
+		}
+	}
+	return len(rest) > 0
+}
+
+func (c *Cluster) otherMetas(id iface.NodeID) []iface.NodeID {
+	var rest []iface.NodeID
+	for _, p := range c.MetaIDs() {
+		if p != id {
+			rest = append(rest, p)
+		}
+	}
+	return rest
 }
 
 // MetaPeer returns peer id's server, for tests that inspect one peer.
@@ -297,11 +341,13 @@ func (c *Cluster) Tick(d time.Duration) {
 		if now := c.clock.Now(); r.at > now {
 			c.clock.Advance(r.at.Sub(now))
 		}
+		c.pullEvents()
 		r.run()
 	}
 	if now := c.clock.Now(); end > now {
 		c.clock.Advance(end.Sub(now))
 	}
+	c.pullEvents()
 }
 
 // Now returns simulated time.

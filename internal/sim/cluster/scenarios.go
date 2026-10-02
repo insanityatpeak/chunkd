@@ -27,6 +27,7 @@ var Scenarios = []Scenario{
 	{"rack-loss", "Lose a rack", "Rack r1 (node-1 and node-4) goes down at once. Rack-aware placement kept at most one copy per rack, so every chunk survives with 2 copies; repair rebuilds the third."},
 	{"slow-node", "Slow node", "node-4 answers 2 s late for a minute but keeps heartbeating, so the detector keeps it alive. Reads every 5 s show hedging: the client asks a second replica and learns to avoid node-4."},
 	{"gc", "Delete and collect", "5 s after the demo files load, one is overwritten with its last chunk changed: the first chunk is already stored, so only the new one is sent. 5 s later another file is deleted. Both old versions stay restorable for 3 epochs of 30 s; then their chunks lose the last reference, and after a 60 s grace the sweep deletes the copies."},
+	{"kill-leader", "Kill the metadata leader", "10 s after the demo files load, the metadata leader dies. About a second later a follower notices the silence, wins a pre-vote and then the election, and leads the next term. A write sent just after the kill goes to the dead leader first: it waits out the client's 10 s call timeout, then retries and commits on the new leader. Reads go on throughout. At 60 s the old leader returns as a follower and catches up from the new leader's log."},
 }
 
 // RunScenario starts a named script.
@@ -66,6 +67,8 @@ func (c *Cluster) RunScenario(name string) error {
 		c.after(5*time.Second, func() { c.scriptEdit("/demo/file-0.bin") })
 		c.after(10*time.Second, func() { c.scriptDelete("/demo/file-7.bin") })
 		return nil
+	case "kill-leader":
+		return c.scriptKillLeader()
 	}
 	return iface.Errorf(iface.CodeInvalid, "unknown scenario %q", name)
 }
@@ -192,4 +195,47 @@ func parseChunkID(s string) (iface.ChunkID, error) {
 	}
 	copy(id[:], raw)
 	return id, nil
+}
+
+// scriptKillLeader kills whichever peer leads 10 s after the demo files
+// load and revives it at 60 s. Scripted reads and writes span the failover.
+func (c *Cluster) scriptKillLeader() error {
+	if len(c.metas) < 3 {
+		return iface.Errorf(iface.CodeInvalid, "kill-leader needs a group of 3 metadata peers, have %d", len(c.metas))
+	}
+	if err := c.demoFiles(); err != nil {
+		return err
+	}
+	var victim iface.NodeID
+	c.clock.AfterFunc(10*time.Second, func() {
+		if victim = c.MetaLeader(); victim != "" {
+			c.KillMeta(victim)
+		}
+	})
+	c.clock.AfterFunc(60*time.Second, func() {
+		if victim != "" {
+			_ = c.ReviveMeta(victim) // an in-memory log cannot fail to recover
+		}
+	})
+	// In time order: Tick runs scripted calls first in, first out.
+	c.after(5*time.Second, func() { c.scriptRead("/demo/file-0.bin") })
+	c.after(10500*time.Millisecond, func() { c.scriptPut("/demo/during-election.bin", 1<<20) })
+	c.after(25*time.Second, func() { c.scriptRead("/demo/file-1.bin") })
+	c.after(30*time.Second, func() { c.scriptPut("/demo/new-leader.bin", 1<<20) })
+	c.after(40*time.Second, func() { c.scriptRead("/demo/file-2.bin") })
+	c.after(70*time.Second, func() { c.scriptRead("/demo/file-3.bin") })
+	c.after(75*time.Second, func() { c.scriptPut("/demo/after-return.bin", 1<<20) })
+	return nil
+}
+
+// scriptPut writes size random bytes to path and records how long it took.
+func (c *Cluster) scriptPut(path string, size int64) {
+	start := c.clock.Now()
+	m, _, err := c.UploadRandom(path, size)
+	took := c.clock.Now().Sub(start).Round(time.Millisecond)
+	if err != nil {
+		c.logClient("write", fmt.Sprintf("write %s failed after %v: %v", path, took, err))
+		return
+	}
+	c.logClient("write", fmt.Sprintf("write %s (%d KiB) v%d in %v", path, size>>10, m.Version, took))
 }

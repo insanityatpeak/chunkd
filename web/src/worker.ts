@@ -27,6 +27,9 @@ interface ChunkdGlobal {
   slow(node: string, ms: number): void;
   partition(node: string, on: boolean): void;
   corrupt(node: string, chunk: string): string;
+  killMeta(id: string): string;
+  reviveMeta(id: string): string;
+  cutMeta(id: string, on: boolean): string;
   scenarios(): string;
   runScenario(name: string): string;
 }
@@ -132,6 +135,12 @@ function call(method: Method, args: unknown[]): { value: unknown; transfer: Tran
       return none;
     case 'corrupt':
       return { value: parse(api.corrupt(a, b as string)), transfer: [] };
+    case 'killMeta':
+      return { value: parse(api.killMeta(a)), transfer: [] };
+    case 'reviveMeta':
+      return { value: parse(api.reviveMeta(a)), transfer: [] };
+    case 'cutMeta':
+      return { value: parse(api.cutMeta(a, b as boolean)), transfer: [] };
     case 'scenarios':
       return { value: parse(api.scenarios()), transfer: [] };
   }

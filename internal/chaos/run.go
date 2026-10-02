@@ -103,15 +103,6 @@ func RunOpts(s Scenario, w io.Writer, opts Options) Report {
 	// held is the peer the running leader fault hit; cut is set while it is
 	// partitioned off. Leader faults never overlap, so one slot is enough.
 	var held, cut iface.NodeID
-	others := func(id iface.NodeID) []iface.NodeID {
-		var rest []iface.NodeID
-		for _, p := range c.MetaIDs() {
-			if p != id {
-				rest = append(rest, p)
-			}
-		}
-		return rest
-	}
 	// hit picks the current leader as the victim; "" during an election.
 	hit := func() iface.NodeID {
 		if held == "" {
@@ -146,15 +137,12 @@ func RunOpts(s Scenario, w io.Writer, opts Options) Report {
 			}
 		case CutLeader:
 			if id := hit(); id != "" {
-				c.Net().Partition([]iface.NodeID{id}, others(id))
+				c.CutMeta(id)
 				cut = id
 			}
 		case HealLeader:
 			if cut != "" {
-				for _, p := range others(cut) {
-					c.Net().Unblock(cut, p)
-					c.Net().Unblock(p, cut)
-				}
+				c.HealMeta(cut)
 				held, cut = "", ""
 			}
 		case Kill:

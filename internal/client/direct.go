@@ -528,7 +528,11 @@ func ClusterFromProto(resp *chunkdv1.ClusterResponse) Cluster {
 	out := Cluster{NowMs: resp.GetNowMs(), Files: resp.GetFiles(), LogicalBytes: resp.GetLogicalBytes(), EventSeq: resp.GetEventSeq(),
 		Nodes: []NodeInfo{}, FileHealth: []FileHealth{}, Copies: []RepairCopy{}, Events: []Event{}, Deleted: []DeletedFile{},
 		ReferencedBytes: resp.GetReferencedBytes(), DistinctBytes: resp.GetDistinctBytes(), Epoch: resp.GetEpoch(),
-		MetaLeader: resp.GetMetaLeader(), MetaTerm: resp.GetMetaTerm()}
+		MetaLeader: resp.GetMetaLeader(), MetaTerm: resp.GetMetaTerm(), MetaPeer: resp.GetMetaPeer(), MetaRole: resp.GetMetaRole(),
+		MetaCommit: resp.GetMetaCommit(), MetaApplied: resp.GetMetaApplied(), MetaPeers: []MetaPeerInfo{}}
+	for _, p := range resp.GetMetaPeers() {
+		out.MetaPeers = append(out.MetaPeers, MetaPeerInfo{ID: p.GetId(), Match: p.GetMatch(), HeardAgoMs: p.GetHeardAgoMs()})
+	}
 	if g := resp.GetGc(); g != nil {
 		out.GC = GCStats{Orphans: g.GetOrphans(), Sent: g.GetSent(), Deleted: g.GetDeleted(), Kept: g.GetKept(), Drift: g.GetDrift(),
 			RetainEpochs: g.GetRetainEpochs(), EpochEveryMs: g.GetEpochEveryMs()}

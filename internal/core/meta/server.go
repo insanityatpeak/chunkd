@@ -138,6 +138,9 @@ func NewServer(ctx context.Context, d Deps, cfg Config) (*Server, error) {
 	}
 	s.raft = raft
 	s.raft.OnChange(s.leadership)
+	s.raft.OnLeaderLost(func(leader iface.NodeID, silent time.Duration) {
+		s.event("raft", cfg.ID, "no contact from leader %s for %v: starting an election", leader, silent.Round(10*time.Millisecond))
+	})
 	st := s.raft.Status()
 	d.Log.Info("metadata recovered", "applied", st.Applied, "term", st.Term, "files", len(s.state.List("/")))
 	return s, nil
@@ -178,9 +181,16 @@ func (f fsm) Restore(data []byte) error {
 // starts empty on every new term: a deposed leader's queue and pending
 // deletes describe a view that is no longer authoritative.
 func (s *Server) leadership(st consensus.Status) {
-	if len(s.cfg.Peers) > 1 && (st.Term != s.seenTerm || st.Leader != s.seenLeader) {
+	// A pre-vote clears the known leader without a new term: nothing to tell
+	// until the term moves or a leader is known.
+	preVote := st.Term == s.seenTerm && st.LeaderNode == ""
+	if len(s.cfg.Peers) > 1 && !preVote && (st.Term != s.seenTerm || st.Leader != s.seenLeader) {
 		s.seenTerm, s.seenLeader = st.Term, st.Leader
-		s.event("raft", st.LeaderNode, "term %d, leader %q", st.Term, string(st.LeaderNode))
+		if st.LeaderNode == "" {
+			s.event("raft", "", "term %d: election, no leader yet", st.Term)
+		} else {
+			s.event("raft", st.LeaderNode, "term %d: %s leads", st.Term, st.LeaderNode)
+		}
 	}
 	if st.Ready == s.leading {
 		return
@@ -826,7 +836,15 @@ func (s *Server) ClusterView(eventsAfter uint64) *chunkdv1.ClusterResponse {
 	now := s.d.Clock.Now()
 	ms := func(t iface.Instant) int64 { return int64(t.Sub(0) / time.Millisecond) }
 	rs := s.raft.Status()
-	resp := &chunkdv1.ClusterResponse{NowMs: ms(now), MetaLeader: string(rs.LeaderNode), MetaTerm: rs.Term}
+	resp := &chunkdv1.ClusterResponse{NowMs: ms(now), MetaLeader: string(rs.LeaderNode), MetaTerm: rs.Term, MetaPeer: string(s.cfg.ID),
+		MetaRole: rs.Role, MetaCommit: rs.Commit, MetaApplied: rs.Applied}
+	for _, p := range s.raft.Peers() {
+		heard := int64(-1)
+		if p.Heard {
+			heard = int64(p.HeardAgo / time.Millisecond)
+		}
+		resp.MetaPeers = append(resp.MetaPeers, &chunkdv1.MetaPeer{Id: string(p.Node), Match: p.Match, HeardAgoMs: heard})
+	}
 	for _, n := range s.cluster.Nodes() {
 		resp.Nodes = append(resp.Nodes, &chunkdv1.NodeInfo{Id: string(n.ID), Rack: n.Rack, Addr: n.Addr, UsedBytes: n.Used,
 			ChunkCount: n.Chunks, Alive: s.cluster.Alive(n.ID), Draining: n.Draining, State: n.State.String(),

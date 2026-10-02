@@ -369,6 +369,27 @@ message ClusterResponse {
   // (empty during an election) and its Raft term.
   string meta_leader = 15;
   uint64 meta_term = 16;
+  // The answering peer: its ID, Raft role (leader, follower, candidate,
+  // pre-candidate), commit and applied indexes. Events and *_ms instants
+  // are on its clock and in its sequence.
+  string meta_peer = 17;
+  string meta_role = 18;
+  uint64 meta_commit = 19;
+  uint64 meta_applied = 20;
+  // The group as the answering peer sees it: itself, plus every other voter
+  // if it leads. A follower tracks no one else.
+  repeated MetaPeer meta_peers = 21;
+}
+
+// MetaPeer is one metadata peer as the answering peer sees it.
+message MetaPeer {
+  string id = 1;
+  // Last log index known to be in the peer's log: the leader's match
+  // index for a follower, its own last index for the answering peer.
+  uint64 match = 2;
+  // Milliseconds since the answering peer last heard from it: 0 for
+  // itself, -1 if never.
+  int64 heard_ago_ms = 3;
 }
 
 // GCStats are the sweep's counters since the metadata server started.

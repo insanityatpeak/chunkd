@@ -17,6 +17,9 @@ export type Method =
   | 'slow'
   | 'partition'
   | 'corrupt'
+  | 'killMeta'
+  | 'reviveMeta'
+  | 'cutMeta'
   | 'scenarios';
 
 export type ToWorker =

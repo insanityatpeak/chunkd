@@ -136,6 +136,42 @@ button[aria-pressed='true'] {
   stroke: var(--meta);
 }
 
+.box.meta.leader {
+  stroke-width: 3;
+}
+
+.box.meta.suspect {
+  stroke: var(--warn);
+  stroke-width: 2.5;
+}
+
+.box.meta.dead {
+  stroke: var(--bad);
+  stroke-dasharray: 5 4;
+}
+
+.crown {
+  fill: var(--warn);
+}
+
+svg text.role.leader {
+  fill: var(--meta);
+  font-weight: 600;
+}
+
+svg text.role.suspect {
+  fill: var(--warn);
+}
+
+svg text.role.dead {
+  fill: var(--bad);
+}
+
+.link.orphan {
+  stroke-dasharray: 2 6;
+  opacity: 0.6;
+}
+
 .box.node {
   stroke: var(--accent);
 }

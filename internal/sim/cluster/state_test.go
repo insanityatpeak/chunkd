@@ -117,3 +117,50 @@ func TestDashboardRotScript(t *testing.T) {
 		t.Fatal(err)
 	}
 }
+
+// TestDashboardLeaderCut is the dashboard's "Partition metadata leader"
+// button. The election plays out on the followers while the page may still
+// read the cut-off leader (it has applied the most), so the timeline must
+// gather election events from every peer: the loss, the new term and the
+// new leader, each once, even after the heal makes every peer log the
+// new leader again.
+func TestDashboardLeaderCut(t *testing.T) {
+	c := New(3, DashboardConfig(), io.Discard)
+	c.Tick(5 * time.Second)
+	old := c.MetaLeader()
+	if old == "" {
+		t.Fatal("no leader after 5 s")
+	}
+	c.CutMeta(old)
+	for range 200 {
+		c.Tick(50 * time.Millisecond)
+	}
+	nl := c.MetaLeader()
+	if nl == "" || nl == old {
+		t.Fatalf("leader %q after cutting %s off", nl, old)
+	}
+	s := c.State()
+	for _, m := range s.Metas {
+		if m.ID == old && (!m.CutOff || m.Leader) {
+			t.Errorf("cut-off peer shows %+v", m)
+		}
+		if m.ID == nl && !m.Leader {
+			t.Errorf("new leader shows %+v", m)
+		}
+	}
+	c.HealMeta(old)
+	for range 100 {
+		c.Tick(50 * time.Millisecond)
+	}
+	text := eventsText(c.State())
+	for _, w := range []string{"no contact from leader " + string(old), "election, no leader yet", string(nl) + " leads"} {
+		if !strings.Contains(text, w) {
+			t.Fatalf("timeline lacks %q:\n%s", w, text)
+		}
+	}
+	for _, line := range strings.Split(text, "\n") {
+		if strings.HasSuffix(line, string(nl)+" leads") && strings.Count(text, line) != 1 {
+			t.Fatalf("%q logged %d times:\n%s", line, strings.Count(text, line), text)
+		}
+	}
+}

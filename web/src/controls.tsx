@@ -1,29 +1,73 @@
-import type { ClusterAPI, NodeView } from './api/cluster';
+import type { ClusterAPI, MetaPeerView, NodeView } from './api/cluster';
 
 const SLOW_MS = 2000;
+const NO_LEADER_CUT = 'compose cannot cut one peer off from the others: that needs per-link rules (README, Known limitations)';
 
 interface Props {
   api: ClusterAPI;
   nodes: NodeView[];
+  metas: MetaPeerView[];
   onError(msg: string): void;
 }
 
 // NodeControls injects faults into the simulation. Against a real cluster
 // the page cannot reach Docker, so each button is disabled and its tooltip
 // gives the command that does the same thing.
-export function NodeControls({ api, nodes }: Props) {
+export function NodeControls({ api, nodes, metas, onError }: Props) {
   const live = !api.canInject;
   const tip = (sim: string, cmd: string) => (live ? `Real cluster: ${cmd}` : sim);
+  const report = (p: Promise<void>) => void p.catch((e: Error) => onError(e.message));
+  const leader = metas.find((m) => m.leader);
+  const group = metas.length > 1;
   return (
     <section class="node-controls" aria-label="Fault injection">
       <h2>Break it</h2>
       <p class="muted small">
         {live
           ? 'Faults on a real cluster come from Docker; hover a button for the command.'
-          : 'Each fault acts on one node. Watch the node card, the replication bar and the timeline.'}{' '}
+          : 'Each fault acts on one process. Watch its card, the replication bar and the timeline; a metadata fault shows as an election there.'}{' '}
         To corrupt a single replica, open a file below and click a filled cell in its chunk grid.
       </p>
       <div class="fault-table" role="table">
+        {group &&
+          metas.map((m) => {
+            const down = m.state === 'down';
+            const frozen = m.state === 'frozen';
+            return (
+              <div class="fault-row" role="row" key={m.id}>
+                <span class="fault-node" role="cell">
+                  {m.id} <span class="muted">{m.leader ? 'leader' : 'metadata'}</span>
+                </span>
+                <button
+                  type="button"
+                  disabled={live}
+                  aria-pressed={down}
+                  title={tip(down ? 'Start a new process over the same log; it rejoins as a follower and catches up' : 'Kill the process; its log survives', `docker compose ${down ? 'start' : 'kill'} ${m.id}`)}
+                  onClick={() => report(down ? api.reviveMeta(m.id) : api.killMeta(m.id))}
+                >
+                  {down ? 'Restart' : 'Kill'}
+                </button>
+                <button
+                  type="button"
+                  disabled={live || down}
+                  aria-pressed={frozen}
+                  title={tip('Pause the process. A paused leader wakes as a stale leader and must not commit', `docker compose ${frozen ? 'unpause' : 'pause'} ${m.id}`)}
+                  onClick={() => api.freeze(m.id, !frozen)}
+                >
+                  {frozen ? 'Thaw' : 'Freeze'}
+                </button>
+                <button
+                  type="button"
+                  disabled={live || down}
+                  aria-pressed={!!m.cutOff}
+                  title={live ? `Real cluster: ${NO_LEADER_CUT}` : 'Cut it off from the other metadata peers; nodes and clients still reach it'}
+                  onClick={() => report(api.cutMeta(m.id, !m.cutOff))}
+                >
+                  {m.cutOff ? 'Heal' : 'Partition'}
+                </button>
+              </div>
+            );
+          })}
         {nodes.map((n) => {
           const svc = n.id;
           return (
@@ -77,8 +121,25 @@ export function NodeControls({ api, nodes }: Props) {
           <button type="button" disabled title="Adding nodes needs rebalancing, which lands in Phase 6">
             Add node
           </button>
-          <button type="button" disabled title="One metadata server today; Raft leader election lands in Phase 5">
+          <button
+            type="button"
+            disabled={live || !leader || !group}
+            title={
+              !group
+                ? 'A single metadata server: killing it is an outage, not a failover'
+                : tip(leader ? `Kill ${leader.id}; a follower times out after about a second and wins the next term` : 'No leader: an election is running', `docker compose kill ${leader?.id ?? 'meta-N'}`)
+            }
+            onClick={() => report(api.killMeta(''))}
+          >
             Kill metadata leader
+          </button>
+          <button
+            type="button"
+            disabled={live || !leader || !group}
+            title={live ? `Real cluster: ${NO_LEADER_CUT}` : leader ? `Cut ${leader.id} off from its followers: it loses its quorum, the others elect a new leader` : 'No leader: an election is running'}
+            onClick={() => report(api.cutMeta('', true))}
+          >
+            Partition metadata leader
           </button>
         </div>
       </div>

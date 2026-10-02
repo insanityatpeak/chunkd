@@ -99,6 +99,9 @@ type Status struct {
 	Commit     uint64
 	Applied    uint64
 	Voters     []uint64
+	// Role is the library's state: leader, follower, candidate or
+	// pre-candidate.
+	Role string
 	// IsLeader: this peer is the leader and heard from a quorum within the
 	// election timeout. A leader cut off from its quorum reports false and
 	// must not send commands, although the library still calls it leader
@@ -162,6 +165,7 @@ type Node struct {
 	wasLeader  bool
 
 	changed  func(Status)
+	lost     func(leader iface.NodeID, silent time.Duration)
 	last     Status
 	timer    iface.Timer
 	busy     bool
@@ -267,6 +271,10 @@ func New(ctx context.Context, d Deps, cfg Config, fsm FSM) (*Node, error) {
 // OnChange registers f, called when the leader, term or readiness changes.
 func (n *Node) OnChange(f func(Status)) { n.changed = f }
 
+// OnLeaderLost registers f, called when this follower stops hearing from the
+// leader it knew and starts an election (a pre-vote first).
+func (n *Node) OnLeaderLost(f func(leader iface.NodeID, silent time.Duration)) { n.lost = f }
+
 // Start begins the timers. A group of one has nobody to wait for and leads
 // at once.
 func (n *Node) Start() {
@@ -301,6 +309,11 @@ func (n *Node) tick() {
 	if n.rn.BasicStatus().RaftState == raft.StateLeader {
 		n.rn.Tick()
 	} else if now.Sub(n.lastHeard) >= n.electionAt {
+		// Campaigning clears the known leader, so a peer that keeps timing
+		// out reports the loss once.
+		if lead := n.rn.BasicStatus().Lead; lead != raft.None && n.lost != nil {
+			n.lost(n.cfg.Node(lead), now.Sub(n.lastHeard))
+		}
 		n.lastHeard = now
 		n.rearm()
 		_ = n.rn.Campaign()
@@ -401,9 +414,51 @@ func (n *Node) Status() Status {
 	if s.Leader != raft.None {
 		s.LeaderNode = n.cfg.Node(s.Leader)
 	}
+	s.Role = roles[st.RaftState]
 	s.IsLeader = st.RaftState == raft.StateLeader && n.quorumActive(now)
 	s.Ready = s.IsLeader && n.appliedTerm == st.GetTerm()
 	return s
+}
+
+var roles = map[raft.StateType]string{raft.StateFollower: "follower", raft.StateCandidate: "candidate",
+	raft.StatePreCandidate: "pre-candidate", raft.StateLeader: "leader"}
+
+// Peer is one voter as this peer sees it.
+type Peer struct {
+	ID   uint64
+	Node iface.NodeID
+	// Match is the last index known to be in the peer's log: the leader's
+	// match index for a follower, the own last index for this peer.
+	Match uint64
+	// HeardAgo is the time since this peer last heard from it; Heard is
+	// false if it never has.
+	HeardAgo time.Duration
+	Heard    bool
+}
+
+// Peers returns this peer and, on the leader, every other voter's progress.
+// A follower tracks nobody but itself.
+func (n *Node) Peers() []Peer {
+	out := []Peer{{ID: n.cfg.ID, Node: n.cfg.Node(n.cfg.ID), Match: n.lastIndex(), Heard: true}}
+	if n.rn.BasicStatus().RaftState != raft.StateLeader {
+		return out
+	}
+	now := n.d.Clock.Now()
+	prs := n.rn.Status().Progress
+	for _, id := range n.voters {
+		if id == n.cfg.ID {
+			continue
+		}
+		p := Peer{ID: id, Node: n.cfg.Node(id)}
+		if pr, ok := prs[id]; ok {
+			p.Match = pr.Match
+		}
+		if at, ok := n.seen[id]; ok && at != 0 {
+			p.HeardAgo, p.Heard = now.Sub(at), true
+		}
+		out = append(out, p)
+	}
+	return out
 }
 
 // NotLeader is the error for a request that needs the leader: CodeNotLeader

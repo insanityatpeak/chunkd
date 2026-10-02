@@ -5,49 +5,63 @@
   "events": [
     {
       "seq": 1,
-      "atMs": 268,
+      "atMs": 391,
       "kind": "node",
-      "node": "node-1",
+      "node": "node-5",
       "text": "joined as alive"
     },
     {
       "seq": 2,
-      "atMs": 654,
+      "atMs": 446,
       "kind": "node",
       "node": "node-3",
       "text": "joined as alive"
     },
     {
       "seq": 3,
-      "atMs": 818,
+      "atMs": 587,
       "kind": "node",
-      "node": "node-5",
+      "node": "node-4",
       "text": "joined as alive"
     },
     {
       "seq": 4,
-      "atMs": 836,
+      "atMs": 748,
       "kind": "node",
       "node": "node-2",
       "text": "joined as alive"
     },
     {
       "seq": 5,
-      "atMs": 905,
+      "atMs": 840,
       "kind": "node",
-      "node": "node-4",
+      "node": "node-1",
       "text": "joined as alive"
     },
     {
       "seq": 6,
-      "atMs": 120000,
+      "atMs": 1335,
+      "kind": "raft",
+      "node": "",
+      "text": "term 2: election, no leader yet"
+    },
+    {
+      "seq": 7,
+      "atMs": 1394,
+      "kind": "raft",
+      "node": "meta-2",
+      "text": "term 2: meta-2 leads"
+    },
+    {
+      "seq": 8,
+      "atMs": 120037,
       "kind": "gc",
       "node": "",
       "text": "epoch 4: 2 versions past retention dropped"
     },
     {
-      "seq": 7,
-      "atMs": 180000,
+      "seq": 9,
+      "atMs": 180093,
       "kind": "gc",
       "node": "",
       "text": "deleting 9 unreferenced copies"
@@ -56,14 +70,14 @@
   "reads": [
     {
       "seq": 1,
-      "atMs": 39528,
+      "atMs": 31871,
       "kind": "write",
       "node": "client",
       "text": "write /demo/file-0.bin v2, last byte changed: 1 of 2 chunks already stored, 1 sent"
     },
     {
       "seq": 2,
-      "atMs": 39631,
+      "atMs": 36326,
       "kind": "write",
       "node": "client",
       "text": "delete /demo/file-7.bin: a delete marker; the old version can be undeleted until it expires"

@@ -11,7 +11,7 @@ import (
 // cluster starts) and runs it in the browser worker's 50 ms steps.
 func play(t *testing.T, seed uint64, name string, d time.Duration) *Cluster {
 	t.Helper()
-	c := New(seed, DefaultConfig(), io.Discard)
+	c := New(seed, DashboardConfig(), io.Discard)
 	if err := c.RunScenario(name); err != nil {
 		t.Fatal(err)
 	}
@@ -55,6 +55,28 @@ func TestScenarios(t *testing.T) {
 				t.Fatalf("%d reads:\n%s", len(s.Reads), eventsText(s))
 			}
 		}},
+		{"kill-leader", 100 * time.Second, []string{"no contact from leader", "starting an election", "election, no leader yet", " leads", "write /demo/during-election.bin", "write /demo/after-return.bin"}, func(t *testing.T, c *Cluster, s State) {
+			if strings.Contains(eventsText(s), "failed") {
+				t.Fatalf("a scripted call failed:\n%s", eventsText(s))
+			}
+			var leaders int
+			var term uint64
+			for _, m := range s.Metas {
+				if m.State == "down" || m.CutOff {
+					t.Errorf("%s still %s, cut off %v", m.ID, m.State, m.CutOff)
+				}
+				if m.Leader {
+					leaders++
+				}
+				term = max(term, m.Term)
+			}
+			if leaders != 1 || term < 3 {
+				t.Fatalf("%d leaders, highest term %d; want one leader after a second election: %+v", leaders, term, s.Metas)
+			}
+			if err := c.AssertMetaAgree(); err != nil {
+				t.Fatal(err)
+			}
+		}},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			c := play(t, 7, tc.name, tc.run)
@@ -91,6 +113,10 @@ func TestScenarioGC(t *testing.T) {
 		t.Fatalf("referenced %d, distinct %d: the edit shares a chunk with the retained version", s.ReferencedBytes, s.DistinctBytes)
 	}
 	for end := c.Now().Add(120 * time.Second); c.Now() < end; {
+		c.Tick(50 * time.Millisecond)
+	}
+	// A lost delete or ack is resent by the next sweep (60 s apart).
+	for end := c.Now().Add(120 * time.Second); c.Now() < end && c.State().GC.Deleted < 9; {
 		c.Tick(50 * time.Millisecond)
 	}
 	s = c.State()

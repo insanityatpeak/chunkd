@@ -81,7 +81,7 @@ export interface RepairCopy {
 export interface TimelineEvent {
   seq: number;
   atMs: number;
-  kind: 'node' | 'copy' | 'trim' | 'corrupt' | 'read' | 'write' | 'gc';
+  kind: 'node' | 'copy' | 'trim' | 'corrupt' | 'read' | 'write' | 'gc' | 'raft';
   node: string;
   text: string;
 }
@@ -116,6 +116,27 @@ export interface GCStats {
   epochEveryMs: number;
 }
 
+// MetaState is a metadata peer's Raft role, or a fault that overrides it:
+// down and frozen in the sim, unreachable when the LIVE leader has not heard
+// from it lately.
+export type MetaState = 'leader' | 'follower' | 'candidate' | 'pre-candidate' | 'down' | 'frozen' | 'unreachable' | 'unknown';
+
+// MetaPeerView is one peer of the metadata group. The sim knows every
+// peer's own view; LIVE knows the answering peer's, plus the leader's
+// progress tracking of the others (match).
+export interface MetaPeerView {
+  id: string;
+  state: MetaState;
+  // Leads with a quorum and serves (the crown). A cut-off leader keeps the
+  // role until it hears a newer term, but not this.
+  leader: boolean;
+  cutOff?: boolean; // sim only: partitioned from the other peers
+  term?: number;
+  commit?: number;
+  applied?: number;
+  match?: number; // LIVE: last index the leader knows is in its log
+}
+
 export interface NetStats {
   sent: number;
   delivered: number;
@@ -138,6 +159,8 @@ export interface ClusterView {
   reads?: TimelineEvent[];
   net?: NetStats; // sim only
   meta?: { id: string; applied: number; pendingUploads: number };
+  // The metadata group, in peer order; absent from a gateway that predates it.
+  metas?: MetaPeerView[];
   // Dedup: bytes committed versions reference vs bytes of distinct chunks.
   referencedBytes?: number;
   distinctBytes?: number;
@@ -208,6 +231,11 @@ export interface ClusterAPI {
   slow(node: string, ms: number): void;
   partition(node: string, on: boolean): void;
   corrupt(node: string, chunk: string): Promise<void>;
+  // Metadata peer faults (sim only). An empty id means the current leader,
+  // which fails while an election runs. Freeze takes the peer's id too.
+  killMeta(id: string): Promise<void>;
+  reviveMeta(id: string): Promise<void>;
+  cutMeta(id: string, on: boolean): Promise<void>;
   dispose(): void;
 }
 

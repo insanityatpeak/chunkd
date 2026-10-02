@@ -119,6 +119,18 @@ export class WasmClusterAPI implements ClusterAPI {
     await this.call('corrupt', [node, chunk]);
   }
 
+  async killMeta(id: string): Promise<void> {
+    await this.call('killMeta', [id]);
+  }
+
+  async reviveMeta(id: string): Promise<void> {
+    await this.call('reviveMeta', [id]);
+  }
+
+  async cutMeta(id: string, on: boolean): Promise<void> {
+    await this.call('cutMeta', [id, on]);
+  }
+
   dispose() {
     this.worker.terminate();
     this.subs.clear();
