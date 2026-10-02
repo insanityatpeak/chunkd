@@ -306,227 +306,220 @@
     },
     {
       "seq": 44,
-      "atMs": 118381,
+      "atMs": 118393,
       "kind": "trim",
       "node": "node-4",
       "text": "trim 17 sent: chunk 03097f628b88"
     },
     {
       "seq": 45,
-      "atMs": 118381,
+      "atMs": 118393,
       "kind": "trim",
       "node": "node-2",
       "text": "trim 18 sent: chunk 161b58380933"
     },
     {
       "seq": 46,
-      "atMs": 118381,
+      "atMs": 118393,
       "kind": "trim",
       "node": "node-2",
       "text": "trim 19 sent: chunk 2715a35cacab"
     },
     {
       "seq": 47,
-      "atMs": 118381,
+      "atMs": 118393,
       "kind": "trim",
       "node": "node-2",
       "text": "trim 20 sent: chunk 46467b005358"
     },
     {
       "seq": 48,
-      "atMs": 118381,
+      "atMs": 118393,
       "kind": "trim",
       "node": "node-4",
       "text": "trim 21 sent: chunk 5ac0bbdc1c6f"
     },
     {
       "seq": 49,
-      "atMs": 118381,
+      "atMs": 118393,
       "kind": "trim",
       "node": "node-2",
       "text": "trim 22 sent: chunk 617cdec2a7ab"
     },
     {
       "seq": 50,
-      "atMs": 118381,
+      "atMs": 118393,
       "kind": "trim",
       "node": "node-4",
       "text": "trim 23 sent: chunk 7c0b044463ce"
     },
     {
       "seq": 51,
-      "atMs": 118381,
+      "atMs": 118393,
       "kind": "trim",
       "node": "node-4",
       "text": "trim 24 sent: chunk 7c0c00b9a472"
     },
     {
       "seq": 52,
-      "atMs": 118381,
+      "atMs": 118393,
       "kind": "trim",
       "node": "node-4",
       "text": "trim 25 sent: chunk 86d04a75fc5b"
     },
     {
       "seq": 53,
-      "atMs": 118381,
+      "atMs": 118393,
       "kind": "trim",
       "node": "node-2",
       "text": "trim 26 sent: chunk 92189b931ea2"
     },
     {
       "seq": 54,
-      "atMs": 118381,
+      "atMs": 118393,
       "kind": "trim",
       "node": "node-2",
       "text": "trim 27 sent: chunk 98ce7dc76a5f"
     },
     {
       "seq": 55,
-      "atMs": 118381,
+      "atMs": 118393,
       "kind": "trim",
       "node": "node-4",
       "text": "trim 28 sent: chunk b420ece69207"
     },
     {
       "seq": 56,
-      "atMs": 118381,
+      "atMs": 118393,
       "kind": "trim",
       "node": "node-4",
       "text": "trim 29 sent: chunk c8ba8104bd26"
     },
     {
       "seq": 57,
-      "atMs": 118381,
+      "atMs": 118393,
       "kind": "trim",
       "node": "node-2",
       "text": "trim 30 sent: chunk d5f8a129c8a5"
     },
     {
       "seq": 58,
-      "atMs": 118381,
+      "atMs": 118393,
       "kind": "trim",
       "node": "node-2",
       "text": "trim 31 sent: chunk e4a24094e284"
     },
     {
       "seq": 59,
-      "atMs": 118381,
+      "atMs": 118393,
       "kind": "trim",
       "node": "node-2",
       "text": "trim 32 sent: chunk ed96f73ddf57"
     },
     {
       "seq": 60,
-      "atMs": 118394,
-      "kind": "trim",
-      "node": "node-2",
-      "text": "trim 31 done: chunk e4a24094e284 removed"
-    },
-    {
-      "seq": 61,
-      "atMs": 118396,
-      "kind": "trim",
-      "node": "node-4",
-      "text": "trim 24 done: chunk 7c0c00b9a472 removed"
-    },
-    {
-      "seq": 62,
       "atMs": 118407,
-      "kind": "trim",
-      "node": "node-2",
-      "text": "trim 32 done: chunk ed96f73ddf57 removed"
-    },
-    {
-      "seq": 63,
-      "atMs": 118409,
       "kind": "trim",
       "node": "node-2",
       "text": "trim 19 done: chunk 2715a35cacab removed"
     },
     {
-      "seq": 64,
-      "atMs": 118411,
+      "seq": 61,
+      "atMs": 118409,
       "kind": "trim",
       "node": "node-2",
-      "text": "trim 26 done: chunk 92189b931ea2 removed"
+      "text": "trim 32 done: chunk ed96f73ddf57 removed"
+    },
+    {
+      "seq": 62,
+      "atMs": 118424,
+      "kind": "trim",
+      "node": "node-4",
+      "text": "trim 29 done: chunk c8ba8104bd26 removed"
+    },
+    {
+      "seq": 63,
+      "atMs": 118426,
+      "kind": "trim",
+      "node": "node-2",
+      "text": "trim 22 done: chunk 617cdec2a7ab removed"
+    },
+    {
+      "seq": 64,
+      "atMs": 118428,
+      "kind": "trim",
+      "node": "node-4",
+      "text": "trim 21 done: chunk 5ac0bbdc1c6f removed"
     },
     {
       "seq": 65,
-      "atMs": 118415,
+      "atMs": 118429,
       "kind": "trim",
       "node": "node-4",
-      "text": "trim 17 done: chunk 03097f628b88 removed"
+      "text": "trim 24 done: chunk 7c0c00b9a472 removed"
     },
     {
       "seq": 66,
-      "atMs": 118421,
+      "atMs": 118429,
       "kind": "trim",
       "node": "node-2",
       "text": "trim 18 done: chunk 161b58380933 removed"
     },
     {
       "seq": 67,
-      "atMs": 118423,
+      "atMs": 118430,
       "kind": "trim",
       "node": "node-4",
-      "text": "trim 29 done: chunk c8ba8104bd26 removed"
+      "text": "trim 25 done: chunk 86d04a75fc5b removed"
     },
     {
       "seq": 68,
-      "atMs": 118427,
+      "atMs": 118430,
       "kind": "trim",
-      "node": "node-4",
-      "text": "trim 21 done: chunk 5ac0bbdc1c6f removed"
+      "node": "node-2",
+      "text": "trim 20 done: chunk 46467b005358 removed"
     },
     {
       "seq": 69,
-      "atMs": 118428,
+      "atMs": 118439,
       "kind": "trim",
       "node": "node-2",
       "text": "trim 27 done: chunk 98ce7dc76a5f removed"
     },
     {
       "seq": 70,
-      "atMs": 118430,
+      "atMs": 118441,
+      "kind": "trim",
+      "node": "node-2",
+      "text": "trim 31 done: chunk e4a24094e284 removed"
+    },
+    {
+      "seq": 71,
+      "atMs": 118449,
+      "kind": "trim",
+      "node": "node-4",
+      "text": "trim 28 done: chunk b420ece69207 removed"
+    },
+    {
+      "seq": 72,
+      "atMs": 118452,
       "kind": "trim",
       "node": "node-2",
       "text": "trim 30 done: chunk d5f8a129c8a5 removed"
     },
     {
-      "seq": 71,
-      "atMs": 118431,
+      "seq": 73,
+      "atMs": 118456,
       "kind": "trim",
       "node": "node-4",
-      "text": "trim 25 done: chunk 86d04a75fc5b removed"
-    },
-    {
-      "seq": 72,
-      "atMs": 118433,
-      "kind": "trim",
-      "node": "node-2",
-      "text": "trim 22 done: chunk 617cdec2a7ab removed"
-    },
-    {
-      "seq": 73,
-      "atMs": 118439,
-      "kind": "trim",
-      "node": "node-2",
-      "text": "trim 20 done: chunk 46467b005358 removed"
+      "text": "trim 17 done: chunk 03097f628b88 removed"
     },
     {
       "seq": 74,
-      "atMs": 118446,
+      "atMs": 118457,
       "kind": "trim",
-      "node": "node-4",
-      "text": "trim 23 done: chunk 7c0b044463ce removed"
-    },
-    {
-      "seq": 75,
-      "atMs": 118451,
-      "kind": "trim",
-      "node": "node-4",
-      "text": "trim 28 done: chunk b420ece69207 removed"
+      "node": "node-2",
+      "text": "trim 26 done: chunk 92189b931ea2 removed"
     }
   ],
   "reads": []

@@ -44,7 +44,7 @@ L1 = 20 + 20 = 40, so ½·L1 = 20 MiB = total / 6, the theoretical minimum
 ## Consequences
 
 - Every trim costs one log entry and a commit round before it is sent. Trims are batched per scan.
-- The shareable dashboard runs change: trims happen one commit later. The four existing goldens are regenerated once, in the commit that logs trims.
+- The shareable dashboard runs change where they trim: trims go out one commit later. Of the four goldens only `kill-node` trims, and it was regenerated in the commit that logs trims (same events in the same order, trims 12 ms later; one lost delete is now resent and confirmed after the 120 s window).
 - Tests: planner property tests (L1 strictly drops, the bound holds, no distinct rack is lost, deterministic); a two-leader double-trim test; `TestAddNodeConverges` (5 → 6, within band, bytes moved ≤ bound); a sim invariant checked at every trim (the chunk keeps RF intact copies on up nodes, unless a holder failed within the detection window); chaos kinds that add and drain nodes and kill the leader mid-rebalance.
 - SIMPLIFIED: nodes are assumed equal in capacity, and the band is in bytes. HDFS balances percent of each DataNode's capacity; Ceph weights by CRUSH weight.
 - SIMPLIFIED: one failure-domain level. HDFS and CRUSH balance across a tree of domains.

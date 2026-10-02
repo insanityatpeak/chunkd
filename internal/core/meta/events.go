@@ -80,6 +80,6 @@ func (s *Server) trimSent(t repair.Trim) {
 	s.event("trim", t.Node, "trim %d sent: chunk %s", t.ID, t.Chunk.String()[:12])
 }
 
-func (s *Server) trimmed(t repair.Trim) {
-	s.event("trim", t.Node, "trim %d done: chunk %s removed", t.ID, t.Chunk.String()[:12])
+func (s *Server) trimmed(id iface.ChunkID, n iface.NodeID, trimID uint64) {
+	s.event("trim", n, "trim %d done: chunk %s removed", trimID, id.String()[:12])
 }

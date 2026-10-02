@@ -103,6 +103,26 @@ message GCDoneOp {
   repeated GCTarget targets = 1;
 }
 
+// TrimTarget is one surplus copy to remove: chunk_id on node.
+message TrimTarget {
+  bytes chunk_id = 1;
+  string node = 2;
+}
+
+// TrimIntentOp authorizes trimming surplus copies (ADR-0020). As with GC, the
+// delete is sent only after the intent commits, so a deposed leader can never
+// authorize one. Applying it skips a target whose chunk already has a trim
+// pending: at most one copy of a chunk is being trimmed at a time, whichever
+// leader decided it.
+message TrimIntentOp {
+  repeated TrimTarget targets = 1;
+}
+
+// TrimDoneOp ends pending trims: the node answered, or the copy is gone.
+message TrimDoneOp {
+  repeated TrimTarget targets = 1;
+}
+
 message Op {
   oneof op {
     BeginUploadOp begin = 1;
@@ -114,6 +134,8 @@ message Op {
     AdvanceEpochOp advance_epoch = 7;
     GCIntentOp gc_intent = 8;
     GCDoneOp gc_done = 9;
+    TrimIntentOp trim_intent = 10;
+    TrimDoneOp trim_done = 11;
   }
 }
 
@@ -169,6 +191,8 @@ message MetaSnapshot {
   uint64 epoch = 5;
   // GC deletes authorized and not yet answered.
   repeated GCTarget gc_pending = 6;
+  // Trims authorized and not yet answered, at most one per chunk.
+  repeated TrimTarget trim_pending = 7;
 }
 
 // ---- Client RPCs to the metadata server.

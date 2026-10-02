@@ -702,3 +702,60 @@ func TestGCIntents(t *testing.T) {
 		t.Fatalf("intent with no targets: %v, want invalid", err)
 	}
 }
+
+func trimOp(done bool, node iface.NodeID, ids ...iface.ChunkID) *chunkdv1.Op {
+	var ts []*chunkdv1.TrimTarget
+	for _, id := range ids {
+		ts = append(ts, &chunkdv1.TrimTarget{ChunkId: id[:], Node: string(node)})
+	}
+	if done {
+		return &chunkdv1.Op{Op: &chunkdv1.Op_TrimDone{TrimDone: &chunkdv1.TrimDoneOp{Targets: ts}}}
+	}
+	return &chunkdv1.Op{Op: &chunkdv1.Op_TrimIntent{TrimIntent: &chunkdv1.TrimIntentOp{Targets: ts}}}
+}
+
+// Two leaders that each saw a surplus copy decide trims of different copies
+// of one chunk; the log admits the first only. The second leader's intent
+// applies as a no-op on every peer, so it never sends its delete.
+func TestTrimIntentsOnePerChunk(t *testing.T) {
+	a, b := chunkOf('a', 0), chunkOf('b', 0)
+	s := New()
+	if res, err := s.Apply(trimOp(false, "n1", a, b)); err != nil || res.Trims != 2 {
+		t.Fatalf("intent: %+v, %v; want 2", res, err)
+	}
+	if res, _ := s.Apply(trimOp(false, "n2", a)); res.Trims != 0 {
+		t.Fatalf("a second trim of a pending chunk was admitted")
+	}
+	if n, ok := s.TrimPending(a); !ok || n != "n1" {
+		t.Fatalf("pending trim of a = %q, %v; want n1", n, ok)
+	}
+
+	r, err := Restore(s.Snapshot())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !bytes.Equal(r.Snapshot(), s.Snapshot()) || len(r.TrimPendingAll()) != 2 {
+		t.Fatalf("restore lost pending trims: %d", len(r.TrimPendingAll()))
+	}
+
+	// Done for the wrong node is ignored; for the right one it clears.
+	if _, err := s.Apply(trimOp(true, "n2", a)); err != nil {
+		t.Fatal(err)
+	}
+	if _, ok := s.TrimPending(a); !ok {
+		t.Fatal("done from another node cleared the trim")
+	}
+	if _, err := s.Apply(trimOp(true, "n1", a)); err != nil {
+		t.Fatal(err)
+	}
+	if all := s.TrimPendingAll(); len(all) != 1 || all[0].Chunk != b {
+		t.Fatalf("pending after done = %+v", all)
+	}
+	// Once ended, the chunk can be trimmed again.
+	if res, _ := s.Apply(trimOp(false, "n3", a)); res.Trims != 1 {
+		t.Fatal("trim after done refused")
+	}
+	if err := s.Validate(trimOp(false, "n1")); iface.CodeOf(err) != iface.CodeInvalid {
+		t.Fatalf("intent with no targets: %v, want invalid", err)
+	}
+}

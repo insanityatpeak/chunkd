@@ -104,6 +104,10 @@ type State struct {
 	// has cleared. Replicated, so any leader can resend them with their
 	// original fence.
 	gcPending map[iface.ChunkID]map[iface.NodeID]GCTarget
+	// trimPending are the surplus copies a committed TrimIntent authorized
+	// deleting and no TrimDone has cleared: at most one per chunk, so leaders
+	// never trim two copies of a chunk on views that missed each other.
+	trimPending map[iface.ChunkID]iface.NodeID
 }
 
 // Committed locates the version an upload produced.
@@ -122,12 +126,14 @@ type Result struct {
 	// Intents counts the GC targets a GCIntent added; the rest were marked
 	// or already pending.
 	Intents int
+	// Trims counts the targets a TrimIntent added; the rest had a trim pending.
+	Trims int
 }
 
 // New returns empty state.
 func New() *State {
 	return &State{files: map[string]*File{}, chunks: map[iface.ChunkID]*ChunkInfo{}, uploads: map[uint64]*Upload{}, committed: map[uint64]Committed{}, claimed: map[iface.ChunkID]int{},
-		requests: map[string]uint64{}, gcPending: map[iface.ChunkID]map[iface.NodeID]GCTarget{}}
+		requests: map[string]uint64{}, gcPending: map[iface.ChunkID]map[iface.NodeID]GCTarget{}, trimPending: map[iface.ChunkID]iface.NodeID{}}
 }
 
 // ValidPath reports whether p is an absolute, clean path to a file.
@@ -256,6 +262,10 @@ func (s *State) Validate(op *chunkdv1.Op) error {
 		return validTargets(o.GcIntent.GetTargets())
 	case *chunkdv1.Op_GcDone:
 		return validTargets(o.GcDone.GetTargets())
+	case *chunkdv1.Op_TrimIntent:
+		return validTrims(o.TrimIntent.GetTargets())
+	case *chunkdv1.Op_TrimDone:
+		return validTrims(o.TrimDone.GetTargets())
 	default:
 		return iface.Errorf(iface.CodeInvalid, "empty op")
 	}
@@ -269,6 +279,18 @@ func validTargets(ts []*chunkdv1.GCTarget) error {
 	for _, t := range ts {
 		if len(t.GetChunkId()) != len(iface.ChunkID{}) || t.GetNode() == "" {
 			return iface.Errorf(iface.CodeInvalid, "bad gc target: chunk id of %d bytes, node %q", len(t.GetChunkId()), t.GetNode())
+		}
+	}
+	return nil
+}
+
+func validTrims(ts []*chunkdv1.TrimTarget) error {
+	if len(ts) == 0 {
+		return iface.Errorf(iface.CodeInvalid, "no targets")
+	}
+	for _, t := range ts {
+		if len(t.GetChunkId()) != len(iface.ChunkID{}) || t.GetNode() == "" {
+			return iface.Errorf(iface.CodeInvalid, "bad trim target: chunk id of %d bytes, node %q", len(t.GetChunkId()), t.GetNode())
 		}
 	}
 	return nil
@@ -384,8 +406,53 @@ func (s *State) apply(op *chunkdv1.Op) Result {
 			}
 		}
 		return Result{}
+	case *chunkdv1.Op_TrimIntent:
+		var added int
+		for _, t := range o.TrimIntent.GetTargets() {
+			var id iface.ChunkID
+			copy(id[:], t.GetChunkId())
+			// In log order: an intent from another leader (or an earlier one of
+			// this leader's) already holds the chunk.
+			if _, busy := s.trimPending[id]; busy {
+				continue
+			}
+			s.trimPending[id] = iface.NodeID(t.GetNode())
+			added++
+		}
+		return Result{Trims: added}
+	case *chunkdv1.Op_TrimDone:
+		for _, t := range o.TrimDone.GetTargets() {
+			var id iface.ChunkID
+			copy(id[:], t.GetChunkId())
+			if s.trimPending[id] == iface.NodeID(t.GetNode()) {
+				delete(s.trimPending, id)
+			}
+		}
+		return Result{}
 	}
 	panic("unreachable")
+}
+
+// TrimPending returns the node whose copy of id an authorized, unanswered
+// trim is removing.
+func (s *State) TrimPending(id iface.ChunkID) (iface.NodeID, bool) {
+	n, ok := s.trimPending[id]
+	return n, ok
+}
+
+// TrimTarget is a trim the log has authorized: delete Chunk on Node.
+type TrimTarget struct {
+	Chunk iface.ChunkID
+	Node  iface.NodeID
+}
+
+// TrimPendingAll returns every pending trim, ordered by chunk.
+func (s *State) TrimPendingAll() []TrimTarget {
+	var out []TrimTarget
+	for _, id := range slices.SortedFunc(maps.Keys(s.trimPending), func(a, b iface.ChunkID) int { return bytes.Compare(a[:], b[:]) }) {
+		out = append(out, TrimTarget{Chunk: id, Node: s.trimPending[id]})
+	}
+	return out
 }
 
 // UploadByRequest returns the pending upload a Begin with this request ID
@@ -719,6 +786,9 @@ func (s *State) Snapshot() []byte {
 	for _, t := range s.GCPendingAll() {
 		snap.GcPending = append(snap.GcPending, &chunkdv1.GCTarget{ChunkId: t.Chunk[:], Node: string(t.Node), FenceIncarnation: t.Incarnation, FenceSeq: t.Seq})
 	}
+	for _, t := range s.TrimPendingAll() {
+		snap.TrimPending = append(snap.TrimPending, &chunkdv1.TrimTarget{ChunkId: t.Chunk[:], Node: string(t.Node)})
+	}
 	out, err := proto.MarshalOptions{Deterministic: true}.Marshal(snap)
 	if err != nil {
 		panic(err)
@@ -787,6 +857,11 @@ func Restore(data []byte) (*State, error) {
 			s.gcPending[id] = map[iface.NodeID]GCTarget{}
 		}
 		s.gcPending[id][n] = GCTarget{Chunk: id, Node: n, Incarnation: t.GetFenceIncarnation(), Seq: t.GetFenceSeq()}
+	}
+	for _, t := range snap.GetTrimPending() {
+		var id iface.ChunkID
+		copy(id[:], t.GetChunkId())
+		s.trimPending[id] = iface.NodeID(t.GetNode())
 	}
 	return s, nil
 }

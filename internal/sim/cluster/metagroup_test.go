@@ -202,6 +202,84 @@ func TestStaleLeaderCannotCommit(t *testing.T) {
 	}
 }
 
+// A leader cut off from its peers but still reachable by the nodes keeps
+// acting for up to an election timeout. In that window a node reports a
+// surplus copy; the leader must not trim it, because a trim is a delete and
+// only a committed intent authorizes one (ADR-0020). A trim decided from
+// soft state alone would race the next leader's trim of a different copy.
+// After the election the new leader trims the surplus, once.
+func TestDeposedLeaderCannotTrim(t *testing.T) {
+	for seed := uint64(1); seed <= 4; seed++ {
+		t.Run(fmt.Sprint(seed), func(t *testing.T) {
+			c := newMetaGroup(t, seed)
+			if _, _, err := c.UploadRandom("/f", 200<<10); err != nil {
+				t.Fatal(err)
+			}
+			c.Tick(15 * time.Second)
+			e, err := c.Meta().State().Stat("/f")
+			if err != nil {
+				t.Fatal(err)
+			}
+			ch := e.Chunks[0]
+			var source, extra *Node
+			for _, n := range c.Nodes() {
+				switch {
+				case c.Intact(n.ID(), ch) && source == nil:
+					source = n
+				case !c.Intact(n.ID(), ch) && extra == nil:
+					extra = n
+				}
+			}
+			trims := func() (n uint64) {
+				for _, nd := range c.Nodes() {
+					n += nd.Stats().Trimmed + nd.Stats().Fenced
+				}
+				return n
+			}
+			before := trims()
+			old := c.MetaLeader()
+			term := c.MetaPeer(old).Raft().Term
+			c.CutMeta(old)
+			// A copy the old leader did not order lands on a fifth node: a surplus
+			// the old leader sees while it still believes it leads.
+			c.Net().Send(extra.ID(), iface.Message{From: old, To: extra.ID(), Kind: wire.KindReplicate,
+				Body: wire.Marshal(&chunkdv1.ReplicateChunk{CopyId: 1 << 40, ChunkId: ch[:], Source: string(source.ID()), Term: term})})
+			c.Tick(300 * time.Millisecond)
+			if !c.Intact(extra.ID(), ch) {
+				t.Fatal("the extra copy did not land")
+			}
+			if !c.MetaPeer(old).Raft().Ready {
+				t.Skip("the old leader stepped down before the surplus arrived")
+			}
+			if got := trims(); got != before {
+				t.Fatalf("a trim reached a node while no leader could commit (%d)", got-before)
+			}
+
+			c.Tick(5 * time.Second)
+			if nl := c.MetaLeader(); nl == "" || nl == old {
+				t.Fatalf("leader %q after cutting %s", nl, old)
+			}
+			c.Net().Heal()
+			c.Tick(20 * time.Second)
+			copies := 0
+			for _, n := range c.Nodes() {
+				if c.Intact(n.ID(), ch) {
+					copies++
+				}
+			}
+			if copies != 3 {
+				t.Fatalf("%d intact copies after the new leader trimmed, want 3", copies)
+			}
+			for _, id := range c.MetaIDs() {
+				if p := c.MetaPeer(id).State().TrimPendingAll(); len(p) != 0 {
+					t.Fatalf("%s still has %d pending trims", id, len(p))
+				}
+			}
+			mustAgree(t, c)
+		})
+	}
+}
+
 // A restarted follower catches up; so does a whole group restarted at once,
 // from its snapshots and logs.
 func TestMetaGroupRestarts(t *testing.T) {

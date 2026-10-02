@@ -97,6 +97,7 @@ type Server struct {
 	// found them present. Not durable: it restarts at 0.
 	dedupSkipped uint64
 	gc           gcState
+	trims        trimState
 	// drift is the latest reconciliation's result.
 	drift Drift
 }
@@ -118,10 +119,10 @@ func NewServer(ctx context.Context, d Deps, cfg Config) (*Server, error) {
 	if self == 0 {
 		return nil, fmt.Errorf("meta: %s is not among its peers %v", cfg.ID, peers)
 	}
-	s := &Server{d: d, cfg: cfg, state: New(), cluster: NewCluster(cfg.Detector), gc: newGCState()}
+	s := &Server{d: d, cfg: cfg, state: New(), cluster: NewCluster(cfg.Detector), gc: newGCState(), trims: newTrimState()}
 	rc := cfg.Repair
 	rc.Replicas = cfg.Replicas
-	s.repair = repair.New(rc, d.Clock, repairView{s}, repair.Sender{Copy: s.sendCopy, Trim: s.sendTrim, Done: s.copyDone, Trimmed: s.trimmed})
+	s.repair = repair.New(rc, d.Clock, repairView{s}, repair.Sender{Copy: s.sendCopy, Trim: s.sendTrim, Done: s.copyDone})
 	s.repair.SetActive(false)
 	ids := make([]uint64, len(peers))
 	for i := range ids {
@@ -198,6 +199,7 @@ func (s *Server) leadership(st consensus.Status) {
 	s.leading = st.Ready
 	if st.Ready {
 		s.gc = newGCState()
+		s.trims = newTrimState()
 		s.repair.SetActive(true)
 		return
 	}
@@ -349,6 +351,7 @@ func (s *Server) tick() {
 	if len(trs) > 0 {
 		s.repair.Scan()
 	}
+	s.resendTrims()
 	s.d.Clock.AfterFunc(s.cfg.Detector.TickEvery, s.tick)
 }
 
@@ -439,6 +442,7 @@ func (s *Server) handle(m iface.Message) {
 		}
 		for _, id := range deleted {
 			s.gcAcked(id, node, false)
+			s.trimAcked(id, node)
 		}
 		for _, raw := range r.GetKeptIds() {
 			if id, err := wire.ChunkID(raw); err == nil {
@@ -453,6 +457,7 @@ func (s *Server) handle(m iface.Message) {
 			// A full report can restore replicas a scan counted as missing.
 			s.repair.Scan()
 		}
+		s.flushTrimDone()
 	case wire.KindReplicateFailed:
 		var f chunkdv1.ReplicateFailed
 		if err := wire.Decode(m.Body, &f); err != nil {
@@ -652,7 +657,7 @@ func (s *Server) commit(m iface.Message, respond iface.Responder) {
 // A copy with a GC delete in flight does not count either: it may be gone
 // by the time the version is read.
 func (s *Server) liveLocations(id iface.ChunkID) []iface.NodeID {
-	return slices.DeleteFunc(s.cluster.Locations(id), func(n iface.NodeID) bool { return !s.cluster.Alive(n) || s.gcPending(id, n) })
+	return slices.DeleteFunc(s.cluster.Locations(id), func(n iface.NodeID) bool { return !s.cluster.Alive(n) || s.gcPending(id, n) || s.trimPending(id, n) })
 }
 
 // readLocations are replicas a reader may try: alive first, then suspect.
