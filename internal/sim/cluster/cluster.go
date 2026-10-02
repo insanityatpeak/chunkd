@@ -168,12 +168,16 @@ const MaxNodes = 8
 // the 6th node of the 5-node layout joins r3, the rack with one node. It
 // draws from the RNG only here, so a run that never adds keeps its stream.
 func (c *Cluster) AddNode() (iface.NodeID, error) {
+	return c.AddNodeOn(fmt.Sprintf("r%d", len(c.nodes)%max(c.cfg.Racks, 1)+1))
+}
+
+// AddNodeOn starts node-(N+1) with an empty disk on rack.
+func (c *Cluster) AddNodeOn(rack string) (iface.NodeID, error) {
 	if len(c.nodes) >= MaxNodes {
 		return "", iface.Errorf(iface.CodeInvalid, "the simulation runs at most %d storage nodes", MaxNodes)
 	}
-	i := len(c.nodes) + 1
-	id := iface.NodeID(fmt.Sprintf("node-%d", i))
-	nd := &Node{Rack: fmt.Sprintf("r%d", (i-1)%max(c.cfg.Racks, 1)+1), Store: sim.NewBlockStore()}
+	id := iface.NodeID(fmt.Sprintf("node-%d", len(c.nodes)+1))
+	nd := &Node{Rack: rack, Store: sim.NewBlockStore()}
 	c.nodes = append(c.nodes, nd)
 	c.cfg.Nodes = len(c.nodes)
 	c.startNode(id, nd)

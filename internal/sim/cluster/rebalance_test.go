@@ -491,3 +491,67 @@ func TestStaleTrimWaitsForRepair(t *testing.T) {
 		t.Fatalf("the trim of %s on %s never completed after repair", ch.String()[:12], victim)
 	}
 }
+
+// TestRebalanceBenchmark is docs/benchmarks/rebalance.md. On 5 nodes, two
+// datasets: the dashboard's demo files (8 × 5 MiB, 40 MiB distinct) and the
+// loaded cluster of the repair tests (50 files, about 200 MiB distinct).
+// Then a 6th node joins on r3 (the rack with one node) or on r1. With
+// nothing to repair, it records the bytes the balancer moved against ½·L1,
+// the least any plan can move, and the time from the join to every node
+// within its band.
+func TestRebalanceBenchmark(t *testing.T) {
+	for _, tc := range []struct {
+		data, rack string
+	}{{"demo", "r3"}, {"demo", "r1"}, {"loaded", "r3"}, {"loaded", "r1"}} {
+		t.Run(tc.data+"/"+tc.rack, func(t *testing.T) {
+			rack := tc.rack
+			var c *Cluster
+			if tc.data == "loaded" {
+				c = loaded(t, 6)
+			} else {
+				c = New(1, DefaultConfig(), io.Discard)
+				c.Tick(3 * time.Second)
+				if err := c.demoFiles(); err != nil {
+					t.Fatal(err)
+				}
+			}
+			c.Tick(5 * time.Second)
+			if c.UnderReplicated() != 0 || len(c.Meta().Repair().InFlight()) != 0 {
+				t.Fatal("repair busy before the join")
+			}
+			moved0 := c.Meta().Repair().Stats().MovedBytes
+			start := c.Now()
+			id, err := c.AddNodeOn(rack)
+			if err != nil {
+				t.Fatal(err)
+			}
+			var joined iface.Instant
+			var l1, bound int64
+			for c.Now().Sub(start) < 5*time.Minute {
+				c.Tick(100 * time.Millisecond)
+				if joined == 0 && c.Meta().Cluster().Alive(id) {
+					joined = c.Now()
+					nodes, target, largest := c.balanceView()
+					l1, bound = rebalance.L1(nodes, target), rebalance.L1(nodes, target)/2+int64(len(nodes))*largest
+				}
+				if joined != 0 && c.BytesOn(id) > 0 && len(c.unbalanced(10)) == 0 && c.OverReplicated() == 0 &&
+					len(c.Meta().Repair().InFlight()) == 0 {
+					break
+				}
+			}
+			if off := c.unbalanced(10); len(off) != 0 {
+				t.Fatalf("not balanced after 5 min: %v", off)
+			}
+			moved := int64(c.Meta().Repair().Stats().MovedBytes - moved0)
+			t.Logf("%s, node-6 on %s: moved %.1f MiB (%d moves), ½·L1 %.1f MiB, bound %.1f MiB; alive %v after the join, balanced %v after that; node-6 holds %.1f MiB",
+				tc.data, rack, float64(moved)/(1<<20), c.Meta().Repair().Stats().Moved, float64(l1/2)/(1<<20), float64(bound)/(1<<20),
+				joined.Sub(start).Round(100*time.Millisecond), c.Now().Sub(joined).Round(100*time.Millisecond), float64(c.BytesOn(id))/(1<<20))
+			if moved > bound {
+				t.Fatalf("moved %d bytes, above the bound %d", moved, bound)
+			}
+			if err := c.AssertInvariants(); err != nil {
+				t.Fatal(err)
+			}
+		})
+	}
+}
