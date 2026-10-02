@@ -156,6 +156,38 @@ func (c *Cluster) RestartNode(id iface.NodeID) {
 	c.startNode(id, nd)
 }
 
+// MaxNodes caps AddNode: the dashboard lays out at most this many cards.
+const MaxNodes = 8
+
+// AddNode starts node-(N+1) with an empty disk on rack (N mod Racks)+1, so
+// the 6th node of the 5-node layout joins r3, the rack with one node. It
+// draws from the RNG only here, so a run that never adds keeps its stream.
+func (c *Cluster) AddNode() (iface.NodeID, error) {
+	if len(c.nodes) >= MaxNodes {
+		return "", iface.Errorf(iface.CodeInvalid, "the simulation runs at most %d storage nodes", MaxNodes)
+	}
+	i := len(c.nodes) + 1
+	id := iface.NodeID(fmt.Sprintf("node-%d", i))
+	nd := &Node{Rack: fmt.Sprintf("r%d", (i-1)%max(c.cfg.Racks, 1)+1), Store: sim.NewBlockStore()}
+	c.nodes = append(c.nodes, nd)
+	c.cfg.Nodes = len(c.nodes)
+	c.startNode(id, nd)
+	return id, nil
+}
+
+// Drain asks the metadata group to drain a node (ADR-0021) and returns its
+// warning, if any. The call advances simulated time.
+func (c *Cluster) Drain(id iface.NodeID) (string, error) {
+	res, err := c.Client().NodeAdmin(context.Background(), string(id), "draining")
+	return res.Warning, err
+}
+
+// Undrain returns a draining or decommissioned node to service.
+func (c *Cluster) Undrain(id iface.NodeID) error {
+	_, err := c.Client().NodeAdmin(context.Background(), string(id), "active")
+	return err
+}
+
 // demoFiles uploads 8 files of 5 MiB if the cluster holds none.
 func (c *Cluster) demoFiles() error {
 	if len(c.Meta().State().List("/")) > 0 {
