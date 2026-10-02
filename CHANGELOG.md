@@ -15,7 +15,7 @@
 - Every chaos run checks trim safety at each trim delete. Chaos schedules add nodes, drain and undrain them, kill a node mid-drain, and, over the metadata group, kill the leader mid-move. These faults come from a random stream of their own, so existing seeds keep their schedules.
 - The real-mode short suite drains and decommissions node-4, adds node-6 and removes it again.
 - `docs/benchmarks/rebalance.md`: bytes moved against ½·L1 when a sixth node joins r3 or r1, and time to converge.
-- Five more entries in `docs/bugs-found.md` (#18–#22).
+- Seven more entries in `docs/bugs-found.md` (#18–#24).
 
 ### Demo: rebalancing
 - Dashboard: an Add node button, Drain/Undrain per node, amber outlines and labels for draining and decommissioned nodes, and a usage bar with the balance target and band. Drain and balance copies are tagged in the timeline. Against a real cluster the buttons are disabled; their tooltips give the command.
