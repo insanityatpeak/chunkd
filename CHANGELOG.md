@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## v0.3.0 (2026-10-02)
 
 ### Rebalancing, drain and decommission
 - Nodes can join while the cluster serves. A balancer gives every node a rack-feasible byte target. A rack holds at most ceil(RF/racks) copies of a chunk, and its nodes share them. The balancer moves chunks until each node is within its band: 10% of target, but at least two chunks. A move only ever lowers the total distance from target and never loses a rack. Bytes moved stay within ½·L1 plus one chunk per node. ADR-0020.

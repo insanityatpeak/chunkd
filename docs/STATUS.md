@@ -1,8 +1,8 @@
 # Status
 
-Current phase: **Phase 6 built** (rebalancing, drain and decommission), pushed, not yet released. Phase 5 was released as [v0.2.0](https://github.com/insanityatpeak/chunkd/releases/tag/v0.2.0).
+Current phase: **Phase 6 complete** (rebalancing, drain and decommission), released as [v0.3.0](https://github.com/insanityatpeak/chunkd/releases/tag/v0.3.0). Phase 5 was released as [v0.2.0](https://github.com/insanityatpeak/chunkd/releases/tag/v0.2.0). Next: Phase 7, breadth features.
 
-## Phase 6 (built, not yet released)
+## Phase 6 (complete)
 
 A placement planner in `core/rebalance` gives every node a rack-feasible byte target. A rack holds at most ceil(RF/racks) copies of a chunk, so its nodes split that share. The planner moves chunks only while some node is outside its band, max(10% of target, 2 chunks). A move must strictly lower the total distance from target and never lose a distinct rack. Moves run in the repair scheduler as a third class (repair before drain before balance; drain and balance share at most 4 of 8 slots), and only once membership has settled. Every trim, whether a repair surplus or a move's source, is a logged TrimIntent sent only after it commits, with at most one pending per chunk. TrimDone clears it on every peer, and the leader rechecks RF elsewhere before each send. Drain state is a logged NodeAdmin op (active, draining, decommissioned). Decommission is refused until every chunk has RF copies on other nodes; the gateway and CLI expose all three. ADRs 0020–0021. Dashboard: an Add node button, per-node Drain/Undrain, amber outlines and labels for leaving nodes, a usage bar with the balance target and band, tagged drain and balance copies, and shareable `add-node` and `drain` scenarios.
 
@@ -94,7 +94,7 @@ Chunked, replicated upload and download; see ADRs 0005–0009. `TestRoundTrip`, 
 
 ## Next
 
-- [ ] Phase 6: rebalancing when nodes join or leave; ADRs start at 0020. The dashboard's "Add node" button becomes real.
+- [x] Phase 6: rebalancing when nodes join or leave; ADRs start at 0020. The dashboard's "Add node" button becomes real.
 - [ ] A shorter per-attempt timeout (or a hedged call) for metadata RPCs, so a silently dead leader costs less than the 10 s call timeout
 - [ ] Membership change from the CLI (the consensus layer supports single-server changes), to replace a peer whose WAL is corrupt
 - [ ] Skip trims of chunks a pending upload has claimed (closes the trim-vs-dedup race in Known limitations)
