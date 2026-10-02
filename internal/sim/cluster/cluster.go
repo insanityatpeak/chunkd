@@ -15,10 +15,12 @@ import (
 	"github.com/insanityatpeak/chunkd/internal/core/meta"
 	"github.com/insanityatpeak/chunkd/internal/core/node"
 	"github.com/insanityatpeak/chunkd/internal/core/scrub"
+	"github.com/insanityatpeak/chunkd/internal/core/wire"
 	"github.com/insanityatpeak/chunkd/internal/history"
 	"github.com/insanityatpeak/chunkd/internal/iface"
 	"github.com/insanityatpeak/chunkd/internal/obs"
 	"github.com/insanityatpeak/chunkd/internal/sim"
+	chunkdv1 "github.com/insanityatpeak/chunkd/proto/gen/chunkd/v1"
 )
 
 // MetaID is the metadata server's node ID.
@@ -82,6 +84,9 @@ type Cluster struct {
 	// killedAt and wipedAt are each node's latest kill and wipe.
 	killedAt map[iface.NodeID]iface.Instant
 	wipedAt  map[iface.NodeID]iface.Instant
+	// admin sends AdminAsync commands; adminQ holds each node's, in order.
+	admin    iface.AsyncCaller
+	adminQ   map[iface.NodeID][]func()
 	rotPick  uint64
 	timeline timeline
 	script   []scriptedStep // due scripted client calls, in time order
@@ -186,6 +191,65 @@ func (c *Cluster) Drain(id iface.NodeID) (string, error) {
 func (c *Cluster) Undrain(id iface.NodeID) error {
 	_, err := c.Client().NodeAdmin(context.Background(), string(id), "active")
 	return err
+}
+
+// AdminAsync sends a drain, undrain or decommission to the metadata leader
+// without blocking, for code that runs on the simulation clock (chaos
+// faults): a client call would advance the clock from inside a timer. While
+// there is no leader, the command finds none, or the leader has not heard
+// from the node (it started while the node was down), it retries every
+// second for up to two minutes. done, if set, gets the outcome.
+//
+// Commands for one node run one at a time, in call order: a drain whose
+// answer was lost and is retried must not land after a later undrain.
+func (c *Cluster) AdminAsync(id iface.NodeID, to chunkdv1.NodeAdmin, done func(error)) {
+	if c.admin == nil {
+		c.admin = c.net.AsyncCaller("admin-1", c.cfg.CallTimeout)
+		c.adminQ = map[iface.NodeID][]func(){}
+	}
+	c.adminQ[id] = append(c.adminQ[id], func() { c.adminSend(id, to, done) })
+	if len(c.adminQ[id]) == 1 {
+		c.adminQ[id][0]()
+	}
+}
+
+// adminSend runs the head of id's admin queue and, once it has an outcome,
+// the next command.
+func (c *Cluster) adminSend(id iface.NodeID, to chunkdv1.NodeAdmin, done func(error)) {
+	finish := func(err error) {
+		if done != nil {
+			done(err)
+		}
+		c.adminQ[id] = c.adminQ[id][1:]
+		if len(c.adminQ[id]) > 0 {
+			c.adminQ[id][0]()
+		}
+	}
+	start := c.clock.Now()
+	body := wire.Marshal(&chunkdv1.NodeAdminRequest{Node: string(id), State: to})
+	var try func()
+	retry := func(err error) {
+		if c.clock.Now().Sub(start) >= 2*time.Minute {
+			finish(err)
+			return
+		}
+		c.clock.AfterFunc(time.Second, try)
+	}
+	try = func() {
+		leader := c.MetaLeader()
+		if leader == "" {
+			retry(iface.Errorf(iface.CodeUnavailable, "no metadata leader"))
+			return
+		}
+		c.admin.Go(iface.Call{To: leader, Kind: wire.KindNodeAdmin, Body: body}, func(r iface.Result) {
+			if code := iface.CodeOf(r.Err); code == iface.CodeNotLeader || code == iface.CodeUnavailable || code == iface.CodeNotFound {
+				retry(r.Err)
+				return
+			}
+			finish(r.Err)
+		})
+	}
+	try()
 }
 
 // demoFiles uploads 8 files of 5 MiB if the cluster holds none.

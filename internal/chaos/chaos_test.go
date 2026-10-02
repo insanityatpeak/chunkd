@@ -123,7 +123,7 @@ func TestGenerateRespectsSafetyRules(t *testing.T) {
 // With a metadata group: at most one peer impaired at a time, every leader
 // fault ended 10 s before the end, and each new kind drawn by some seed.
 func TestGenerateMetaSafetyRules(t *testing.T) {
-	ends := map[Kind]Kind{KillLeader: ReviveLeader, FreezeLeader: ThawLeader, CutLeader: HealLeader}
+	ends := map[Kind]Kind{KillLeader: ReviveLeader, KillLeaderMidMove: ReviveLeader, FreezeLeader: ThawLeader, CutLeader: HealLeader}
 	seen := map[Kind]int{}
 	minority := 0
 	for seed := uint64(0); seed < 2000; seed++ {
@@ -267,5 +267,75 @@ func TestLeaderDeltasAcrossFailover(t *testing.T) {
 	}
 	if d.repaired != 7 || d.found != 2 {
 		t.Fatalf("repaired %d, found %d; want 7 and 2", d.repaired, d.found)
+	}
+}
+
+// Membership episodes come from a stream of their own: with them on, every
+// other fault and every op is what it was with them off, in the same order.
+func TestAdminKeepsBaseSchedule(t *testing.T) {
+	for _, base := range []Shape{DefaultShape(), MetaShape()} {
+		for seed := uint64(0); seed < 1000; seed++ {
+			off := base
+			off.Admin = 0
+			a, b := Generate(seed, off), Generate(seed, base)
+			if fmt.Sprint(a.Ops) != fmt.Sprint(b.Ops) {
+				t.Fatalf("seed %d: membership faults changed the ops", seed)
+			}
+			i := 0
+			for _, f := range b.Faults {
+				if i < len(a.Faults) && f == a.Faults[i] {
+					i++
+				}
+			}
+			if i != len(a.Faults) {
+				t.Fatalf("seed %d: the base faults are not a subsequence of the faults with membership on\n%s\n%s", seed, a, b)
+			}
+		}
+	}
+}
+
+// Every drain is undone on the same node before the heal deadline, one
+// drain at a time, at most one node is added, and each episode kind is drawn
+// by some seed.
+func TestGenerateAdminRules(t *testing.T) {
+	seen := map[string]int{}
+	for _, sh := range []Shape{DefaultShape(), MetaShape()} {
+		for seed := uint64(0); seed < 2000; seed++ {
+			s := Generate(seed, sh)
+			var drained iface.NodeID
+			adds := 0
+			for _, f := range s.Faults {
+				switch f.Kind {
+				case AddNode:
+					adds++
+					seen["add-node"]++
+				case KillLeaderMidMove:
+					seen[string(f.Kind)]++
+				case Drain:
+					if drained != "" {
+						t.Fatalf("seed %d: drain %s while %s drains\n%s", seed, f.Node, drained, s)
+					}
+					drained = f.Node
+					seen["drain"]++
+				case Undrain:
+					if f.Node != drained {
+						t.Fatalf("seed %d: undrain %s, draining %q\n%s", seed, f.Node, drained, s)
+					}
+					drained = ""
+				case Kill:
+					if f.Node == drained {
+						seen["kill-drain-target"]++
+					}
+				}
+			}
+			if drained != "" || adds > 1 {
+				t.Fatalf("seed %d: %q left draining, %d nodes added\n%s", seed, drained, adds, s)
+			}
+		}
+	}
+	for _, k := range []string{"add-node", "drain", "kill-drain-target", string(KillLeaderMidMove)} {
+		if seen[k] == 0 {
+			t.Errorf("no seed drew %s", k)
+		}
 	}
 }

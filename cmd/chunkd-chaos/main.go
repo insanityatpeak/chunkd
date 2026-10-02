@@ -88,8 +88,8 @@ func main() {
 			fmt.Fprintln(os.Stderr, r.Err)
 			os.Exit(1)
 		}
-		fmt.Printf("ok: trace %s, RF restored %v after quiet (bound %v), %d repair copies, %d trims, %d leader faults, %d minority-side ops, ops %v\n",
-			r.Trace, r.Restored, r.Bound, r.Repair.Completed, r.Repair.Trimmed, r.LeaderFaults, r.MinorityOps, r.Ops)
+		fmt.Printf("ok: trace %s, RF restored %v after quiet (bound %v), %d repair copies, %d trims, %d membership faults, %d leader faults (%d mid-rebalance), %d minority-side ops, ops %v\n",
+			r.Trace, r.Restored, r.Bound, r.Repair.Completed, r.Repair.Trimmed, r.Admin, r.LeaderFaults, r.MidMove, r.MinorityOps, r.Ops)
 		return
 	}
 
@@ -98,7 +98,7 @@ func main() {
 	var mu sync.Mutex
 	var failed []chaos.Report
 	var worst time.Duration
-	rotted, leaderFaults, minorityOps := 0, 0, 0
+	rotted, leaderFaults, minorityOps, admin, midMove := 0, 0, 0, 0, 0
 	var wg sync.WaitGroup
 	for range max(*parallel, 1) {
 		wg.Add(1)
@@ -115,6 +115,8 @@ func main() {
 				rotted += r.Rotted
 				leaderFaults += r.LeaderFaults
 				minorityOps += r.MinorityOps
+				admin += r.Admin
+				midMove += r.MidMove
 				if *verbose {
 					fmt.Printf("seed %d: trace %s restored %v\n", sd, r.Trace, r.Restored)
 				}
@@ -130,8 +132,9 @@ func main() {
 
 	summary := fmt.Sprintf("chaos: %d seeds from %d in %v, %d failed, slowest RF restore %v, %d copies rotted",
 		*seeds, *from, time.Since(start).Round(time.Millisecond), len(failed), worst, rotted)
+	summary += fmt.Sprintf(", %d membership faults", admin)
 	if shape.Metas > 1 {
-		summary += fmt.Sprintf(", %d leader faults, %d minority-side ops", leaderFaults, minorityOps)
+		summary += fmt.Sprintf(", %d leader faults (%d mid-rebalance), %d minority-side ops", leaderFaults, midMove, minorityOps)
 	}
 	fmt.Println(summary)
 	for _, r := range failed {

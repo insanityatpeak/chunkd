@@ -9,6 +9,7 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"slices"
 	"time"
 
 	"github.com/insanityatpeak/chunkd/internal/core/meta"
@@ -17,6 +18,7 @@ import (
 	"github.com/insanityatpeak/chunkd/internal/history/check"
 	"github.com/insanityatpeak/chunkd/internal/iface"
 	"github.com/insanityatpeak/chunkd/internal/sim/cluster"
+	chunkdv1 "github.com/insanityatpeak/chunkd/proto/gen/chunkd/v1"
 )
 
 // ChunkSize keeps chaos runs fast: 64 KiB chunks give files of several
@@ -38,9 +40,14 @@ type Report struct {
 	Rotted   int            `json:"rotted"` // chunk copies corrupted by Corrupt faults
 	// LeaderFaults counts leader kills, freezes and cuts that found a leader
 	// to hit; MinorityOps, ops sent from the cut-off leader's side.
-	LeaderFaults int          `json:"leaderFaults"`
-	MinorityOps  int          `json:"minorityOps"`
-	GC           meta.GCStats `json:"gc"`
+	LeaderFaults int `json:"leaderFaults"`
+	MinorityOps  int `json:"minorityOps"`
+	// Admin counts membership faults applied (nodes added, drains and
+	// undrains accepted); MidMove, leader kills that found a balance copy
+	// in flight.
+	Admin   int          `json:"admin"`
+	MidMove int          `json:"midMove"`
+	GC      meta.GCStats `json:"gc"`
 	// History is how many recorded client operations the linearizability
 	// check covered.
 	History int   `json:"history"`
@@ -145,6 +152,42 @@ func RunOpts(s Scenario, w io.Writer, opts Options) Report {
 				c.HealMeta(cut)
 				held, cut = "", ""
 			}
+		case KillLeaderMidMove:
+			// Polls on the clock: a balance plan starts once the new node
+			// has reported and membership has settled.
+			var wait func(left int)
+			wait = func(left int) {
+				moving := slices.ContainsFunc(c.Meta().Repair().InFlight(), func(cp repair.Copy) bool { return cp.Class == repair.Balance })
+				if !moving && left > 0 {
+					c.AfterFunc(100*time.Millisecond, func() { wait(left - 1) })
+					return
+				}
+				if id := hit(); id != "" {
+					c.KillMeta(id)
+					if moving {
+						r.MidMove++
+					}
+				}
+			}
+			wait(150)
+		case AddNode:
+			if _, err := c.AddNode(); err != nil {
+				errs = append(errs, fmt.Errorf("%v: %w", f, err))
+				return
+			}
+			r.Admin++
+		case Drain, Undrain:
+			to := chunkdv1.NodeAdmin_NODE_ADMIN_DRAINING
+			if f.Kind == Undrain {
+				to = chunkdv1.NodeAdmin_NODE_ADMIN_ACTIVE
+			}
+			c.AdminAsync(f.Node, to, func(err error) {
+				if err != nil {
+					errs = append(errs, fmt.Errorf("%v: %w", f, err))
+					return
+				}
+				r.Admin++
+			})
 		case Kill:
 			c.KillNode(f.Node)
 		case Restart:

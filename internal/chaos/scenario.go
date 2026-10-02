@@ -39,12 +39,21 @@ const (
 	ThawLeader   Kind = "thaw-leader"
 	CutLeader    Kind = "cut-leader"  // partition {leader} from the other peers
 	HealLeader   Kind = "heal-leader" // rejoin it
+
+	// Membership faults (ADR-0020, ADR-0021), drawn from a stream of their
+	// own (Shape.Admin) so the faults above keep their schedule.
+	AddNode Kind = "add-node" // start node-(N+1), empty, on the next rack in turn
+	Drain   Kind = "drain"    // drain Node through the metadata leader
+	Undrain Kind = "undrain"  // return Node to service
+	// KillLeaderMidMove waits, up to 15 s, for a balance copy in flight, then
+	// kills the leader; a ReviveLeader ends it.
+	KillLeaderMidMove Kind = "kill-leader-mid-rebalance"
 )
 
 // metaKind reports whether k acts on the metadata group.
 func metaKind(k Kind) bool {
 	switch k {
-	case KillLeader, ReviveLeader, FreezeLeader, ThawLeader, CutLeader, HealLeader:
+	case KillLeader, ReviveLeader, FreezeLeader, ThawLeader, CutLeader, HealLeader, KillLeaderMidMove:
 		return true
 	}
 	return false
@@ -69,7 +78,7 @@ func (f Fault) String() string {
 		s += fmt.Sprintf(" %s +%v", f.Node, f.Delay)
 	case Lossy:
 		s += fmt.Sprintf(" drop %.1f%% dup %.1f%%", f.Drop*100, f.Dup*100)
-	case Clean, KillLeader, ReviveLeader, FreezeLeader, ThawLeader, CutLeader, HealLeader:
+	case Clean, KillLeader, ReviveLeader, FreezeLeader, ThawLeader, CutLeader, HealLeader, AddNode, KillLeaderMidMove:
 	case Corrupt:
 		s += fmt.Sprintf(" %s ×%d from #%d", f.Node, f.Count, f.Pick%1000)
 	default:
@@ -139,12 +148,16 @@ type Shape struct {
 	Paths    int
 	MaxSize  int64
 	Episodes int // fault episodes, each an impairment and its end
+	// Admin is the most membership episodes (add a node, drain, drain and
+	// kill, add and kill the leader mid-rebalance); 0 draws none.
+	Admin int
 }
 
 // DefaultShape is a 5-node cluster, 2 simulated minutes, 40 operations on
-// 12 paths of up to 512 KiB, and up to 6 fault episodes.
+// 12 paths of up to 512 KiB, up to 6 fault episodes and up to 2 membership
+// episodes.
 func DefaultShape() Shape {
-	return Shape{Nodes: 5, Length: 2 * time.Minute, Ops: 40, Paths: 12, MaxSize: 512 << 10, Episodes: 6}
+	return Shape{Nodes: 5, Length: 2 * time.Minute, Ops: 40, Paths: 12, MaxSize: 512 << 10, Episodes: 6, Admin: 2}
 }
 
 // MetaShape is DefaultShape over a 3-peer metadata group, with room for the
@@ -287,6 +300,7 @@ func Generate(seed uint64, sh Shape) Scenario {
 			}
 		}
 	}
+	s.Faults = append(s.Faults, admin(seed, sh, &eps, overlapping, down)...)
 	// Stable: a wipe must stay before the restart scheduled at the same time.
 	slices.SortStableFunc(s.Faults, func(a, b Fault) int { return cmp.Compare(a.At, b.At) })
 
@@ -310,4 +324,78 @@ func Generate(seed uint64, sh Shape) Scenario {
 		}
 	}
 	return s
+}
+
+// draining marks an admin episode's drain window, for the one-drain rule.
+const draining Kind = "draining"
+
+// admin draws up to sh.Admin membership episodes from a stream of its own,
+// so a shape's other faults and its ops are what they were without them. It
+// keeps Generate's rules, counting the episodes in eps:
+//
+//   - at most one node added per scenario (5 -> 6), and one drain at a time;
+//   - every drain ends in an undrain 10 s before the end: a node left
+//     draining keeps its copies on top of RF copies elsewhere;
+//   - a drained node that is also killed (the drain target dies) counts
+//     toward the 2-down limit and is never impaired by another episode;
+//   - a leader kill mid-rebalance is a metadata fault: no other overlaps it.
+func admin(seed uint64, sh Shape, eps *[]episode, overlapping func(time.Duration, time.Duration, func(episode) bool) int, down func(episode) bool) []Fault {
+	if sh.Admin <= 0 {
+		return nil
+	}
+	rng := sim.NewRand(seed ^ 0xad31_5eed_c0ff_ee11)
+	span := func(lo, hi time.Duration) time.Duration { return lo + time.Duration(rng.IntN(int(hi-lo)+1)) }
+	node := func() iface.NodeID { return iface.NodeID(fmt.Sprintf("node-%d", 1+rng.IntN(sh.Nodes))) }
+	last := sh.Length - 10*time.Second
+	isDrain := func(o episode) bool { return o.kind == draining }
+	isMeta := func(o episode) bool { return metaKind(o.kind) || o.kind == elections }
+	kinds := 3
+	if sh.Metas >= 3 {
+		kinds = 4
+	}
+	added := false
+	var out []Fault
+	for range rng.IntN(sh.Admin + 1) {
+		start := span(5*time.Second, last-20*time.Second)
+		switch rng.IntN(kinds) {
+		case 0:
+			if added {
+				continue
+			}
+			added = true
+			*eps = append(*eps, episode{kind: AddNode, start: start, end: start})
+			out = append(out, Fault{At: start, Kind: AddNode})
+		case 1:
+			x, end := node(), start+span(5*time.Second, 40*time.Second)
+			if end > last || overlapping(start, end, isDrain) > 0 {
+				continue
+			}
+			*eps = append(*eps, episode{kind: draining, node: x, start: start, end: end})
+			out = append(out, Fault{At: start, Kind: Drain, Node: x}, Fault{At: end, Kind: Undrain, Node: x})
+		case 2:
+			// The drain target dies mid-evacuation and comes back.
+			x := node()
+			kill := start + span(500*time.Millisecond, 3*time.Second)
+			restart := kill + span(time.Second, 30*time.Second)
+			end := restart + span(time.Second, 10*time.Second)
+			k := episode{kind: Kill, node: x, start: kill, end: restart}
+			sameNode := func(o episode) bool { return o.node == x }
+			if end > last || overlapping(start, end, isDrain) > 0 || overlapping(start, end, sameNode) > 0 || overlapping(kill, restart, down) >= 2 {
+				continue
+			}
+			*eps = append(*eps, episode{kind: draining, node: x, start: start, end: end}, k)
+			out = append(out, Fault{At: start, Kind: Drain, Node: x}, Fault{At: kill, Kind: Kill, Node: x},
+				Fault{At: restart, Kind: Restart, Node: x}, Fault{At: end, Kind: Undrain, Node: x})
+		default:
+			// A node joins and the leader dies while its moves are copying.
+			end := start + 15*time.Second + span(3*time.Second, 12*time.Second)
+			if added || end > last || overlapping(start, end, isMeta) > 0 {
+				continue
+			}
+			added = true
+			*eps = append(*eps, episode{kind: KillLeaderMidMove, start: start, end: end})
+			out = append(out, Fault{At: start, Kind: AddNode}, Fault{At: start, Kind: KillLeaderMidMove}, Fault{At: end, Kind: ReviveLeader})
+		}
+	}
+	return out
 }
