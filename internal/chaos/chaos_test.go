@@ -270,6 +270,16 @@ func TestLeaderDeltasAcrossFailover(t *testing.T) {
 	}
 }
 
+// Balance moves still running from an earlier scenario, and drain copies,
+// are not repairs: a transient fault must not be blamed for them.
+func TestLeaderDeltasSkipMoves(t *testing.T) {
+	d := leaderDeltas{prev: client.Health{RepairCompleted: 10, RepairMoved: 4}, leader: "meta-1"}
+	d.add("meta-1", client.Health{RepairCompleted: 22, RepairMoved: 12, RepairEvacuated: 3})
+	if d.repaired != 1 {
+		t.Fatalf("repaired %d, want 1 (12 copies: 8 moves, 3 evacuations, 1 repair)", d.repaired)
+	}
+}
+
 // Membership episodes come from a stream of their own: with them on, every
 // other fault and every op is what it was with them off, in the same order.
 func TestAdminKeepsBaseSchedule(t *testing.T) {

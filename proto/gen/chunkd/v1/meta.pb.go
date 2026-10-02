@@ -4067,6 +4067,9 @@ type ClusterHealth struct {
 	DetectorStalls  uint64  `protobuf:"varint,14,opt,name=detector_stalls,json=detectorStalls,proto3" json:"detector_stalls,omitempty"`
 	// Copies removed after failing verification (reads, scrub, re-checks).
 	CorruptReplicas uint64 `protobuf:"varint,15,opt,name=corrupt_replicas,json=corruptReplicas,proto3" json:"corrupt_replicas,omitempty"`
+	// Of repair_completed: drain copies off leaving nodes, and balance moves.
+	RepairEvacuated uint64 `protobuf:"varint,16,opt,name=repair_evacuated,json=repairEvacuated,proto3" json:"repair_evacuated,omitempty"`
+	RepairMoved     uint64 `protobuf:"varint,17,opt,name=repair_moved,json=repairMoved,proto3" json:"repair_moved,omitempty"`
 	unknownFields   protoimpl.UnknownFields
 	sizeCache       protoimpl.SizeCache
 }
@@ -4202,6 +4205,20 @@ func (x *ClusterHealth) GetDetectorStalls() uint64 {
 func (x *ClusterHealth) GetCorruptReplicas() uint64 {
 	if x != nil {
 		return x.CorruptReplicas
+	}
+	return 0
+}
+
+func (x *ClusterHealth) GetRepairEvacuated() uint64 {
+	if x != nil {
+		return x.RepairEvacuated
+	}
+	return 0
+}
+
+func (x *ClusterHealth) GetRepairMoved() uint64 {
+	if x != nil {
+		return x.RepairMoved
 	}
 	return 0
 }
@@ -4508,7 +4525,7 @@ const file_chunkd_v1_meta_proto_rawDesc = "" +
 	"\x05at_ms\x18\x02 \x01(\x03R\x04atMs\x12\x12\n" +
 	"\x04kind\x18\x03 \x01(\tR\x04kind\x12\x12\n" +
 	"\x04node\x18\x04 \x01(\tR\x04node\x12\x12\n" +
-	"\x04text\x18\x05 \x01(\tR\x04text\"\xb9\x04\n" +
+	"\x04text\x18\x05 \x01(\tR\x04text\"\x87\x05\n" +
 	"\rClusterHealth\x12\x16\n" +
 	"\x06chunks\x18\x01 \x01(\x03R\x06chunks\x12)\n" +
 	"\x10under_replicated\x18\x02 \x01(\x03R\x0funderReplicated\x12'\n" +
@@ -4525,7 +4542,9 @@ const file_chunkd_v1_meta_proto_rawDesc = "" +
 	"\x10repair_timed_out\x18\f \x01(\x04R\x0erepairTimedOut\x12#\n" +
 	"\rrepair_failed\x18\r \x01(\x04R\frepairFailed\x12'\n" +
 	"\x0fdetector_stalls\x18\x0e \x01(\x04R\x0edetectorStalls\x12)\n" +
-	"\x10corrupt_replicas\x18\x0f \x01(\x04R\x0fcorruptReplicas*Z\n" +
+	"\x10corrupt_replicas\x18\x0f \x01(\x04R\x0fcorruptReplicas\x12)\n" +
+	"\x10repair_evacuated\x18\x10 \x01(\x04R\x0frepairEvacuated\x12!\n" +
+	"\frepair_moved\x18\x11 \x01(\x04R\vrepairMoved*Z\n" +
 	"\tNodeAdmin\x12\x15\n" +
 	"\x11NODE_ADMIN_ACTIVE\x10\x00\x12\x17\n" +
 	"\x13NODE_ADMIN_DRAINING\x10\x01\x12\x1d\n" +

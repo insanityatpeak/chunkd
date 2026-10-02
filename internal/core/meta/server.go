@@ -897,7 +897,8 @@ func (s *Server) ClusterView(eventsAfter uint64) *chunkdv1.ClusterResponse {
 	resp.Health = &chunkdv1.ClusterHealth{Chunks: int64(h.Chunks), UnderReplicated: int64(h.UnderReplicated), OverReplicated: int64(h.OverReplicated),
 		Lost: int64(h.Lost), RepairQueued: int64(h.Repair.Queued), RepairInFlight: int64(h.Repair.InFlight), RepairWaiting: int64(h.Repair.Waiting),
 		RepairCompleted: h.Repair.Completed, RepairBytes: h.Repair.Bytes, RepairTrimmed: h.Repair.Trimmed, RepairTimedOut: h.Repair.TimedOut,
-		RepairFailed: h.Repair.Failed, DetectorStalls: h.DetectorStalls, CorruptReplicas: h.CorruptReplicas}
+		RepairFailed: h.Repair.Failed, DetectorStalls: h.DetectorStalls, CorruptReplicas: h.CorruptReplicas,
+		RepairEvacuated: h.Repair.Evacuated, RepairMoved: h.Repair.Moved}
 	for _, n := range h.Replicas {
 		resp.Health.Replicas = append(resp.Health.Replicas, int64(n))
 	}

@@ -525,4 +525,7 @@ message ClusterHealth {
   uint64 detector_stalls = 14;
   // Copies removed after failing verification (reads, scrub, re-checks).
   uint64 corrupt_replicas = 15;
+  // Of repair_completed: drain copies off leaving nodes, and balance moves.
+  uint64 repair_evacuated = 16;
+  uint64 repair_moved = 17;
 }

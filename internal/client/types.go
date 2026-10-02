@@ -81,6 +81,9 @@ type Health struct {
 	RepairFailed    uint64  `json:"repairFailed"`
 	DetectorStalls  uint64  `json:"detectorStalls"`
 	CorruptReplicas uint64  `json:"corruptReplicas"`
+	// Of RepairCompleted: drain copies and balance moves, not repairs.
+	RepairEvacuated uint64 `json:"repairEvacuated"`
+	RepairMoved     uint64 `json:"repairMoved"`
 }
 
 // FileHealth is one committed file's replication state.

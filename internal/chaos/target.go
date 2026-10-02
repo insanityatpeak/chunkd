@@ -366,6 +366,9 @@ func sorted(ops []Op) []Op {
 }
 
 // leaderDeltas adds up repair and corruption counts across leader changes.
+// Repair copies are those a chunk below RF caused: drain copies and balance
+// moves, which a transient fault may follow from an earlier scenario, are
+// left out.
 // The counters are the answering leader's, since its process started: they
 // restart with a new leader, so only deltas within one leader count. Copies
 // in the second before a new leader's first poll are lost.
@@ -376,8 +379,9 @@ type leaderDeltas struct {
 }
 
 func (d *leaderDeltas) add(leader string, h client.Health) {
-	if leader == d.leader && h.RepairCompleted >= d.prev.RepairCompleted && h.CorruptReplicas >= d.prev.CorruptReplicas {
-		d.repaired += h.RepairCompleted - d.prev.RepairCompleted
+	repairs := func(h client.Health) uint64 { return h.RepairCompleted - h.RepairEvacuated - h.RepairMoved }
+	if leader == d.leader && repairs(h) >= repairs(d.prev) && h.CorruptReplicas >= d.prev.CorruptReplicas {
+		d.repaired += repairs(h) - repairs(d.prev)
 		d.found += h.CorruptReplicas - d.prev.CorruptReplicas
 	}
 	d.prev, d.leader = h, leader
