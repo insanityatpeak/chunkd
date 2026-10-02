@@ -4,6 +4,7 @@ go 1.26
 
 require (
 	github.com/anishathalye/porcupine v1.3.1
+	github.com/klauspost/reedsolomon v1.14.2
 	go.etcd.io/bbolt v1.5.0
 	go.etcd.io/raft/v3 v3.7.0
 	google.golang.org/grpc v1.84.0
@@ -11,6 +12,7 @@ require (
 )
 
 require (
+	github.com/klauspost/cpuid/v2 v2.3.0 // indirect
 	golang.org/x/net v0.57.0 // indirect
 	golang.org/x/sys v0.47.0 // indirect
 	golang.org/x/text v0.40.0 // indirect
