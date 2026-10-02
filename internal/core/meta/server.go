@@ -163,6 +163,17 @@ func (f fsm) Apply(_ uint64, data []byte) any {
 		return applied{err: iface.Errorf(iface.CodeInternal, "undecodable log entry: %v", err)}
 	}
 	res, err := f.s.state.Apply(&op)
+	if td := op.GetTrimDone(); td != nil && err == nil {
+		// The log says these copies are gone. A peer that missed the node's
+		// report would otherwise count a phantom copy once it leads and trim a
+		// real one. If the node holds the chunk again, its next report restores
+		// it: an under-count costs a copy, an over-count a replica.
+		for _, t := range td.GetTargets() {
+			if id, cerr := wire.ChunkID(t.GetChunkId()); cerr == nil {
+				f.s.cluster.drop(iface.NodeID(t.GetNode()), id)
+			}
+		}
+	}
 	return applied{res, err}
 }
 

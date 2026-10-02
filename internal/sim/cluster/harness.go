@@ -225,8 +225,10 @@ func (c *Cluster) checkRead(path string, data []byte) {
 //  4. Every committed chunk has a durable record with refcount >= 1.
 //  5. No successful read, during the run or here, ever returned bytes that
 //     were not written to that path.
+//  6. No trim, when it ran, left a chunk below RF intact copies on running
+//     nodes, unless a holder had just failed (checkTrim).
 func (c *Cluster) AssertInvariants() error {
-	errs := slices.Clone(c.badReads)
+	errs := append(slices.Clone(c.badReads), c.badTrims...)
 	// Sorted: each download advances the clock, so map order would make the
 	// run nondeterministic.
 	for _, path := range slices.Sorted(maps.Keys(c.acked)) {

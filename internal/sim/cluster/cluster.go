@@ -77,6 +77,11 @@ type Cluster struct {
 	// not; badReads are successful reads that returned anything else.
 	written  map[string][][32]byte
 	badReads []error
+	// badTrims are trims that broke the trim-safety invariant (checkTrim).
+	badTrims []error
+	// killedAt and wipedAt are each node's latest kill and wipe.
+	killedAt map[iface.NodeID]iface.Instant
+	wipedAt  map[iface.NodeID]iface.Instant
 	rotPick  uint64
 	timeline timeline
 	script   []scriptedStep // due scripted client calls, in time order
@@ -95,7 +100,7 @@ type Node struct {
 // go to w; pass io.Discard to silence them.
 func New(seed uint64, cfg Config, w io.Writer) *Cluster {
 	c := &Cluster{seed: seed, cfg: cfg, clock: sim.NewClock(), rng: sim.NewRand(seed), log: w, acked: map[string]*acked{},
-		written: map[string][][32]byte{}}
+		written: map[string][][32]byte{}, killedAt: map[iface.NodeID]iface.Instant{}, wipedAt: map[iface.NodeID]iface.Instant{}}
 	c.net = sim.NewNet(c.clock, c.rng, cfg.Faults)
 	for i := range max(cfg.Metas, 1) { // all of them exist before any starts: each needs the full peer list
 		c.metas = append(c.metas, &metaPeer{id: metaName(i), store: sim.NewMetaStore()})
@@ -119,7 +124,7 @@ func (c *Cluster) startNode(id iface.NodeID, nd *Node) {
 	cfg := node.DefaultConfig(id, MetaID, nd.Rack)
 	cfg.Metas = c.MetaIDs()
 	cfg.Scrub = c.cfg.Scrub
-	n, err := node.New(node.Deps{Clock: c.clock, Net: c.net, Async: c.net.AsyncCaller(id, c.cfg.CallTimeout), Store: nd.Store, Rand: c.rng, Log: c.logger(id)}, cfg)
+	n, err := node.New(node.Deps{Clock: c.clock, Net: nodeNet{c.net, c}, Async: c.net.AsyncCaller(id, c.cfg.CallTimeout), Store: nd.Store, Rand: c.rng, Log: c.logger(id)}, cfg)
 	if err != nil {
 		panic(err) // an in-memory disk cannot fail to read its term
 	}
@@ -138,6 +143,7 @@ func (c *Cluster) node(id iface.NodeID) *Node {
 
 // KillNode stops a node's process and cuts it off. Its disk survives.
 func (c *Cluster) KillNode(id iface.NodeID) {
+	c.killedAt[id] = c.clock.Now()
 	c.node(id).Stop()
 	c.net.Crash(id)
 }
@@ -214,7 +220,10 @@ func (c *Cluster) Intact(node iface.NodeID, chunk iface.ChunkID) bool {
 
 // WipeNode replaces a killed node's disk with an empty one, as after a disk
 // failure; RestartNode brings it back empty.
-func (c *Cluster) WipeNode(id iface.NodeID) { c.node(id).Store = sim.NewBlockStore() }
+func (c *Cluster) WipeNode(id iface.NodeID) {
+	c.wipedAt[id] = c.clock.Now()
+	c.node(id).Store = sim.NewBlockStore()
+}
 
 func (c *Cluster) logger(id iface.NodeID) *slog.Logger {
 	return obs.NewLogger(c.log, string(id), slog.LevelInfo)

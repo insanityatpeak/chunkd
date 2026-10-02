@@ -2,11 +2,15 @@ package cluster
 
 import (
 	"fmt"
+	"io"
+	"strings"
 	"testing"
 	"time"
 
 	"github.com/insanityatpeak/chunkd/internal/core/rebalance"
+	"github.com/insanityatpeak/chunkd/internal/core/wire"
 	"github.com/insanityatpeak/chunkd/internal/iface"
+	chunkdv1 "github.com/insanityatpeak/chunkd/proto/gen/chunkd/v1"
 )
 
 // unbalanced returns the nodes outside their band of the rack-feasible
@@ -187,4 +191,91 @@ func TestDrainSurvivesLeaderChange(t *testing.T) {
 		t.Fatalf("decommissioned with a chunk at %d intact copies elsewhere", k)
 	}
 	mustAgree(t, c)
+}
+
+// The trim watch fails the run when a trim takes a chunk below RF: a
+// delete sent past the log, as a buggy leader would, to a chunk at RF.
+func TestTrimWatchCatchesUnsafeTrim(t *testing.T) {
+	c := New(1, DefaultConfig(), io.Discard)
+	c.Tick(3 * time.Second)
+	_, _, err := c.UploadRandom("/f", 1<<20)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, ok := c.Settle(time.Minute); !ok {
+		t.Fatal("not at RF after upload")
+	}
+	ch := c.Meta().State().List("/")[0].Chunks[0]
+	holder := c.Meta().Cluster().Locations(ch)[0]
+	c.net.Send(holder, iface.Message{From: MetaID, Kind: wire.KindDeleteReplica,
+		Body: wire.Marshal(&chunkdv1.DeleteReplica{ChunkId: ch[:], Term: 1 << 40})})
+	c.Tick(time.Second)
+	if err := c.AssertInvariants(); err == nil || !strings.Contains(err.Error(), "a trim on "+string(holder)) {
+		t.Fatalf("AssertInvariants = %v, want the unsafe trim on %s", err, holder)
+	}
+}
+
+// A follower that missed a node's report of a trimmed copy must not count
+// that copy once it leads: the committed TrimDone says the copy is gone.
+// Node-1 returns after repair, its surplus copies are trimmed while the
+// followers hear no reports, and the leader dies before the next full report
+// would have corrected them. The new leader must not trim a real copy.
+func TestNewLeaderTrustsLoggedTrimDone(t *testing.T) {
+	c := newMetaGroup(t, 3)
+	for i := range 6 {
+		if _, _, err := c.UploadRandom(fmt.Sprintf("/t/%d", i), 1<<20); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if _, ok := c.Settle(time.Minute); !ok {
+		t.Fatal("not at RF after uploads")
+	}
+	c.KillNode("node-1")
+	c.Tick(c.cfg.Meta.Detector.DeadAfter + c.cfg.Meta.Repair.Delay + time.Second)
+	if _, ok := c.Settle(2 * c.RepairBound(c.BytesOn("node-2"))); !ok {
+		t.Fatal("RF not restored after node-1 died")
+	}
+	old := c.MetaLeader()
+	var followers []iface.NodeID
+	for _, p := range c.MetaIDs() {
+		if p != old {
+			followers = append(followers, p)
+		}
+	}
+	reports := func(on bool) {
+		for _, n := range c.Nodes() {
+			for _, f := range followers {
+				if on {
+					c.net.Unblock(n.ID(), f)
+				} else {
+					c.net.Block(n.ID(), f)
+				}
+			}
+		}
+	}
+	c.RestartNode("node-1")
+	blocked := false
+	for range 600 {
+		c.Tick(20 * time.Millisecond)
+		pending := len(c.MetaPeer(old).State().TrimPendingAll())
+		if !blocked && pending > 0 {
+			reports(false)
+			blocked = true
+		}
+		if blocked && pending == 0 {
+			break
+		}
+	}
+	reports(true)
+	if !blocked || c.MetaPeer(old).Trims().Done == 0 {
+		t.Fatalf("no trim ran while the followers were cut off (blocked %v)", blocked)
+	}
+	c.KillMeta(old)
+	c.Tick(20 * time.Second)
+	if nl := c.MetaLeader(); nl == "" || nl == old {
+		t.Fatalf("no new leader after killing %s", old)
+	}
+	if err := c.AssertInvariants(); err != nil {
+		t.Fatal(err)
+	}
 }
