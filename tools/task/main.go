@@ -194,12 +194,16 @@ func run(env []string, dir, name string, args ...string) error {
 
 func goCmd(env []string, args ...string) error { return run(env, "", "go", args...) }
 
+// testTimeout is per package. internal/sim/cluster runs about 10 min under
+// -race on a CI runner, past go test's 10 min default.
+const testTimeout = "-timeout=25m"
+
 func test(args []string) error {
 	if _, err := exec.LookPath("gcc"); err != nil && os.Getenv("CI") == "" {
 		fmt.Println("warning: no C compiler found; running tests without -race (CI always uses -race)")
-		return goCmd(nil, append([]string{"test"}, append(args, "./...")...)...)
+		return goCmd(nil, append([]string{"test", testTimeout}, append(args, "./...")...)...)
 	}
-	return goCmd([]string{"CGO_ENABLED=1"}, append([]string{"test", "-race"}, append(args, "./...")...)...)
+	return goCmd([]string{"CGO_ENABLED=1"}, append([]string{"test", "-race", testTimeout}, append(args, "./...")...)...)
 }
 
 func lint([]string) error {
