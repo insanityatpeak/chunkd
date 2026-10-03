@@ -1,6 +1,6 @@
 # Status
 
-Current phase: **Phase 8 complete** (benchmarks, documentation, final hygiene). Release: v1.0.0, pending the owner's go to merge and tag. Phase 7 was released as [v0.4.0](https://github.com/insanityatpeak/chunkd/releases/tag/v0.4.0), Phase 6 as [v0.3.0](https://github.com/insanityatpeak/chunkd/releases/tag/v0.3.0), Phase 5 as [v0.2.0](https://github.com/insanityatpeak/chunkd/releases/tag/v0.2.0).
+Current phase: **Phase 8 complete** (benchmarks, documentation, final hygiene). **v1.0.0 shipped** ([release](https://github.com/insanityatpeak/chunkd/releases/tag/v1.0.0)). Phase 7 was released as [v0.4.0](https://github.com/insanityatpeak/chunkd/releases/tag/v0.4.0), Phase 6 as [v0.3.0](https://github.com/insanityatpeak/chunkd/releases/tag/v0.3.0), Phase 5 as [v0.2.0](https://github.com/insanityatpeak/chunkd/releases/tag/v0.2.0).
 
 ## Phase 8 (complete)
 
