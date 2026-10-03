@@ -144,7 +144,7 @@ Chunked, replicated upload and download; see ADRs 0005–0009. `TestRoundTrip`, 
 - [x] Phase 6: rebalancing when nodes join or leave; ADRs start at 0020. The dashboard's "Add node" button becomes real.
 - [ ] A shorter per-attempt timeout (or a hedged call) for metadata RPCs, so a silently dead leader costs less than the 10 s call timeout
 - [ ] Membership change from the CLI (the consensus layer supports single-server changes), to replace a peer whose WAL is corrupt
-- [ ] Skip trims of chunks a pending upload has claimed (closes the trim-vs-dedup race in Known limitations)
+- [x] Skip trims of chunks a pending upload has claimed (`trimSafe`, `TestTrimSkipsChunkWithPendingClaim`)
 - [ ] Acknowledged incremental block reports (removes the up-to-30 s commit delay after a lost report)
 - [ ] Overlap chunk uploads (window of chunks in flight)
 - [ ] A real-mode EC chaos scenario: compose runs 5 nodes and a stripe needs 6 (real processes are covered by `e2e.TestRoundTripEC` on 6 in-process nodes)

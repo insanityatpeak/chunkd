@@ -182,12 +182,18 @@ func (s *Server) resendTrims() {
 
 // trimSafe: deleting n's copy of id now leaves its target (RF, or 1 for a
 // shard) of confirmed, alive copies on other nodes that are not leaving and
-// not being deleted. A trim is authorized against the holders when it is decided, but its delete may
+// not being deleted, and no pending upload has claimed it. A trim is authorized against the holders when it is decided, but its delete may
 // go out much later (the victim was down, or a new leader resends it); a
 // holder that died since must not be counted. Until repair has replaced
 // it, the delete waits: the pending copy does not count as a holder, so
 // repair tops the chunk up first.
 func (s *Server) trimSafe(id iface.ChunkID, n iface.NodeID) bool {
+	// A pending upload that claimed id may have counted this copy (dedup
+	// skips a chunk with 2 reported copies); the delete waits for its commit
+	// or abort, and resendTrims retries it.
+	if s.state.Claimed(id) {
+		return false
+	}
 	b, ok := s.wanted(id)
 	if !ok {
 		return true
