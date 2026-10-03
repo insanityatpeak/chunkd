@@ -1,8 +1,8 @@
 # Status
 
-Current phase: **Phase 6 complete** (rebalancing, drain and decommission), released as [v0.3.0](https://github.com/insanityatpeak/chunkd/releases/tag/v0.3.0). Phase 5 was released as [v0.2.0](https://github.com/insanityatpeak/chunkd/releases/tag/v0.2.0). Phase 7 (breadth features) is in progress on the `phase7` branch.
+Current phase: **Phase 7 complete** (erasure coding, resumable uploads, API keys and quotas, versions and CLI), released as [v0.4.0](https://github.com/insanityatpeak/chunkd/releases/tag/v0.4.0). Phase 6 was released as [v0.3.0](https://github.com/insanityatpeak/chunkd/releases/tag/v0.3.0). Phase 5 was released as [v0.2.0](https://github.com/insanityatpeak/chunkd/releases/tag/v0.2.0). Phase 8 (benchmarks, docs, final ship) is next.
 
-## Phase 7 (built on branch `phase7`, not merged)
+## Phase 7 (complete)
 
 Erasure coding (item A) is built. An upload can store each chunk as an RS(4,2) stripe on 6 distinct nodes; each shard is a block of its own with a slot-and-stripe header, so GC, scrub, drain and trims treat it as any block. Reads gather 4 shards with hedging and decode from parity; repair rebuilds a lost shard from 4 others on a node outside the stripe. ADRs 0022–0023. Dashboard: a "Store as" choice, shard counts, a shard-level chunk grid, rebuild sources, and a shareable `ec` scenario. The other four items follow.
 

@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## v0.4.0 (2026-10-03)
 
 ### Erasure coding
 - An upload can store each chunk as a Reed-Solomon stripe, 4 data and 2 parity shards on 6 distinct nodes, racks filled round-robin: 1.5× the bytes of the data, against 3× for copies, and any 2 shards may be lost. `chunkd put -redundancy=ec-4+2`, the gateway's `?redundancy=ec-4+2`, and a choice in the dashboard. Commit needs 5 shards on alive nodes. ADR-0022.
