@@ -23,6 +23,8 @@ import (
 type Client struct {
 	Base string
 	HTTP *http.Client
+	// Key is sent as a bearer token when the gateway requires API keys.
+	Key string
 }
 
 var _ client.API = (*Client)(nil)
@@ -55,6 +57,7 @@ func (c *Client) doHeader(ctx context.Context, method, u string, hdr http.Header
 	for k, v := range hdr {
 		req.Header[k] = v
 	}
+	gateway.Bearer(req, c.Key)
 	if body != nil {
 		req.ContentLength = size
 	}

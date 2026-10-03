@@ -34,25 +34,29 @@ const (
 //	HEAD   /uploads/{id}            Upload-Offset to append at, Upload-Claimed the furthest allowed (GET serves HEAD)
 //	GET    /uploads/{id}            the same as JSON
 //	PATCH  /uploads/{id}            append whole chunks at Upload-Offset; the append that ends the file commits
-func Handler(api client.API, log *slog.Logger) http.Handler {
+func Handler(api client.API, log *slog.Logger, opts ...Option) http.Handler {
 	h := &handler{api: api, log: log}
+	for _, o := range opts {
+		o(h)
+	}
 	mux := http.NewServeMux()
-	mux.HandleFunc("POST /files/{path...}", h.put)
-	mux.HandleFunc("GET /files/{path...}", h.get)
-	mux.HandleFunc("GET /files", h.list)
-	mux.HandleFunc("DELETE /files/{path...}", h.delete)
-	mux.HandleFunc("POST /undelete/{path...}", h.undelete)
+	mux.HandleFunc("POST /files/{path...}", h.guard(scopePath, h.put))
+	mux.HandleFunc("GET /files/{path...}", h.guard(scopePath, h.get))
+	mux.HandleFunc("GET /files", h.guard(scopeList, h.list))
+	mux.HandleFunc("DELETE /files/{path...}", h.guard(scopePath, h.delete))
+	mux.HandleFunc("POST /undelete/{path...}", h.guard(scopePath, h.undelete))
 	mux.HandleFunc("GET /cluster", h.cluster)
-	mux.HandleFunc("POST /nodes/{node}/{action}", h.nodeAdmin)
-	mux.HandleFunc("POST /uploads/{path...}", h.createUpload)
-	mux.HandleFunc("GET /uploads/{id}", h.uploadStatus)
-	mux.HandleFunc("PATCH /uploads/{id}", h.appendUpload)
+	mux.HandleFunc("POST /nodes/{node}/{action}", h.guard(scopeAdmin, h.nodeAdmin))
+	mux.HandleFunc("POST /uploads/{path...}", h.guard(scopePath, h.createUpload))
+	mux.HandleFunc("GET /uploads/{id}", h.guard(scopeUpload, h.uploadStatus))
+	mux.HandleFunc("PATCH /uploads/{id}", h.guard(scopeUpload, h.appendUpload))
 	return cors(mux)
 }
 
 type handler struct {
-	api client.API
-	log *slog.Logger
+	api  client.API
+	log  *slog.Logger
+	keys *Keys // nil: open
 }
 
 func filePath(r *http.Request) string { return "/" + r.PathValue("path") }
@@ -241,6 +245,10 @@ func StatusOf(c iface.Code) int {
 		return http.StatusConflict
 	case iface.CodeInvalid:
 		return http.StatusBadRequest
+	case iface.CodeQuota:
+		return http.StatusInsufficientStorage
+	case iface.CodeDenied:
+		return http.StatusForbidden
 	case iface.CodeUnavailable, iface.CodeRetry, iface.CodeNotLeader:
 		return http.StatusServiceUnavailable
 	}
