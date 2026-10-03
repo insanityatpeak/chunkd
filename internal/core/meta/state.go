@@ -72,6 +72,9 @@ type Upload struct {
 	Touched uint64
 	// RequestID is the client's key for its Begin: a repeat returns this upload.
 	RequestID string
+	// SHA256 is the file hash a resumable upload declared at Begin; Commit
+	// must carry it (ADR-0024). Nil: not declared.
+	SHA256 []byte
 }
 
 // GCTarget is a GC delete the log has authorized and no node has answered:
@@ -209,6 +212,9 @@ func (s *State) Validate(op *chunkdv1.Op) error {
 		if b.GetSize() < 0 || b.GetChunkSize() <= 0 {
 			return iface.Errorf(iface.CodeInvalid, "bad size %d or chunk size %d", b.GetSize(), b.GetChunkSize())
 		}
+		if n := len(b.GetSha256()); n != 0 && n != 32 {
+			return iface.Errorf(iface.CodeInvalid, "declared file sha256 of %d bytes", n)
+		}
 		if want := chunk.Count(b.GetSize(), int(b.GetChunkSize())); len(b.GetPlacement()) != want {
 			return iface.Errorf(iface.CodeInvalid, "placement for %d chunks, want %d", len(b.GetPlacement()), want)
 		}
@@ -252,6 +258,9 @@ func (s *State) Validate(op *chunkdv1.Op) error {
 		}
 		if len(c.GetSha256()) != 32 {
 			return iface.Errorf(iface.CodeInvalid, "file sha256 of %d bytes", len(c.GetSha256()))
+		}
+		if len(u.SHA256) > 0 && !bytes.Equal(u.SHA256, c.GetSha256()) {
+			return iface.Errorf(iface.CodeInvalid, "file sha256 %x differs from the %x upload %d declared", c.GetSha256(), u.SHA256, u.ID)
 		}
 		if u.Claims {
 			for i, raw := range c.GetChunkIds() {
@@ -510,7 +519,7 @@ func (s *State) apply(op *chunkdv1.Op) Result {
 		s.lastUploadID++
 		u := &Upload{ID: s.lastUploadID, Path: b.GetPath(), Expected: b.GetExpectedVersion(), Size: b.GetSize(), ChunkSize: int(b.GetChunkSize()), Claims: b.GetClaims(), Claimed: map[int]iface.ChunkID{}, LWW: b.GetLastWriterWins(), Touched: s.epoch,
 			Redundancy: b.GetRedundancy(), Shards: map[int][]iface.ChunkID{},
-			RequestID: string(b.GetRequestId())}
+			RequestID: string(b.GetRequestId()), SHA256: bytes.Clone(b.GetSha256())}
 		if u.RequestID != "" {
 			s.requests[u.RequestID] = u.ID
 		}
@@ -1010,6 +1019,7 @@ func (s *State) Snapshot() []byte {
 		if u.RequestID != "" {
 			b.RequestId = []byte(u.RequestID)
 		}
+		b.Sha256 = u.SHA256
 		for _, r := range u.Placement {
 			rep := &chunkdv1.Replicas{}
 			for _, n := range r {
@@ -1087,7 +1097,7 @@ func Restore(data []byte) (*State, error) {
 		b := u.GetBegin()
 		up := &Upload{ID: u.GetId(), Path: b.GetPath(), Expected: b.GetExpectedVersion(), Size: b.GetSize(), ChunkSize: int(b.GetChunkSize()), Claims: b.GetClaims(), Claimed: map[int]iface.ChunkID{}, LWW: b.GetLastWriterWins(), Touched: u.GetTouchedEpoch(),
 			Redundancy: b.GetRedundancy(), Shards: map[int][]iface.ChunkID{},
-			RequestID: string(b.GetRequestId())}
+			RequestID: string(b.GetRequestId()), SHA256: bytes.Clone(b.GetSha256())}
 		if up.RequestID != "" {
 			s.requests[up.RequestID] = up.ID
 		}

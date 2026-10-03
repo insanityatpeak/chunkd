@@ -5,6 +5,7 @@ import (
 	"context"
 	"fmt"
 	"log/slog"
+	"maps"
 	"slices"
 	"time"
 
@@ -234,18 +235,19 @@ func (s *Server) Raft() consensus.Status { return s.raft.Status() }
 func (s *Server) Start() {
 	s.d.Net.Listen(s.cfg.ID, s.handle)
 	for kind, h := range map[string]iface.RPCHandler{
-		wire.KindBegin:     s.begin,
-		wire.KindClaim:     s.claim,
-		wire.KindCommit:    s.commit,
-		wire.KindAbort:     s.abort,
-		wire.KindDelete:    s.delete,
-		wire.KindUndelete:  s.undelete,
-		wire.KindStat:      s.stat,
-		wire.KindList:      s.list,
-		wire.KindLog:       s.log,
-		wire.KindCluster:   s.clusterInfo,
-		wire.KindSuspect:   s.suspect,
-		wire.KindNodeAdmin: s.nodeAdmin,
+		wire.KindBegin:        s.begin,
+		wire.KindClaim:        s.claim,
+		wire.KindCommit:       s.commit,
+		wire.KindAbort:        s.abort,
+		wire.KindDelete:       s.delete,
+		wire.KindUndelete:     s.undelete,
+		wire.KindStat:         s.stat,
+		wire.KindList:         s.list,
+		wire.KindLog:          s.log,
+		wire.KindCluster:      s.clusterInfo,
+		wire.KindSuspect:      s.suspect,
+		wire.KindNodeAdmin:    s.nodeAdmin,
+		wire.KindUploadStatus: s.uploadStatus,
 	} {
 		s.d.Net.Serve(s.cfg.ID, kind, h, iface.ServeOpts{})
 	}
@@ -532,7 +534,7 @@ func (s *Server) begin(m iface.Message, respond iface.Responder) {
 		return
 	}
 	op := &chunkdv1.BeginUploadOp{Path: req.GetPath(), ExpectedVersion: req.GetExpectedVersion(), Size: req.GetSize(), ChunkSize: int32(s.cfg.ChunkSize),
-		Claims: true, LastWriterWins: req.GetLastWriterWins(), RequestId: req.GetRequestId(), Redundancy: req.GetRedundancy()}
+		Claims: true, LastWriterWins: req.GetLastWriterWins(), RequestId: req.GetRequestId(), Redundancy: req.GetRedundancy(), Sha256: req.GetSha256()}
 	for _, nodes := range pl {
 		r := &chunkdv1.Replicas{}
 		for _, id := range nodes {
@@ -803,6 +805,38 @@ func (s *Server) undelete(m iface.Message, respond iface.Responder) {
 			}
 		}
 		wire.Respond(respond, &chunkdv1.UndeleteResponse{Version: res.Version}, err)
+	})
+}
+
+// uploadStatus reports what a pending upload holds, so another client
+// process can resume it (ADR-0024), or the version a committed one created.
+// A read-index read: a deposed leader cannot answer from stale state.
+func (s *Server) uploadStatus(m iface.Message, respond iface.Responder) {
+	var req chunkdv1.UploadStatusRequest
+	if err := wire.Decode(m.Body, &req); err != nil {
+		respond(nil, err)
+		return
+	}
+	s.linearize(respond, func() {
+		id := req.GetUploadId()
+		if c, ok := s.state.CommittedUpload(id); ok {
+			wire.Respond(respond, &chunkdv1.UploadStatusResponse{UploadId: id, Path: c.Path, CommittedVersion: c.Version}, nil)
+			return
+		}
+		u, ok := s.state.Upload(id)
+		if !ok {
+			respond(nil, iface.Errorf(iface.CodeNotFound, "upload %d: not pending (expired, aborted or never begun)", id))
+			return
+		}
+		begin, _ := s.beginResponse(id)
+		resp := &chunkdv1.UploadStatusResponse{UploadId: id, Path: u.Path, Size: u.Size, Sha256: u.SHA256, Begin: begin,
+			LeaseExpiresEpoch: u.Touched + uint64(s.cfg.LeaseEpochs), Epoch: s.state.Epoch()}
+		for _, i := range slices.Sorted(maps.Keys(u.Claimed)) {
+			cid := u.Claimed[i]
+			got, need := s.durable(cid)
+			resp.Claims = append(resp.Claims, &chunkdv1.ClaimStatus{Index: int32(i), Id: cid[:], Present: got >= need})
+		}
+		wire.Respond(respond, resp, nil)
 	})
 }
 

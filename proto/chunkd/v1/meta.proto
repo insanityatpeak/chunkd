@@ -40,6 +40,9 @@ message BeginUploadOp {
   bytes request_id = 8;
   // EC: placement lists 6 nodes per chunk, shard i on nodes[i].
   Redundancy redundancy = 9;
+  // The whole file's SHA-256, declared at Begin by a resumable upload
+  // (ADR-0024); Commit must then carry the same. Empty: not declared.
+  bytes sha256 = 10;
 }
 
 message ChunkClaim {
@@ -256,6 +259,8 @@ message BeginUploadRequest {
   // See BeginUploadOp.request_id.
   bytes request_id = 5;
   Redundancy redundancy = 6;
+  // See BeginUploadOp.sha256.
+  bytes sha256 = 7;
 }
 
 message BeginUploadResponse {
@@ -276,6 +281,36 @@ message CommitUploadRequest {
 
 message CommitUploadResponse {
   uint64 version = 1;
+}
+
+// UploadStatusRequest asks what a pending upload holds (ADR-0024).
+message UploadStatusRequest {
+  uint64 upload_id = 1;
+}
+
+message UploadStatusResponse {
+  uint64 upload_id = 1;
+  string path = 2;
+  // Set when the upload already committed: the version it created. The
+  // other fields are then empty.
+  uint64 committed_version = 3;
+  int64 size = 4;
+  bytes sha256 = 5;
+  // Placement, chunk size, commit threshold and redundancy, as Begin
+  // answered them.
+  BeginUploadResponse begin = 6;
+  repeated ClaimStatus claims = 7;
+  // The lease runs out when the epoch reaches this; epoch is the current one.
+  uint64 lease_expires_epoch = 8;
+  uint64 epoch = 9;
+}
+
+// ClaimStatus is one claimed chunk of a pending upload: present when it is
+// stored as a commit requires.
+message ClaimStatus {
+  int32 index = 1;
+  bytes id = 2;
+  bool present = 3;
 }
 
 message ClaimChunksRequest {
