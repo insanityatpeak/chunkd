@@ -33,6 +33,12 @@ From a Go toolchain:
 ```
 go run ./cmd/chunkd put ./photo.jpg /photos/photo.jpg
 go run ./cmd/chunkd put -redundancy=ec-4+2 ./scan.tif /scans/scan.tif   # 1.5x: 4 data + 2 parity shards on 6 nodes
+go run ./cmd/chunkd put -resume ./big.iso /isos/big.iso   # after a cut-off: continues from the chunks the log holds
+go run ./cmd/chunkd log /photos/photo.jpg         # retained versions and the epoch each expires
+go run ./cmd/chunkd diff /photos/photo.jpg 1 2    # chunks that differ, and the bytes a rewrite sends
+go run ./cmd/chunkd restore /photos/photo.jpg 1   # make version 1 the live one again
+go run ./cmd/chunkd retain /photos/photo.jpg 40   # keep its retired versions 40 GC epochs
+go run ./cmd/chunkd keygen -name alice -quota 1073741824   # an API key and its entry for the gateway's -keys file
 go run ./cmd/chunkd stat /photos/photo.jpg        # version, SHA-256, replicas per chunk
 go run ./cmd/chunkd get /photos/photo.jpg ./copy.jpg
 go run ./cmd/chunkd cluster status                # detector state, replication, repair
@@ -106,7 +112,10 @@ Bugs these tests caught, with root causes and fixes: [docs/bugs-found.md](docs/b
 
 | Limitation | Why it is acceptable now | Plan |
 |---|---|---|
-| No authentication; plaintext gRPC and HTTP | Runs on a private Docker network | mTLS in the transport |
+| Authentication is optional static bearer keys at the gateway (`-keys`); with none the gateway is open. gRPC between processes, and HTTP, are plaintext, and node chunk calls are unauthenticated | Runs on a private Docker network; put TLS in front of a keyed gateway (ADR-0025) | mTLS in the transport, signed requests, a logged key table with rotation |
+| A key owns one path segment and a byte quota counted in logical bytes of live versions and pending uploads; retired versions are not counted, an overwrite counts old and new until it commits, and each limited begin scans the namespace | The check is one log entry, so concurrent uploads cannot overshoot (ADR-0025) | A per-namespace usage counter, stored-byte accounting, S3-style IAM policies |
+| An upload ID is a sequence number, and an interrupted upload lives one lease (3 minutes at the demo setting) | Dedup makes a restarted upload cost claims, not bytes (ADR-0024) | A longer per-upload lease charged to its owner |
+| A split resumable upload cannot be checked against its declared hash before commit | A wrong hash commits a version every read refuses, never one that serves wrong bytes (ADR-0024) | A composite checksum over chunk IDs, as S3 multipart does |
 | Upload size must be known up front | Placement is computed per chunk at `BeginUpload` | HDFS-style `addBlock` per chunk |
 | A chunk the cluster already holds is skipped only once it has 2 reported copies; identical chunks written close together can each get 3 | Correct, just extra copies, trimmed on the next report | Count claimed in-flight writes as pending copies |
 | With unbalanced racks, the smallest rack holds a replica of every chunk | Rack spread deliberately outranks load (ADR-0008) | Balanced racks, or capacity-weighted placement |
@@ -126,7 +135,8 @@ Bugs these tests caught, with root causes and fixes: [docs/bugs-found.md](docs/b
 | A trim can race a client write that dedups against the trimmed chunk: the commit may count a copy that is deleted a moment later | The chunk keeps at least RF confirmed copies before the trim, and repair tops it up on the next report or scan | Skip trims of chunks a pending upload has claimed |
 | Dedup is cluster-wide: an uploader can learn whether content exists by watching which chunks are skipped | Single tenant; the demo holds no one else's data | Per-tenant salt in chunk IDs, as Dropbox moved to after 2011 (ADR-0015) |
 | Fixed-size chunks: an insert shifts every later boundary, so dedup finds nothing after it | In-place edits dedup well (3.67× in the benchmark) | Content-defined chunking (FastCDC), as restic and Borg use |
-| Retention is demo-scale: overwritten and deleted versions are restorable for 60–90 s | Keeps the demo and the tests fast; the window is two config values | Days, as S3 lifecycle rules keep noncurrent versions |
+| Retention is demo-scale by default: retired versions are restorable for 60–90 s; `chunkd retain <path> <epochs>` sets it per exact path | Keeps the demo and the tests fast; no prefix rules or version-count limit (ADR-0026) | Lifecycle rules by prefix, age and count, as S3 has |
+| `chunkd diff` compares chunks by index, and the dashboard shows no diff | Needs only two manifests; an insertion reads as every later chunk changed (ADR-0026) | Content-defined chunking, and a diff view on the chunk grid |
 | A GC delete delayed by more than one epoch, arriving after a newer send was answered, could remove an uncounted copy | gRPC streams deliver in order, so it needs a reconnect in between, and repair restores the copy | Per-send delete IDs the node remembers, so a stale send is refused |
 | In the sim, a frozen metadata peer's timers keep firing; only its messages are held | It still wakes with a stale view and a lower term, which is the case the stale-leader tests need | Stop the peer's clock as well, as SIGSTOP does in real mode |
 | Compose can kill and restart the metadata leader, but not freeze or partition it | Docker's network model cuts a container from every peer at once; the sim covers both faults on 500 seeds per push | Per-link rules (`iptables` in each container, which needs `NET_ADMIN`) |
@@ -173,6 +183,7 @@ Every command runs through `go run ./tools/task <name>`, the same on Windows, Li
 - [x] Deduplication, versioned files with compare-and-swap, undelete, garbage collection
 - [x] Rebalancing when nodes join, drain and decommission
 - [x] Erasure coding, chosen per upload (Reed-Solomon 4+2)
+- [x] Resumable uploads, API keys with byte quotas, version diff and per-path retention, CLI polish
 - [ ] Moving cold data from copies to erasure coding in the background
 
 ## License

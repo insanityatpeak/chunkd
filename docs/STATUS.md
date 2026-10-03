@@ -2,9 +2,23 @@
 
 Current phase: **Phase 6 complete** (rebalancing, drain and decommission), released as [v0.3.0](https://github.com/insanityatpeak/chunkd/releases/tag/v0.3.0). Phase 5 was released as [v0.2.0](https://github.com/insanityatpeak/chunkd/releases/tag/v0.2.0). Phase 7 (breadth features) is in progress on the `phase7` branch.
 
-## Phase 7 (in progress, branch `phase7`)
+## Phase 7 (built on branch `phase7`, not merged)
 
-Erasure coding (item A) is built. An upload can store each chunk as an RS(4,2) stripe on 6 distinct nodes; each shard is a block of its own with a slot-and-stripe header, so GC, scrub, drain and trims treat it as any block. Reads gather 4 shards with hedging and decode from parity; repair rebuilds a lost shard from 4 others on a node outside the stripe. ADRs 0022–0023. Dashboard: a "Store as" choice, shard counts, a shard-level chunk grid, rebuild sources, and a shareable `ec` scenario. Next: resumable uploads (B), auth and quotas (D), versioning UX and CLI polish (C/E).
+Erasure coding (item A) is built. An upload can store each chunk as an RS(4,2) stripe on 6 distinct nodes; each shard is a block of its own with a slot-and-stripe header, so GC, scrub, drain and trims treat it as any block. Reads gather 4 shards with hedging and decode from parity; repair rebuilds a lost shard from 4 others on a node outside the stripe. ADRs 0022–0023. Dashboard: a "Store as" choice, shard counts, a shard-level chunk grid, rebuild sources, and a shareable `ec` scenario. The other four items follow.
+
+Resumable uploads (B), API keys with quotas (D), and versions and CLI polish (C/E) are built on top of it. ADRs 0024–0026.
+
+| Item | Evidence |
+|---|---|
+| B: resume after a client crash sends no stored chunk again; a wrong offset is refused; resume survives a leader failover | `sim/cluster` `TestResumeAfterClientCrash`, `TestResumeRefusals`, `TestResumeAcrossLeaderFailover`; `TestPutResumeAfterCutOff` (CLI over real disks); gateway tus tests |
+| D: a refused upload reads no bytes; concurrent uploads cannot pass a quota; keys see only their namespace and uploads | `TestQuotaReservesAtBegin` (state), `TestQuotaRefusalReadsNoBytes`, `TestQuotaRefusesBeforeBytesAreSent`, `TestAuthScopesPathsToNamespace`, `TestAuthUploadsBelongToTheirKey` |
+| C: per-path retention, chunk-level diff, restore | `TestRetentionPerPath`, `TestRetentionSurvivesSnapshot`, `TestRetentionIsPerNamespace`, `TestDiffManifests`, `TestDiffAgainstACluster`. The dashboard already lists retained versions with restore; it shows no diff |
+| E: exit codes, completion, bench, progress | `TestExitCodes`; `chunkd completion`, `chunkd bench` |
+| Existing goldens, chaos | The 7 goldens unchanged; `chaos --seeds=1000` and `--seeds=500 --metas=3`: 0 failed |
+
+Not done: a real-mode run of `put -resume` against compose (needs the compose project), and a dashboard diff view.
+
+Erasure coding:
 
 | Criterion | Evidence |
 |---|---|

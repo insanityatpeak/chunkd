@@ -19,6 +19,22 @@
 ### Demo: erasure coding
 - A "Store as" choice on upload; the Replicas column counts shards of 6; the chunk grid shows which shard each node holds, parity in blue, and marks chunks a download decoded; rebuilds show their 4 sources. A shareable `ec` scenario. Existing scenario links replay unchanged.
 
+### Resumable uploads
+- A pending upload's progress is its claims in the log, so any client or gateway can resume after any restart or leader failover. `meta.upload_status` returns the claims and which are stored, or the version a committed upload created. A resumed upload sends only chunks the cluster does not hold. ADR-0024.
+- `chunkd put -resume` hashes the file, begins with the hash, keeps the upload ID in the user cache directory, and continues from the stored chunks; a changed file is refused and an expired upload restarts. The gateway speaks tus core: `POST /uploads/{path}`, `HEAD` or `GET` and `PATCH /uploads/{id}`.
+- **Wire changes:** additive. `BeginUploadOp.sha256` (field 10), `UploadStatus` request and response.
+
+### API keys and quotas
+- The gateway can require `Authorization: Bearer <key>` (`-keys file`, `$CHUNKD_KEYS`). The file holds the SHA-256 of each key; `chunkd keygen` makes one. A key owns the paths under `/<namespace>/`; an admin key reaches every path and the node controls. Upload IDs belong to the key whose namespace holds their path. `/cluster` and the dashboard files stay open. ADR-0025.
+- A namespace has a byte quota. A begin reserves its size in the log, so concurrent uploads cannot pass it, and a refused upload (HTTP 507) reads no bytes and writes no chunks. Delete frees bytes; undelete is checked as a write.
+- **Wire changes:** additive. `quota` on `BeginUploadOp` (11), `BeginUploadRequest` (8), `UndeleteOp` and `UndeleteRequest` (4).
+
+### Versions and CLI
+- `chunkd retain <path> <epochs>` and `PUT /retention/{path}?epochs=N` keep a path's retired versions longer or shorter than the cluster default; the log shows the matching expiry. ADR-0026.
+- `chunkd diff <path> <from> <to>` lists the chunks that differ and the bytes a rewrite would send; `chunkd restore <path> <version>`.
+- Exit codes by error class (3 not found, 4 conflict, 5 quota, 6 denied, 7 unavailable, 8 corrupt, 2 usage), a byte counter on `get`, `chunkd bench`, and `chunkd completion bash|zsh|powershell`.
+- **Wire changes:** additive. `SetRetentionOp` (Op 13), `FileRecord.retain_epochs` (3); v0.3.0 data directories replay unchanged.
+
 ## v0.3.0 (2026-10-02)
 
 ### Rebalancing, drain and decommission
