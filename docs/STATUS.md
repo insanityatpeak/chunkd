@@ -17,7 +17,7 @@ No protocol, log-format or on-disk change. Benchmarks, a rewritten design docume
 
 Findings from the benchmarks, now in Known limitations: a limited Begin scans every file (29 ms at 100,000 files); writes are not hedged; the effect of repair on foreground reads is not measured because the sim shares no capacity.
 
-Not done: the demo GIF is the Phase 7 recording (a refresh needs the compose cluster and the `vhs` image); `docker compose up`, `demo` and the live demo from a fresh clone are to be checked at release.
+Checked from a fresh clone: `docker compose up -d --build --wait` healthy, `docker compose run --rm demo` passes (SHA-256 verified with a node down, extras trimmed on return), and `demo.gif` re-rendered against it.
 
 Possible future work: a per-namespace usage counter for quotas, hedged or latency-aware writes, content-defined chunking, background tiering from copies to erasure coding, a multi-host benchmark run, a compose scenario for `put -resume` and for EC, and a diff view in the dashboard.
 

@@ -20,7 +20,7 @@ Enter
 Sleep 500ms
 Show
 
-Type "# a real cluster in Docker: 1 metadata server, 5 storage nodes on 3 racks, 1 gateway"
+Type "# a real cluster in Docker: 3 metadata peers, 5 storage nodes on 3 racks, 1 gateway"
 Enter
 Type "# chunkd-demo is what 'docker compose run --rm demo' runs"
 Enter
