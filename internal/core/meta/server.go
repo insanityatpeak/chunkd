@@ -248,6 +248,7 @@ func (s *Server) Start() {
 		wire.KindSuspect:      s.suspect,
 		wire.KindNodeAdmin:    s.nodeAdmin,
 		wire.KindUploadStatus: s.uploadStatus,
+		wire.KindSetRetention: s.setRetention,
 	} {
 		s.d.Net.Serve(s.cfg.ID, kind, h, iface.ServeOpts{})
 	}
@@ -808,6 +809,22 @@ func (s *Server) undelete(m iface.Message, respond iface.Responder) {
 	})
 }
 
+// setRetention logs a path's retention override. Setting the value it has is
+// a no-op, so a retry is safe.
+func (s *Server) setRetention(m iface.Message, respond iface.Responder) {
+	if !s.requireLeader(respond) {
+		return
+	}
+	var req chunkdv1.SetRetentionRequest
+	if err := wire.Decode(m.Body, &req); err != nil {
+		respond(nil, err)
+		return
+	}
+	s.propose(&chunkdv1.Op{Op: &chunkdv1.Op_SetRetention{SetRetention: &chunkdv1.SetRetentionOp{Path: req.GetPath(), RetainEpochs: req.GetRetainEpochs()}}}, func(_ Result, err error) {
+		wire.Respond(respond, &chunkdv1.SetRetentionResponse{}, err)
+	})
+}
+
 // uploadStatus reports what a pending upload holds, so another client
 // process can resume it (ADR-0024), or the version a committed one created.
 // A read-index read: a deposed leader cannot answer from stale state.
@@ -906,7 +923,7 @@ func (s *Server) log(m iface.Message, respond iface.Responder) {
 		for _, v := range vs {
 			vi := &chunkdv1.VersionInfo{Version: v.V, Size: v.Size, ChunkCount: int32(len(v.Chunks)), Tombstone: v.Tombstone, Retired: v.Retired, Redundancy: v.Redundancy}
 			if v.Retired {
-				vi.ExpiresEpoch = v.RetiredAt + uint64(s.cfg.RetainEpochs)
+				vi.ExpiresEpoch = v.RetiredAt + s.state.RetainFor(req.GetPath(), uint64(s.cfg.RetainEpochs))
 			}
 			if !v.Tombstone {
 				vi.Sha256 = v.SHA256[:]
@@ -982,7 +999,7 @@ func (s *Server) ClusterView(eventsAfter uint64) *chunkdv1.ClusterResponse {
 	}
 	for _, e := range s.state.Deleted("/") {
 		resp.Deleted = append(resp.Deleted, &chunkdv1.DeletedFile{Path: e.Path, Version: e.V, Size: e.Size,
-			ExpiresEpoch: e.RetiredAt + uint64(s.cfg.RetainEpochs)})
+			ExpiresEpoch: e.RetiredAt + s.state.RetainFor(e.Path, uint64(s.cfg.RetainEpochs))})
 	}
 	resp.ReferencedBytes, resp.DistinctBytes = s.state.Dedup()
 	resp.Epoch = s.state.Epoch()

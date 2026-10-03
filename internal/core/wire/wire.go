@@ -43,6 +43,7 @@ const (
 	KindSuspect      = "meta.suspect"
 	KindNodeAdmin    = "meta.node_admin"
 	KindUploadStatus = "meta.upload_status"
+	KindSetRetention = "meta.set_retention"
 
 	KindPutChunk = "chunk.put"
 	KindGetChunk = "chunk.get"

@@ -65,6 +65,11 @@ func (l *locked) NodeAdmin(ctx context.Context, node, state string) (client.Node
 	defer l.mu.Unlock()
 	return l.api.NodeAdmin(ctx, node, state)
 }
+func (l *locked) SetRetention(ctx context.Context, p string, n uint32) error {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	return l.api.SetRetention(ctx, p, n)
+}
 func (l *locked) Undelete(ctx context.Context, p string, v uint64) (uint64, error) {
 	l.mu.Lock()
 	defer l.mu.Unlock()

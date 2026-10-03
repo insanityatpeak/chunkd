@@ -1143,6 +1143,7 @@ type Op struct {
 	//	*Op_TrimIntent
 	//	*Op_TrimDone
 	//	*Op_NodeAdmin
+	//	*Op_SetRetention
 	Op            isOp_Op `protobuf_oneof:"op"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
@@ -1293,6 +1294,15 @@ func (x *Op) GetNodeAdmin() *NodeAdminOp {
 	return nil
 }
 
+func (x *Op) GetSetRetention() *SetRetentionOp {
+	if x != nil {
+		if x, ok := x.Op.(*Op_SetRetention); ok {
+			return x.SetRetention
+		}
+	}
+	return nil
+}
+
 type isOp_Op interface {
 	isOp_Op()
 }
@@ -1345,6 +1355,10 @@ type Op_NodeAdmin struct {
 	NodeAdmin *NodeAdminOp `protobuf:"bytes,12,opt,name=node_admin,json=nodeAdmin,proto3,oneof"`
 }
 
+type Op_SetRetention struct {
+	SetRetention *SetRetentionOp `protobuf:"bytes,13,opt,name=set_retention,json=setRetention,proto3,oneof"`
+}
+
 func (*Op_Begin) isOp_Op() {}
 
 func (*Op_Commit) isOp_Op() {}
@@ -1368,6 +1382,8 @@ func (*Op_TrimIntent) isOp_Op() {}
 func (*Op_TrimDone) isOp_Op() {}
 
 func (*Op_NodeAdmin) isOp_Op() {}
+
+func (*Op_SetRetention) isOp_Op() {}
 
 type FileVersion struct {
 	state     protoimpl.MessageState `protogen:"open.v1"`
@@ -1498,9 +1514,11 @@ func (x *FileVersion) GetRedundancy() Redundancy {
 }
 
 type FileRecord struct {
-	state         protoimpl.MessageState `protogen:"open.v1"`
-	Path          string                 `protobuf:"bytes,1,opt,name=path,proto3" json:"path,omitempty"`
-	Versions      []*FileVersion         `protobuf:"bytes,2,rep,name=versions,proto3" json:"versions,omitempty"`
+	state    protoimpl.MessageState `protogen:"open.v1"`
+	Path     string                 `protobuf:"bytes,1,opt,name=path,proto3" json:"path,omitempty"`
+	Versions []*FileVersion         `protobuf:"bytes,2,rep,name=versions,proto3" json:"versions,omitempty"`
+	// Per-path retention of retired versions in GC epochs; 0 uses the cluster's.
+	RetainEpochs  uint32 `protobuf:"varint,3,opt,name=retain_epochs,json=retainEpochs,proto3" json:"retain_epochs,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -1547,6 +1565,13 @@ func (x *FileRecord) GetVersions() []*FileVersion {
 		return x.Versions
 	}
 	return nil
+}
+
+func (x *FileRecord) GetRetainEpochs() uint32 {
+	if x != nil {
+		return x.RetainEpochs
+	}
+	return 0
 }
 
 type ChunkRecord struct {
@@ -2798,6 +2823,148 @@ func (x *UndeleteResponse) GetVersion() uint64 {
 	return 0
 }
 
+// SetRetentionOp keeps this path's retired versions for retain_epochs GC
+// epochs instead of the cluster default; 0 restores the default (ADR-0026).
+type SetRetentionOp struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	Path          string                 `protobuf:"bytes,1,opt,name=path,proto3" json:"path,omitempty"`
+	RetainEpochs  uint32                 `protobuf:"varint,2,opt,name=retain_epochs,json=retainEpochs,proto3" json:"retain_epochs,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *SetRetentionOp) Reset() {
+	*x = SetRetentionOp{}
+	mi := &file_chunkd_v1_meta_proto_msgTypes[39]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *SetRetentionOp) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*SetRetentionOp) ProtoMessage() {}
+
+func (x *SetRetentionOp) ProtoReflect() protoreflect.Message {
+	mi := &file_chunkd_v1_meta_proto_msgTypes[39]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use SetRetentionOp.ProtoReflect.Descriptor instead.
+func (*SetRetentionOp) Descriptor() ([]byte, []int) {
+	return file_chunkd_v1_meta_proto_rawDescGZIP(), []int{39}
+}
+
+func (x *SetRetentionOp) GetPath() string {
+	if x != nil {
+		return x.Path
+	}
+	return ""
+}
+
+func (x *SetRetentionOp) GetRetainEpochs() uint32 {
+	if x != nil {
+		return x.RetainEpochs
+	}
+	return 0
+}
+
+type SetRetentionRequest struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	Path          string                 `protobuf:"bytes,1,opt,name=path,proto3" json:"path,omitempty"`
+	RetainEpochs  uint32                 `protobuf:"varint,2,opt,name=retain_epochs,json=retainEpochs,proto3" json:"retain_epochs,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *SetRetentionRequest) Reset() {
+	*x = SetRetentionRequest{}
+	mi := &file_chunkd_v1_meta_proto_msgTypes[40]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *SetRetentionRequest) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*SetRetentionRequest) ProtoMessage() {}
+
+func (x *SetRetentionRequest) ProtoReflect() protoreflect.Message {
+	mi := &file_chunkd_v1_meta_proto_msgTypes[40]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use SetRetentionRequest.ProtoReflect.Descriptor instead.
+func (*SetRetentionRequest) Descriptor() ([]byte, []int) {
+	return file_chunkd_v1_meta_proto_rawDescGZIP(), []int{40}
+}
+
+func (x *SetRetentionRequest) GetPath() string {
+	if x != nil {
+		return x.Path
+	}
+	return ""
+}
+
+func (x *SetRetentionRequest) GetRetainEpochs() uint32 {
+	if x != nil {
+		return x.RetainEpochs
+	}
+	return 0
+}
+
+type SetRetentionResponse struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *SetRetentionResponse) Reset() {
+	*x = SetRetentionResponse{}
+	mi := &file_chunkd_v1_meta_proto_msgTypes[41]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *SetRetentionResponse) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*SetRetentionResponse) ProtoMessage() {}
+
+func (x *SetRetentionResponse) ProtoReflect() protoreflect.Message {
+	mi := &file_chunkd_v1_meta_proto_msgTypes[41]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use SetRetentionResponse.ProtoReflect.Descriptor instead.
+func (*SetRetentionResponse) Descriptor() ([]byte, []int) {
+	return file_chunkd_v1_meta_proto_rawDescGZIP(), []int{41}
+}
+
 type ChunkLocation struct {
 	state protoimpl.MessageState `protogen:"open.v1"`
 	// The content hash, or the stripe's logical ID when shards is set.
@@ -2812,7 +2979,7 @@ type ChunkLocation struct {
 
 func (x *ChunkLocation) Reset() {
 	*x = ChunkLocation{}
-	mi := &file_chunkd_v1_meta_proto_msgTypes[39]
+	mi := &file_chunkd_v1_meta_proto_msgTypes[42]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -2824,7 +2991,7 @@ func (x *ChunkLocation) String() string {
 func (*ChunkLocation) ProtoMessage() {}
 
 func (x *ChunkLocation) ProtoReflect() protoreflect.Message {
-	mi := &file_chunkd_v1_meta_proto_msgTypes[39]
+	mi := &file_chunkd_v1_meta_proto_msgTypes[42]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -2837,7 +3004,7 @@ func (x *ChunkLocation) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use ChunkLocation.ProtoReflect.Descriptor instead.
 func (*ChunkLocation) Descriptor() ([]byte, []int) {
-	return file_chunkd_v1_meta_proto_rawDescGZIP(), []int{39}
+	return file_chunkd_v1_meta_proto_rawDescGZIP(), []int{42}
 }
 
 func (x *ChunkLocation) GetId() []byte {
@@ -2878,7 +3045,7 @@ type ShardLocation struct {
 
 func (x *ShardLocation) Reset() {
 	*x = ShardLocation{}
-	mi := &file_chunkd_v1_meta_proto_msgTypes[40]
+	mi := &file_chunkd_v1_meta_proto_msgTypes[43]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -2890,7 +3057,7 @@ func (x *ShardLocation) String() string {
 func (*ShardLocation) ProtoMessage() {}
 
 func (x *ShardLocation) ProtoReflect() protoreflect.Message {
-	mi := &file_chunkd_v1_meta_proto_msgTypes[40]
+	mi := &file_chunkd_v1_meta_proto_msgTypes[43]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -2903,7 +3070,7 @@ func (x *ShardLocation) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use ShardLocation.ProtoReflect.Descriptor instead.
 func (*ShardLocation) Descriptor() ([]byte, []int) {
-	return file_chunkd_v1_meta_proto_rawDescGZIP(), []int{40}
+	return file_chunkd_v1_meta_proto_rawDescGZIP(), []int{43}
 }
 
 func (x *ShardLocation) GetId() []byte {
@@ -2931,7 +3098,7 @@ type StatRequest struct {
 
 func (x *StatRequest) Reset() {
 	*x = StatRequest{}
-	mi := &file_chunkd_v1_meta_proto_msgTypes[41]
+	mi := &file_chunkd_v1_meta_proto_msgTypes[44]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -2943,7 +3110,7 @@ func (x *StatRequest) String() string {
 func (*StatRequest) ProtoMessage() {}
 
 func (x *StatRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_chunkd_v1_meta_proto_msgTypes[41]
+	mi := &file_chunkd_v1_meta_proto_msgTypes[44]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -2956,7 +3123,7 @@ func (x *StatRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use StatRequest.ProtoReflect.Descriptor instead.
 func (*StatRequest) Descriptor() ([]byte, []int) {
-	return file_chunkd_v1_meta_proto_rawDescGZIP(), []int{41}
+	return file_chunkd_v1_meta_proto_rawDescGZIP(), []int{44}
 }
 
 func (x *StatRequest) GetPath() string {
@@ -2989,7 +3156,7 @@ type StatResponse struct {
 
 func (x *StatResponse) Reset() {
 	*x = StatResponse{}
-	mi := &file_chunkd_v1_meta_proto_msgTypes[42]
+	mi := &file_chunkd_v1_meta_proto_msgTypes[45]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -3001,7 +3168,7 @@ func (x *StatResponse) String() string {
 func (*StatResponse) ProtoMessage() {}
 
 func (x *StatResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_chunkd_v1_meta_proto_msgTypes[42]
+	mi := &file_chunkd_v1_meta_proto_msgTypes[45]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -3014,7 +3181,7 @@ func (x *StatResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use StatResponse.ProtoReflect.Descriptor instead.
 func (*StatResponse) Descriptor() ([]byte, []int) {
-	return file_chunkd_v1_meta_proto_rawDescGZIP(), []int{42}
+	return file_chunkd_v1_meta_proto_rawDescGZIP(), []int{45}
 }
 
 func (x *StatResponse) GetPath() string {
@@ -3075,7 +3242,7 @@ type LogRequest struct {
 
 func (x *LogRequest) Reset() {
 	*x = LogRequest{}
-	mi := &file_chunkd_v1_meta_proto_msgTypes[43]
+	mi := &file_chunkd_v1_meta_proto_msgTypes[46]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -3087,7 +3254,7 @@ func (x *LogRequest) String() string {
 func (*LogRequest) ProtoMessage() {}
 
 func (x *LogRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_chunkd_v1_meta_proto_msgTypes[43]
+	mi := &file_chunkd_v1_meta_proto_msgTypes[46]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -3100,7 +3267,7 @@ func (x *LogRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use LogRequest.ProtoReflect.Descriptor instead.
 func (*LogRequest) Descriptor() ([]byte, []int) {
-	return file_chunkd_v1_meta_proto_rawDescGZIP(), []int{43}
+	return file_chunkd_v1_meta_proto_rawDescGZIP(), []int{46}
 }
 
 func (x *LogRequest) GetPath() string {
@@ -3129,7 +3296,7 @@ type VersionInfo struct {
 
 func (x *VersionInfo) Reset() {
 	*x = VersionInfo{}
-	mi := &file_chunkd_v1_meta_proto_msgTypes[44]
+	mi := &file_chunkd_v1_meta_proto_msgTypes[47]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -3141,7 +3308,7 @@ func (x *VersionInfo) String() string {
 func (*VersionInfo) ProtoMessage() {}
 
 func (x *VersionInfo) ProtoReflect() protoreflect.Message {
-	mi := &file_chunkd_v1_meta_proto_msgTypes[44]
+	mi := &file_chunkd_v1_meta_proto_msgTypes[47]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -3154,7 +3321,7 @@ func (x *VersionInfo) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use VersionInfo.ProtoReflect.Descriptor instead.
 func (*VersionInfo) Descriptor() ([]byte, []int) {
-	return file_chunkd_v1_meta_proto_rawDescGZIP(), []int{44}
+	return file_chunkd_v1_meta_proto_rawDescGZIP(), []int{47}
 }
 
 func (x *VersionInfo) GetVersion() uint64 {
@@ -3224,7 +3391,7 @@ type LogResponse struct {
 
 func (x *LogResponse) Reset() {
 	*x = LogResponse{}
-	mi := &file_chunkd_v1_meta_proto_msgTypes[45]
+	mi := &file_chunkd_v1_meta_proto_msgTypes[48]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -3236,7 +3403,7 @@ func (x *LogResponse) String() string {
 func (*LogResponse) ProtoMessage() {}
 
 func (x *LogResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_chunkd_v1_meta_proto_msgTypes[45]
+	mi := &file_chunkd_v1_meta_proto_msgTypes[48]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -3249,7 +3416,7 @@ func (x *LogResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use LogResponse.ProtoReflect.Descriptor instead.
 func (*LogResponse) Descriptor() ([]byte, []int) {
-	return file_chunkd_v1_meta_proto_rawDescGZIP(), []int{45}
+	return file_chunkd_v1_meta_proto_rawDescGZIP(), []int{48}
 }
 
 func (x *LogResponse) GetVersions() []*VersionInfo {
@@ -3275,7 +3442,7 @@ type ListRequest struct {
 
 func (x *ListRequest) Reset() {
 	*x = ListRequest{}
-	mi := &file_chunkd_v1_meta_proto_msgTypes[46]
+	mi := &file_chunkd_v1_meta_proto_msgTypes[49]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -3287,7 +3454,7 @@ func (x *ListRequest) String() string {
 func (*ListRequest) ProtoMessage() {}
 
 func (x *ListRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_chunkd_v1_meta_proto_msgTypes[46]
+	mi := &file_chunkd_v1_meta_proto_msgTypes[49]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -3300,7 +3467,7 @@ func (x *ListRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use ListRequest.ProtoReflect.Descriptor instead.
 func (*ListRequest) Descriptor() ([]byte, []int) {
-	return file_chunkd_v1_meta_proto_rawDescGZIP(), []int{46}
+	return file_chunkd_v1_meta_proto_rawDescGZIP(), []int{49}
 }
 
 func (x *ListRequest) GetPrefix() string {
@@ -3324,7 +3491,7 @@ type FileInfo struct {
 
 func (x *FileInfo) Reset() {
 	*x = FileInfo{}
-	mi := &file_chunkd_v1_meta_proto_msgTypes[47]
+	mi := &file_chunkd_v1_meta_proto_msgTypes[50]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -3336,7 +3503,7 @@ func (x *FileInfo) String() string {
 func (*FileInfo) ProtoMessage() {}
 
 func (x *FileInfo) ProtoReflect() protoreflect.Message {
-	mi := &file_chunkd_v1_meta_proto_msgTypes[47]
+	mi := &file_chunkd_v1_meta_proto_msgTypes[50]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -3349,7 +3516,7 @@ func (x *FileInfo) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use FileInfo.ProtoReflect.Descriptor instead.
 func (*FileInfo) Descriptor() ([]byte, []int) {
-	return file_chunkd_v1_meta_proto_rawDescGZIP(), []int{47}
+	return file_chunkd_v1_meta_proto_rawDescGZIP(), []int{50}
 }
 
 func (x *FileInfo) GetPath() string {
@@ -3403,7 +3570,7 @@ type ListResponse struct {
 
 func (x *ListResponse) Reset() {
 	*x = ListResponse{}
-	mi := &file_chunkd_v1_meta_proto_msgTypes[48]
+	mi := &file_chunkd_v1_meta_proto_msgTypes[51]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -3415,7 +3582,7 @@ func (x *ListResponse) String() string {
 func (*ListResponse) ProtoMessage() {}
 
 func (x *ListResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_chunkd_v1_meta_proto_msgTypes[48]
+	mi := &file_chunkd_v1_meta_proto_msgTypes[51]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -3428,7 +3595,7 @@ func (x *ListResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use ListResponse.ProtoReflect.Descriptor instead.
 func (*ListResponse) Descriptor() ([]byte, []int) {
-	return file_chunkd_v1_meta_proto_rawDescGZIP(), []int{48}
+	return file_chunkd_v1_meta_proto_rawDescGZIP(), []int{51}
 }
 
 func (x *ListResponse) GetFiles() []*FileInfo {
@@ -3470,7 +3637,7 @@ type NodeInfo struct {
 
 func (x *NodeInfo) Reset() {
 	*x = NodeInfo{}
-	mi := &file_chunkd_v1_meta_proto_msgTypes[49]
+	mi := &file_chunkd_v1_meta_proto_msgTypes[52]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -3482,7 +3649,7 @@ func (x *NodeInfo) String() string {
 func (*NodeInfo) ProtoMessage() {}
 
 func (x *NodeInfo) ProtoReflect() protoreflect.Message {
-	mi := &file_chunkd_v1_meta_proto_msgTypes[49]
+	mi := &file_chunkd_v1_meta_proto_msgTypes[52]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -3495,7 +3662,7 @@ func (x *NodeInfo) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use NodeInfo.ProtoReflect.Descriptor instead.
 func (*NodeInfo) Descriptor() ([]byte, []int) {
-	return file_chunkd_v1_meta_proto_rawDescGZIP(), []int{49}
+	return file_chunkd_v1_meta_proto_rawDescGZIP(), []int{52}
 }
 
 func (x *NodeInfo) GetId() string {
@@ -3628,7 +3795,7 @@ type NodeAdminRequest struct {
 
 func (x *NodeAdminRequest) Reset() {
 	*x = NodeAdminRequest{}
-	mi := &file_chunkd_v1_meta_proto_msgTypes[50]
+	mi := &file_chunkd_v1_meta_proto_msgTypes[53]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -3640,7 +3807,7 @@ func (x *NodeAdminRequest) String() string {
 func (*NodeAdminRequest) ProtoMessage() {}
 
 func (x *NodeAdminRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_chunkd_v1_meta_proto_msgTypes[50]
+	mi := &file_chunkd_v1_meta_proto_msgTypes[53]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -3653,7 +3820,7 @@ func (x *NodeAdminRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use NodeAdminRequest.ProtoReflect.Descriptor instead.
 func (*NodeAdminRequest) Descriptor() ([]byte, []int) {
-	return file_chunkd_v1_meta_proto_rawDescGZIP(), []int{50}
+	return file_chunkd_v1_meta_proto_rawDescGZIP(), []int{53}
 }
 
 func (x *NodeAdminRequest) GetNode() string {
@@ -3682,7 +3849,7 @@ type NodeAdminResponse struct {
 
 func (x *NodeAdminResponse) Reset() {
 	*x = NodeAdminResponse{}
-	mi := &file_chunkd_v1_meta_proto_msgTypes[51]
+	mi := &file_chunkd_v1_meta_proto_msgTypes[54]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -3694,7 +3861,7 @@ func (x *NodeAdminResponse) String() string {
 func (*NodeAdminResponse) ProtoMessage() {}
 
 func (x *NodeAdminResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_chunkd_v1_meta_proto_msgTypes[51]
+	mi := &file_chunkd_v1_meta_proto_msgTypes[54]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -3707,7 +3874,7 @@ func (x *NodeAdminResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use NodeAdminResponse.ProtoReflect.Descriptor instead.
 func (*NodeAdminResponse) Descriptor() ([]byte, []int) {
-	return file_chunkd_v1_meta_proto_rawDescGZIP(), []int{51}
+	return file_chunkd_v1_meta_proto_rawDescGZIP(), []int{54}
 }
 
 func (x *NodeAdminResponse) GetState() NodeAdmin {
@@ -3736,7 +3903,7 @@ type SuspectRequest struct {
 
 func (x *SuspectRequest) Reset() {
 	*x = SuspectRequest{}
-	mi := &file_chunkd_v1_meta_proto_msgTypes[52]
+	mi := &file_chunkd_v1_meta_proto_msgTypes[55]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -3748,7 +3915,7 @@ func (x *SuspectRequest) String() string {
 func (*SuspectRequest) ProtoMessage() {}
 
 func (x *SuspectRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_chunkd_v1_meta_proto_msgTypes[52]
+	mi := &file_chunkd_v1_meta_proto_msgTypes[55]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -3761,7 +3928,7 @@ func (x *SuspectRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use SuspectRequest.ProtoReflect.Descriptor instead.
 func (*SuspectRequest) Descriptor() ([]byte, []int) {
-	return file_chunkd_v1_meta_proto_rawDescGZIP(), []int{52}
+	return file_chunkd_v1_meta_proto_rawDescGZIP(), []int{55}
 }
 
 func (x *SuspectRequest) GetChunkId() []byte {
@@ -3786,7 +3953,7 @@ type SuspectResponse struct {
 
 func (x *SuspectResponse) Reset() {
 	*x = SuspectResponse{}
-	mi := &file_chunkd_v1_meta_proto_msgTypes[53]
+	mi := &file_chunkd_v1_meta_proto_msgTypes[56]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -3798,7 +3965,7 @@ func (x *SuspectResponse) String() string {
 func (*SuspectResponse) ProtoMessage() {}
 
 func (x *SuspectResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_chunkd_v1_meta_proto_msgTypes[53]
+	mi := &file_chunkd_v1_meta_proto_msgTypes[56]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -3811,7 +3978,7 @@ func (x *SuspectResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use SuspectResponse.ProtoReflect.Descriptor instead.
 func (*SuspectResponse) Descriptor() ([]byte, []int) {
-	return file_chunkd_v1_meta_proto_rawDescGZIP(), []int{53}
+	return file_chunkd_v1_meta_proto_rawDescGZIP(), []int{56}
 }
 
 type ClusterRequest struct {
@@ -3824,7 +3991,7 @@ type ClusterRequest struct {
 
 func (x *ClusterRequest) Reset() {
 	*x = ClusterRequest{}
-	mi := &file_chunkd_v1_meta_proto_msgTypes[54]
+	mi := &file_chunkd_v1_meta_proto_msgTypes[57]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -3836,7 +4003,7 @@ func (x *ClusterRequest) String() string {
 func (*ClusterRequest) ProtoMessage() {}
 
 func (x *ClusterRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_chunkd_v1_meta_proto_msgTypes[54]
+	mi := &file_chunkd_v1_meta_proto_msgTypes[57]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -3849,7 +4016,7 @@ func (x *ClusterRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use ClusterRequest.ProtoReflect.Descriptor instead.
 func (*ClusterRequest) Descriptor() ([]byte, []int) {
-	return file_chunkd_v1_meta_proto_rawDescGZIP(), []int{54}
+	return file_chunkd_v1_meta_proto_rawDescGZIP(), []int{57}
 }
 
 func (x *ClusterRequest) GetEventsAfter() uint64 {
@@ -3901,7 +4068,7 @@ type ClusterResponse struct {
 
 func (x *ClusterResponse) Reset() {
 	*x = ClusterResponse{}
-	mi := &file_chunkd_v1_meta_proto_msgTypes[55]
+	mi := &file_chunkd_v1_meta_proto_msgTypes[58]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -3913,7 +4080,7 @@ func (x *ClusterResponse) String() string {
 func (*ClusterResponse) ProtoMessage() {}
 
 func (x *ClusterResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_chunkd_v1_meta_proto_msgTypes[55]
+	mi := &file_chunkd_v1_meta_proto_msgTypes[58]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -3926,7 +4093,7 @@ func (x *ClusterResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use ClusterResponse.ProtoReflect.Descriptor instead.
 func (*ClusterResponse) Descriptor() ([]byte, []int) {
-	return file_chunkd_v1_meta_proto_rawDescGZIP(), []int{55}
+	return file_chunkd_v1_meta_proto_rawDescGZIP(), []int{58}
 }
 
 func (x *ClusterResponse) GetNodes() []*NodeInfo {
@@ -4092,7 +4259,7 @@ type MetaPeer struct {
 
 func (x *MetaPeer) Reset() {
 	*x = MetaPeer{}
-	mi := &file_chunkd_v1_meta_proto_msgTypes[56]
+	mi := &file_chunkd_v1_meta_proto_msgTypes[59]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -4104,7 +4271,7 @@ func (x *MetaPeer) String() string {
 func (*MetaPeer) ProtoMessage() {}
 
 func (x *MetaPeer) ProtoReflect() protoreflect.Message {
-	mi := &file_chunkd_v1_meta_proto_msgTypes[56]
+	mi := &file_chunkd_v1_meta_proto_msgTypes[59]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -4117,7 +4284,7 @@ func (x *MetaPeer) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use MetaPeer.ProtoReflect.Descriptor instead.
 func (*MetaPeer) Descriptor() ([]byte, []int) {
-	return file_chunkd_v1_meta_proto_rawDescGZIP(), []int{56}
+	return file_chunkd_v1_meta_proto_rawDescGZIP(), []int{59}
 }
 
 func (x *MetaPeer) GetId() string {
@@ -4162,7 +4329,7 @@ type GCStats struct {
 
 func (x *GCStats) Reset() {
 	*x = GCStats{}
-	mi := &file_chunkd_v1_meta_proto_msgTypes[57]
+	mi := &file_chunkd_v1_meta_proto_msgTypes[60]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -4174,7 +4341,7 @@ func (x *GCStats) String() string {
 func (*GCStats) ProtoMessage() {}
 
 func (x *GCStats) ProtoReflect() protoreflect.Message {
-	mi := &file_chunkd_v1_meta_proto_msgTypes[57]
+	mi := &file_chunkd_v1_meta_proto_msgTypes[60]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -4187,7 +4354,7 @@ func (x *GCStats) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use GCStats.ProtoReflect.Descriptor instead.
 func (*GCStats) Descriptor() ([]byte, []int) {
-	return file_chunkd_v1_meta_proto_rawDescGZIP(), []int{57}
+	return file_chunkd_v1_meta_proto_rawDescGZIP(), []int{60}
 }
 
 func (x *GCStats) GetOrphans() uint64 {
@@ -4253,7 +4420,7 @@ type DeletedFile struct {
 
 func (x *DeletedFile) Reset() {
 	*x = DeletedFile{}
-	mi := &file_chunkd_v1_meta_proto_msgTypes[58]
+	mi := &file_chunkd_v1_meta_proto_msgTypes[61]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -4265,7 +4432,7 @@ func (x *DeletedFile) String() string {
 func (*DeletedFile) ProtoMessage() {}
 
 func (x *DeletedFile) ProtoReflect() protoreflect.Message {
-	mi := &file_chunkd_v1_meta_proto_msgTypes[58]
+	mi := &file_chunkd_v1_meta_proto_msgTypes[61]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -4278,7 +4445,7 @@ func (x *DeletedFile) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use DeletedFile.ProtoReflect.Descriptor instead.
 func (*DeletedFile) Descriptor() ([]byte, []int) {
-	return file_chunkd_v1_meta_proto_rawDescGZIP(), []int{58}
+	return file_chunkd_v1_meta_proto_rawDescGZIP(), []int{61}
 }
 
 func (x *DeletedFile) GetPath() string {
@@ -4325,7 +4492,7 @@ type FileHealth struct {
 
 func (x *FileHealth) Reset() {
 	*x = FileHealth{}
-	mi := &file_chunkd_v1_meta_proto_msgTypes[59]
+	mi := &file_chunkd_v1_meta_proto_msgTypes[62]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -4337,7 +4504,7 @@ func (x *FileHealth) String() string {
 func (*FileHealth) ProtoMessage() {}
 
 func (x *FileHealth) ProtoReflect() protoreflect.Message {
-	mi := &file_chunkd_v1_meta_proto_msgTypes[59]
+	mi := &file_chunkd_v1_meta_proto_msgTypes[62]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -4350,7 +4517,7 @@ func (x *FileHealth) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use FileHealth.ProtoReflect.Descriptor instead.
 func (*FileHealth) Descriptor() ([]byte, []int) {
-	return file_chunkd_v1_meta_proto_rawDescGZIP(), []int{59}
+	return file_chunkd_v1_meta_proto_rawDescGZIP(), []int{62}
 }
 
 func (x *FileHealth) GetPath() string {
@@ -4406,7 +4573,7 @@ type RepairCopy struct {
 
 func (x *RepairCopy) Reset() {
 	*x = RepairCopy{}
-	mi := &file_chunkd_v1_meta_proto_msgTypes[60]
+	mi := &file_chunkd_v1_meta_proto_msgTypes[63]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -4418,7 +4585,7 @@ func (x *RepairCopy) String() string {
 func (*RepairCopy) ProtoMessage() {}
 
 func (x *RepairCopy) ProtoReflect() protoreflect.Message {
-	mi := &file_chunkd_v1_meta_proto_msgTypes[60]
+	mi := &file_chunkd_v1_meta_proto_msgTypes[63]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -4431,7 +4598,7 @@ func (x *RepairCopy) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use RepairCopy.ProtoReflect.Descriptor instead.
 func (*RepairCopy) Descriptor() ([]byte, []int) {
-	return file_chunkd_v1_meta_proto_rawDescGZIP(), []int{60}
+	return file_chunkd_v1_meta_proto_rawDescGZIP(), []int{63}
 }
 
 func (x *RepairCopy) GetId() uint64 {
@@ -4497,7 +4664,7 @@ type Event struct {
 
 func (x *Event) Reset() {
 	*x = Event{}
-	mi := &file_chunkd_v1_meta_proto_msgTypes[61]
+	mi := &file_chunkd_v1_meta_proto_msgTypes[64]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -4509,7 +4676,7 @@ func (x *Event) String() string {
 func (*Event) ProtoMessage() {}
 
 func (x *Event) ProtoReflect() protoreflect.Message {
-	mi := &file_chunkd_v1_meta_proto_msgTypes[61]
+	mi := &file_chunkd_v1_meta_proto_msgTypes[64]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -4522,7 +4689,7 @@ func (x *Event) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use Event.ProtoReflect.Descriptor instead.
 func (*Event) Descriptor() ([]byte, []int) {
-	return file_chunkd_v1_meta_proto_rawDescGZIP(), []int{61}
+	return file_chunkd_v1_meta_proto_rawDescGZIP(), []int{64}
 }
 
 func (x *Event) GetSeq() uint64 {
@@ -4589,7 +4756,7 @@ type ClusterHealth struct {
 
 func (x *ClusterHealth) Reset() {
 	*x = ClusterHealth{}
-	mi := &file_chunkd_v1_meta_proto_msgTypes[62]
+	mi := &file_chunkd_v1_meta_proto_msgTypes[65]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -4601,7 +4768,7 @@ func (x *ClusterHealth) String() string {
 func (*ClusterHealth) ProtoMessage() {}
 
 func (x *ClusterHealth) ProtoReflect() protoreflect.Message {
-	mi := &file_chunkd_v1_meta_proto_msgTypes[62]
+	mi := &file_chunkd_v1_meta_proto_msgTypes[65]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -4614,7 +4781,7 @@ func (x *ClusterHealth) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use ClusterHealth.ProtoReflect.Descriptor instead.
 func (*ClusterHealth) Descriptor() ([]byte, []int) {
-	return file_chunkd_v1_meta_proto_rawDescGZIP(), []int{62}
+	return file_chunkd_v1_meta_proto_rawDescGZIP(), []int{65}
 }
 
 func (x *ClusterHealth) GetChunks() int64 {
@@ -4807,7 +4974,7 @@ const file_chunkd_v1_meta_proto_rawDesc = "" +
 	"\atargets\x18\x01 \x03(\v2\x15.chunkd.v1.TrimTargetR\atargets\"M\n" +
 	"\vNodeAdminOp\x12\x12\n" +
 	"\x04node\x18\x01 \x01(\tR\x04node\x12*\n" +
-	"\x05state\x18\x02 \x01(\x0e2\x14.chunkd.v1.NodeAdminR\x05state\"\x8c\x05\n" +
+	"\x05state\x18\x02 \x01(\x0e2\x14.chunkd.v1.NodeAdminR\x05state\"\xce\x05\n" +
 	"\x02Op\x120\n" +
 	"\x05begin\x18\x01 \x01(\v2\x18.chunkd.v1.BeginUploadOpH\x00R\x05begin\x123\n" +
 	"\x06commit\x18\x02 \x01(\v2\x19.chunkd.v1.CommitUploadOpH\x00R\x06commit\x120\n" +
@@ -4823,7 +4990,8 @@ const file_chunkd_v1_meta_proto_rawDesc = "" +
 	"trimIntent\x124\n" +
 	"\ttrim_done\x18\v \x01(\v2\x15.chunkd.v1.TrimDoneOpH\x00R\btrimDone\x127\n" +
 	"\n" +
-	"node_admin\x18\f \x01(\v2\x16.chunkd.v1.NodeAdminOpH\x00R\tnodeAdminB\x04\n" +
+	"node_admin\x18\f \x01(\v2\x16.chunkd.v1.NodeAdminOpH\x00R\tnodeAdmin\x12@\n" +
+	"\rset_retention\x18\r \x01(\v2\x19.chunkd.v1.SetRetentionOpH\x00R\fsetRetentionB\x04\n" +
 	"\x02op\"\xf0\x02\n" +
 	"\vFileVersion\x12\x18\n" +
 	"\aversion\x18\x01 \x01(\x04R\aversion\x12\x12\n" +
@@ -4841,11 +5009,12 @@ const file_chunkd_v1_meta_proto_rawDesc = "" +
 	" \x01(\x04R\frestoredFrom\x125\n" +
 	"\n" +
 	"redundancy\x18\v \x01(\x0e2\x15.chunkd.v1.RedundancyR\n" +
-	"redundancy\"T\n" +
+	"redundancy\"y\n" +
 	"\n" +
 	"FileRecord\x12\x12\n" +
 	"\x04path\x18\x01 \x01(\tR\x04path\x122\n" +
-	"\bversions\x18\x02 \x03(\v2\x16.chunkd.v1.FileVersionR\bversions\"e\n" +
+	"\bversions\x18\x02 \x03(\v2\x16.chunkd.v1.FileVersionR\bversions\x12#\n" +
+	"\rretain_epochs\x18\x03 \x01(\rR\fretainEpochs\"e\n" +
 	"\vChunkRecord\x12\x0e\n" +
 	"\x02id\x18\x01 \x01(\fR\x02id\x12\x1a\n" +
 	"\brefcount\x18\x02 \x01(\x04R\brefcount\x12\x12\n" +
@@ -4936,7 +5105,14 @@ const file_chunkd_v1_meta_proto_rawDesc = "" +
 	"\x10expected_version\x18\x03 \x01(\x04R\x0fexpectedVersion\x12\x14\n" +
 	"\x05quota\x18\x04 \x01(\x03R\x05quota\",\n" +
 	"\x10UndeleteResponse\x12\x18\n" +
-	"\aversion\x18\x01 \x01(\x04R\aversion\"\x95\x01\n" +
+	"\aversion\x18\x01 \x01(\x04R\aversion\"I\n" +
+	"\x0eSetRetentionOp\x12\x12\n" +
+	"\x04path\x18\x01 \x01(\tR\x04path\x12#\n" +
+	"\rretain_epochs\x18\x02 \x01(\rR\fretainEpochs\"N\n" +
+	"\x13SetRetentionRequest\x12\x12\n" +
+	"\x04path\x18\x01 \x01(\tR\x04path\x12#\n" +
+	"\rretain_epochs\x18\x02 \x01(\rR\fretainEpochs\"\x16\n" +
+	"\x14SetRetentionResponse\"\x95\x01\n" +
 	"\rChunkLocation\x12\x0e\n" +
 	"\x02id\x18\x01 \x01(\fR\x02id\x12\x12\n" +
 	"\x04size\x18\x02 \x01(\x03R\x04size\x12.\n" +
@@ -5141,7 +5317,7 @@ func file_chunkd_v1_meta_proto_rawDescGZIP() []byte {
 }
 
 var file_chunkd_v1_meta_proto_enumTypes = make([]protoimpl.EnumInfo, 3)
-var file_chunkd_v1_meta_proto_msgTypes = make([]protoimpl.MessageInfo, 63)
+var file_chunkd_v1_meta_proto_msgTypes = make([]protoimpl.MessageInfo, 66)
 var file_chunkd_v1_meta_proto_goTypes = []any{
 	(Redundancy)(0),              // 0: chunkd.v1.Redundancy
 	(NodeAdmin)(0),               // 1: chunkd.v1.NodeAdmin
@@ -5185,30 +5361,33 @@ var file_chunkd_v1_meta_proto_goTypes = []any{
 	(*DeleteResponse)(nil),       // 39: chunkd.v1.DeleteResponse
 	(*UndeleteRequest)(nil),      // 40: chunkd.v1.UndeleteRequest
 	(*UndeleteResponse)(nil),     // 41: chunkd.v1.UndeleteResponse
-	(*ChunkLocation)(nil),        // 42: chunkd.v1.ChunkLocation
-	(*ShardLocation)(nil),        // 43: chunkd.v1.ShardLocation
-	(*StatRequest)(nil),          // 44: chunkd.v1.StatRequest
-	(*StatResponse)(nil),         // 45: chunkd.v1.StatResponse
-	(*LogRequest)(nil),           // 46: chunkd.v1.LogRequest
-	(*VersionInfo)(nil),          // 47: chunkd.v1.VersionInfo
-	(*LogResponse)(nil),          // 48: chunkd.v1.LogResponse
-	(*ListRequest)(nil),          // 49: chunkd.v1.ListRequest
-	(*FileInfo)(nil),             // 50: chunkd.v1.FileInfo
-	(*ListResponse)(nil),         // 51: chunkd.v1.ListResponse
-	(*NodeInfo)(nil),             // 52: chunkd.v1.NodeInfo
-	(*NodeAdminRequest)(nil),     // 53: chunkd.v1.NodeAdminRequest
-	(*NodeAdminResponse)(nil),    // 54: chunkd.v1.NodeAdminResponse
-	(*SuspectRequest)(nil),       // 55: chunkd.v1.SuspectRequest
-	(*SuspectResponse)(nil),      // 56: chunkd.v1.SuspectResponse
-	(*ClusterRequest)(nil),       // 57: chunkd.v1.ClusterRequest
-	(*ClusterResponse)(nil),      // 58: chunkd.v1.ClusterResponse
-	(*MetaPeer)(nil),             // 59: chunkd.v1.MetaPeer
-	(*GCStats)(nil),              // 60: chunkd.v1.GCStats
-	(*DeletedFile)(nil),          // 61: chunkd.v1.DeletedFile
-	(*FileHealth)(nil),           // 62: chunkd.v1.FileHealth
-	(*RepairCopy)(nil),           // 63: chunkd.v1.RepairCopy
-	(*Event)(nil),                // 64: chunkd.v1.Event
-	(*ClusterHealth)(nil),        // 65: chunkd.v1.ClusterHealth
+	(*SetRetentionOp)(nil),       // 42: chunkd.v1.SetRetentionOp
+	(*SetRetentionRequest)(nil),  // 43: chunkd.v1.SetRetentionRequest
+	(*SetRetentionResponse)(nil), // 44: chunkd.v1.SetRetentionResponse
+	(*ChunkLocation)(nil),        // 45: chunkd.v1.ChunkLocation
+	(*ShardLocation)(nil),        // 46: chunkd.v1.ShardLocation
+	(*StatRequest)(nil),          // 47: chunkd.v1.StatRequest
+	(*StatResponse)(nil),         // 48: chunkd.v1.StatResponse
+	(*LogRequest)(nil),           // 49: chunkd.v1.LogRequest
+	(*VersionInfo)(nil),          // 50: chunkd.v1.VersionInfo
+	(*LogResponse)(nil),          // 51: chunkd.v1.LogResponse
+	(*ListRequest)(nil),          // 52: chunkd.v1.ListRequest
+	(*FileInfo)(nil),             // 53: chunkd.v1.FileInfo
+	(*ListResponse)(nil),         // 54: chunkd.v1.ListResponse
+	(*NodeInfo)(nil),             // 55: chunkd.v1.NodeInfo
+	(*NodeAdminRequest)(nil),     // 56: chunkd.v1.NodeAdminRequest
+	(*NodeAdminResponse)(nil),    // 57: chunkd.v1.NodeAdminResponse
+	(*SuspectRequest)(nil),       // 58: chunkd.v1.SuspectRequest
+	(*SuspectResponse)(nil),      // 59: chunkd.v1.SuspectResponse
+	(*ClusterRequest)(nil),       // 60: chunkd.v1.ClusterRequest
+	(*ClusterResponse)(nil),      // 61: chunkd.v1.ClusterResponse
+	(*MetaPeer)(nil),             // 62: chunkd.v1.MetaPeer
+	(*GCStats)(nil),              // 63: chunkd.v1.GCStats
+	(*DeletedFile)(nil),          // 64: chunkd.v1.DeletedFile
+	(*FileHealth)(nil),           // 65: chunkd.v1.FileHealth
+	(*RepairCopy)(nil),           // 66: chunkd.v1.RepairCopy
+	(*Event)(nil),                // 67: chunkd.v1.Event
+	(*ClusterHealth)(nil),        // 68: chunkd.v1.ClusterHealth
 }
 var file_chunkd_v1_meta_proto_depIdxs = []int32{
 	3,  // 0: chunkd.v1.BeginUploadOp.placement:type_name -> chunkd.v1.Replicas
@@ -5231,50 +5410,51 @@ var file_chunkd_v1_meta_proto_depIdxs = []int32{
 	16, // 17: chunkd.v1.Op.trim_intent:type_name -> chunkd.v1.TrimIntentOp
 	17, // 18: chunkd.v1.Op.trim_done:type_name -> chunkd.v1.TrimDoneOp
 	18, // 19: chunkd.v1.Op.node_admin:type_name -> chunkd.v1.NodeAdminOp
-	2,  // 20: chunkd.v1.FileVersion.state:type_name -> chunkd.v1.VersionState
-	0,  // 21: chunkd.v1.FileVersion.redundancy:type_name -> chunkd.v1.Redundancy
-	20, // 22: chunkd.v1.FileRecord.versions:type_name -> chunkd.v1.FileVersion
-	4,  // 23: chunkd.v1.UploadRecord.begin:type_name -> chunkd.v1.BeginUploadOp
-	5,  // 24: chunkd.v1.UploadRecord.claims:type_name -> chunkd.v1.ChunkClaim
-	21, // 25: chunkd.v1.MetaSnapshot.files:type_name -> chunkd.v1.FileRecord
-	22, // 26: chunkd.v1.MetaSnapshot.chunks:type_name -> chunkd.v1.ChunkRecord
-	23, // 27: chunkd.v1.MetaSnapshot.uploads:type_name -> chunkd.v1.UploadRecord
-	12, // 28: chunkd.v1.MetaSnapshot.gc_pending:type_name -> chunkd.v1.GCTarget
-	15, // 29: chunkd.v1.MetaSnapshot.trim_pending:type_name -> chunkd.v1.TrimTarget
-	18, // 30: chunkd.v1.MetaSnapshot.node_admin:type_name -> chunkd.v1.NodeAdminOp
-	25, // 31: chunkd.v1.ChunkPlacement.replicas:type_name -> chunkd.v1.Replica
-	0,  // 32: chunkd.v1.BeginUploadRequest.redundancy:type_name -> chunkd.v1.Redundancy
-	26, // 33: chunkd.v1.BeginUploadResponse.placement:type_name -> chunkd.v1.ChunkPlacement
-	0,  // 34: chunkd.v1.BeginUploadResponse.redundancy:type_name -> chunkd.v1.Redundancy
-	28, // 35: chunkd.v1.UploadStatusResponse.begin:type_name -> chunkd.v1.BeginUploadResponse
-	33, // 36: chunkd.v1.UploadStatusResponse.claims:type_name -> chunkd.v1.ClaimStatus
-	5,  // 37: chunkd.v1.ClaimChunksRequest.claims:type_name -> chunkd.v1.ChunkClaim
-	26, // 38: chunkd.v1.ClaimChunksResponse.locations:type_name -> chunkd.v1.ChunkPlacement
-	25, // 39: chunkd.v1.ChunkLocation.replicas:type_name -> chunkd.v1.Replica
-	43, // 40: chunkd.v1.ChunkLocation.shards:type_name -> chunkd.v1.ShardLocation
-	25, // 41: chunkd.v1.ShardLocation.replicas:type_name -> chunkd.v1.Replica
-	42, // 42: chunkd.v1.StatResponse.chunks:type_name -> chunkd.v1.ChunkLocation
-	0,  // 43: chunkd.v1.StatResponse.redundancy:type_name -> chunkd.v1.Redundancy
-	0,  // 44: chunkd.v1.VersionInfo.redundancy:type_name -> chunkd.v1.Redundancy
-	47, // 45: chunkd.v1.LogResponse.versions:type_name -> chunkd.v1.VersionInfo
-	0,  // 46: chunkd.v1.FileInfo.redundancy:type_name -> chunkd.v1.Redundancy
-	50, // 47: chunkd.v1.ListResponse.files:type_name -> chunkd.v1.FileInfo
-	1,  // 48: chunkd.v1.NodeAdminRequest.state:type_name -> chunkd.v1.NodeAdmin
-	1,  // 49: chunkd.v1.NodeAdminResponse.state:type_name -> chunkd.v1.NodeAdmin
-	52, // 50: chunkd.v1.ClusterResponse.nodes:type_name -> chunkd.v1.NodeInfo
-	65, // 51: chunkd.v1.ClusterResponse.health:type_name -> chunkd.v1.ClusterHealth
-	62, // 52: chunkd.v1.ClusterResponse.file_health:type_name -> chunkd.v1.FileHealth
-	63, // 53: chunkd.v1.ClusterResponse.copies:type_name -> chunkd.v1.RepairCopy
-	64, // 54: chunkd.v1.ClusterResponse.events:type_name -> chunkd.v1.Event
-	60, // 55: chunkd.v1.ClusterResponse.gc:type_name -> chunkd.v1.GCStats
-	61, // 56: chunkd.v1.ClusterResponse.deleted:type_name -> chunkd.v1.DeletedFile
-	59, // 57: chunkd.v1.ClusterResponse.meta_peers:type_name -> chunkd.v1.MetaPeer
-	0,  // 58: chunkd.v1.FileHealth.redundancy:type_name -> chunkd.v1.Redundancy
-	59, // [59:59] is the sub-list for method output_type
-	59, // [59:59] is the sub-list for method input_type
-	59, // [59:59] is the sub-list for extension type_name
-	59, // [59:59] is the sub-list for extension extendee
-	0,  // [0:59] is the sub-list for field type_name
+	42, // 20: chunkd.v1.Op.set_retention:type_name -> chunkd.v1.SetRetentionOp
+	2,  // 21: chunkd.v1.FileVersion.state:type_name -> chunkd.v1.VersionState
+	0,  // 22: chunkd.v1.FileVersion.redundancy:type_name -> chunkd.v1.Redundancy
+	20, // 23: chunkd.v1.FileRecord.versions:type_name -> chunkd.v1.FileVersion
+	4,  // 24: chunkd.v1.UploadRecord.begin:type_name -> chunkd.v1.BeginUploadOp
+	5,  // 25: chunkd.v1.UploadRecord.claims:type_name -> chunkd.v1.ChunkClaim
+	21, // 26: chunkd.v1.MetaSnapshot.files:type_name -> chunkd.v1.FileRecord
+	22, // 27: chunkd.v1.MetaSnapshot.chunks:type_name -> chunkd.v1.ChunkRecord
+	23, // 28: chunkd.v1.MetaSnapshot.uploads:type_name -> chunkd.v1.UploadRecord
+	12, // 29: chunkd.v1.MetaSnapshot.gc_pending:type_name -> chunkd.v1.GCTarget
+	15, // 30: chunkd.v1.MetaSnapshot.trim_pending:type_name -> chunkd.v1.TrimTarget
+	18, // 31: chunkd.v1.MetaSnapshot.node_admin:type_name -> chunkd.v1.NodeAdminOp
+	25, // 32: chunkd.v1.ChunkPlacement.replicas:type_name -> chunkd.v1.Replica
+	0,  // 33: chunkd.v1.BeginUploadRequest.redundancy:type_name -> chunkd.v1.Redundancy
+	26, // 34: chunkd.v1.BeginUploadResponse.placement:type_name -> chunkd.v1.ChunkPlacement
+	0,  // 35: chunkd.v1.BeginUploadResponse.redundancy:type_name -> chunkd.v1.Redundancy
+	28, // 36: chunkd.v1.UploadStatusResponse.begin:type_name -> chunkd.v1.BeginUploadResponse
+	33, // 37: chunkd.v1.UploadStatusResponse.claims:type_name -> chunkd.v1.ClaimStatus
+	5,  // 38: chunkd.v1.ClaimChunksRequest.claims:type_name -> chunkd.v1.ChunkClaim
+	26, // 39: chunkd.v1.ClaimChunksResponse.locations:type_name -> chunkd.v1.ChunkPlacement
+	25, // 40: chunkd.v1.ChunkLocation.replicas:type_name -> chunkd.v1.Replica
+	46, // 41: chunkd.v1.ChunkLocation.shards:type_name -> chunkd.v1.ShardLocation
+	25, // 42: chunkd.v1.ShardLocation.replicas:type_name -> chunkd.v1.Replica
+	45, // 43: chunkd.v1.StatResponse.chunks:type_name -> chunkd.v1.ChunkLocation
+	0,  // 44: chunkd.v1.StatResponse.redundancy:type_name -> chunkd.v1.Redundancy
+	0,  // 45: chunkd.v1.VersionInfo.redundancy:type_name -> chunkd.v1.Redundancy
+	50, // 46: chunkd.v1.LogResponse.versions:type_name -> chunkd.v1.VersionInfo
+	0,  // 47: chunkd.v1.FileInfo.redundancy:type_name -> chunkd.v1.Redundancy
+	53, // 48: chunkd.v1.ListResponse.files:type_name -> chunkd.v1.FileInfo
+	1,  // 49: chunkd.v1.NodeAdminRequest.state:type_name -> chunkd.v1.NodeAdmin
+	1,  // 50: chunkd.v1.NodeAdminResponse.state:type_name -> chunkd.v1.NodeAdmin
+	55, // 51: chunkd.v1.ClusterResponse.nodes:type_name -> chunkd.v1.NodeInfo
+	68, // 52: chunkd.v1.ClusterResponse.health:type_name -> chunkd.v1.ClusterHealth
+	65, // 53: chunkd.v1.ClusterResponse.file_health:type_name -> chunkd.v1.FileHealth
+	66, // 54: chunkd.v1.ClusterResponse.copies:type_name -> chunkd.v1.RepairCopy
+	67, // 55: chunkd.v1.ClusterResponse.events:type_name -> chunkd.v1.Event
+	63, // 56: chunkd.v1.ClusterResponse.gc:type_name -> chunkd.v1.GCStats
+	64, // 57: chunkd.v1.ClusterResponse.deleted:type_name -> chunkd.v1.DeletedFile
+	62, // 58: chunkd.v1.ClusterResponse.meta_peers:type_name -> chunkd.v1.MetaPeer
+	0,  // 59: chunkd.v1.FileHealth.redundancy:type_name -> chunkd.v1.Redundancy
+	60, // [60:60] is the sub-list for method output_type
+	60, // [60:60] is the sub-list for method input_type
+	60, // [60:60] is the sub-list for extension type_name
+	60, // [60:60] is the sub-list for extension extendee
+	0,  // [0:60] is the sub-list for field type_name
 }
 
 func init() { file_chunkd_v1_meta_proto_init() }
@@ -5295,6 +5475,7 @@ func file_chunkd_v1_meta_proto_init() {
 		(*Op_TrimIntent)(nil),
 		(*Op_TrimDone)(nil),
 		(*Op_NodeAdmin)(nil),
+		(*Op_SetRetention)(nil),
 	}
 	type x struct{}
 	out := protoimpl.TypeBuilder{
@@ -5302,7 +5483,7 @@ func file_chunkd_v1_meta_proto_init() {
 			GoPackagePath: reflect.TypeOf(x{}).PkgPath(),
 			RawDescriptor: unsafe.Slice(unsafe.StringData(file_chunkd_v1_meta_proto_rawDesc), len(file_chunkd_v1_meta_proto_rawDesc)),
 			NumEnums:      3,
-			NumMessages:   63,
+			NumMessages:   66,
 			NumExtensions: 0,
 			NumServices:   0,
 		},

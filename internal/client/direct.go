@@ -644,6 +644,13 @@ var adminStates = map[string]chunkdv1.NodeAdmin{
 	"decommissioned": chunkdv1.NodeAdmin_NODE_ADMIN_DECOMMISSIONED,
 }
 
+// SetRetention keeps the retired versions of path for epochs GC epochs
+// instead of the cluster default; 0 restores the default (ADR-0026).
+func (c *Direct) SetRetention(ctx context.Context, path string, epochs uint32) error {
+	var resp chunkdv1.SetRetentionResponse
+	return c.meta(ctx, wire.KindSetRetention, &chunkdv1.SetRetentionRequest{Path: path, RetainEpochs: epochs}, &resp)
+}
+
 // NodeAdmin asks the metadata leader to change a node's admin state. A
 // repeat of the state the node is in succeeds and changes nothing.
 func (c *Direct) NodeAdmin(ctx context.Context, node, state string) (NodeAdminResult, error) {

@@ -179,6 +179,7 @@ message Op {
     TrimIntentOp trim_intent = 10;
     TrimDoneOp trim_done = 11;
     NodeAdminOp node_admin = 12;
+    SetRetentionOp set_retention = 13;
   }
 }
 
@@ -211,6 +212,8 @@ message FileVersion {
 message FileRecord {
   string path = 1;
   repeated FileVersion versions = 2;
+  // Per-path retention of retired versions in GC epochs; 0 uses the cluster's.
+  uint32 retain_epochs = 3;
 }
 
 message ChunkRecord {
@@ -361,6 +364,20 @@ message UndeleteRequest {
 message UndeleteResponse {
   uint64 version = 1;
 }
+
+// SetRetentionOp keeps this path's retired versions for retain_epochs GC
+// epochs instead of the cluster default; 0 restores the default (ADR-0026).
+message SetRetentionOp {
+  string path = 1;
+  uint32 retain_epochs = 2;
+}
+
+message SetRetentionRequest {
+  string path = 1;
+  uint32 retain_epochs = 2;
+}
+
+message SetRetentionResponse {}
 
 message ChunkLocation {
   // The content hash, or the stripe's logical ID when shards is set.

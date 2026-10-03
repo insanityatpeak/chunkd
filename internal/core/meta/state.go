@@ -47,6 +47,9 @@ type Version struct {
 type File struct {
 	Path     string
 	Versions []Version
+	// Retain overrides how many GC epochs a retired version is kept; 0 uses
+	// the cluster's (ADR-0026).
+	Retain uint32
 }
 
 // Upload is a pending version: invisible to Stat and List until committed.
@@ -381,6 +384,10 @@ func (s *State) Validate(op *chunkdv1.Op) error {
 		return validTrims(o.TrimIntent.GetTargets())
 	case *chunkdv1.Op_TrimDone:
 		return validTrims(o.TrimDone.GetTargets())
+	case *chunkdv1.Op_SetRetention:
+		if s.files[o.SetRetention.GetPath()] == nil {
+			return iface.Errorf(iface.CodeNotFound, "%s", o.SetRetention.GetPath())
+		}
 	case *chunkdv1.Op_NodeAdmin:
 		a := o.NodeAdmin
 		if a.GetNode() == "" {
@@ -687,6 +694,9 @@ func (s *State) apply(op *chunkdv1.Op) Result {
 			}
 		}
 		return Result{}
+	case *chunkdv1.Op_SetRetention:
+		s.files[o.SetRetention.GetPath()].Retain = o.SetRetention.GetRetainEpochs()
+		return Result{}
 	case *chunkdv1.Op_NodeAdmin:
 		n, to := iface.NodeID(o.NodeAdmin.GetNode()), o.NodeAdmin.GetState()
 		if to == chunkdv1.NodeAdmin_NODE_ADMIN_ACTIVE {
@@ -832,11 +842,21 @@ func (s *State) appendVersion(p string, v Version) {
 	f.Versions = append(f.Versions, v)
 }
 
+// RetainFor is how many epochs a retired version of p is kept: its own
+// setting, else def.
+func (s *State) RetainFor(p string, def uint64) uint64 {
+	if f := s.files[p]; f != nil && f.Retain > 0 {
+		return uint64(f.Retain)
+	}
+	return def
+}
+
 // hardDelete drops versions retired at least retain epochs ago, except the
 // newest version of each path, and releases their chunk references.
 func (s *State) hardDelete(retain uint64) int {
 	dropped := 0
 	for _, f := range s.files {
+		retain := s.RetainFor(f.Path, retain)
 		keep := f.Versions[:0]
 		for i, v := range f.Versions {
 			if i == len(f.Versions)-1 || !v.Retired || v.RetiredAt+retain > s.epoch {
@@ -1044,7 +1064,7 @@ func (s *State) Snapshot() []byte {
 	snap := &chunkdv1.MetaSnapshot{LastUploadId: s.lastUploadID, Epoch: s.epoch}
 	for _, p := range slices.Sorted(maps.Keys(s.files)) {
 		f := s.files[p]
-		rec := &chunkdv1.FileRecord{Path: p}
+		rec := &chunkdv1.FileRecord{Path: p, RetainEpochs: f.Retain}
 		for _, v := range f.Versions {
 			fv := &chunkdv1.FileVersion{Version: v.V, UploadId: v.UploadID, Size: v.Size, ChunkSize: int32(v.ChunkSize), State: chunkdv1.VersionState_VERSION_STATE_COMMITTED,
 				Retired: v.Retired, RetiredAt: v.RetiredAt, RestoredFrom: v.RestoredFrom, Redundancy: v.Redundancy}
@@ -1114,7 +1134,7 @@ func Restore(data []byte) (*State, error) {
 	}
 	s.lastUploadID, s.epoch = snap.GetLastUploadId(), snap.GetEpoch()
 	for _, rec := range snap.GetFiles() {
-		f := &File{Path: rec.GetPath()}
+		f := &File{Path: rec.GetPath(), Retain: rec.GetRetainEpochs()}
 		for _, fv := range rec.GetVersions() {
 			v := Version{V: fv.GetVersion(), UploadID: fv.GetUploadId(), Size: fv.GetSize(), ChunkSize: int(fv.GetChunkSize()), Tombstone: fv.GetState() == chunkdv1.VersionState_VERSION_STATE_TOMBSTONE,
 				Retired: fv.GetRetired(), RetiredAt: fv.GetRetiredAt(), RestoredFrom: fv.GetRestoredFrom(), Redundancy: fv.GetRedundancy()}

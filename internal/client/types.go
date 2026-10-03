@@ -271,6 +271,9 @@ type API interface {
 	// NodeAdmin sets a storage node's admin state: "draining", "active"
 	// (undrain) or "decommissioned", refused while unsafe (ADR-0021).
 	NodeAdmin(ctx context.Context, node, state string) (NodeAdminResult, error)
+	// SetRetention sets how many GC epochs path keeps its retired versions
+	// for undelete and diff; 0 uses the cluster default (ADR-0026).
+	SetRetention(ctx context.Context, path string, epochs uint32) error
 	// BeginResumable, UploadStatus and Append are the resumable upload
 	// (ADR-0024): open one with the file's size and SHA-256, ask where it
 	// is from any process, and append whole chunks from there. The append

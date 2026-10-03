@@ -259,3 +259,10 @@ func (c *Client) Append(ctx context.Context, id uint64, offset int64, r io.Reade
 	}
 	return c.UploadStatus(ctx, id)
 }
+
+// SetRetention sets a path's retention (PUT /retention/{path}?epochs=N).
+func (c *Client) SetRetention(ctx context.Context, path string, epochs uint32) error {
+	q := url.Values{"epochs": {strconv.FormatUint(uint64(epochs), 10)}}
+	_, err := c.do(ctx, http.MethodPut, c.url("/retention"+path, q), nil, 0, nil)
+	return err
+}

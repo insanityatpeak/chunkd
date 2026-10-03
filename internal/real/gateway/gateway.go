@@ -28,6 +28,7 @@ const (
 //	GET    /files?prefix=/p         list
 //	DELETE /files/{path}            tombstone; ?expected=N
 //	POST   /undelete/{path}         restore a retained version; ?version=N, else the newest
+//	PUT    /retention/{path}?epochs=N keep this path's retired versions N GC epochs (0: the cluster default)
 //	POST   /nodes/{id}/{action}     drain, undrain or decommission a storage node
 //	GET    /cluster                 nodes, health, copies; ?events_after=N
 //	POST   /uploads/{path}          open a resumable upload (tus core): Upload-Length, Upload-Sha256; the POST /files query
@@ -46,6 +47,7 @@ func Handler(api client.API, log *slog.Logger, opts ...Option) http.Handler {
 	mux.HandleFunc("DELETE /files/{path...}", h.guard(scopePath, h.delete))
 	mux.HandleFunc("POST /undelete/{path...}", h.guard(scopePath, h.undelete))
 	mux.HandleFunc("GET /cluster", h.cluster)
+	mux.HandleFunc("PUT /retention/{path...}", h.guard(scopePath, h.setRetention))
 	mux.HandleFunc("POST /nodes/{node}/{action}", h.guard(scopeAdmin, h.nodeAdmin))
 	mux.HandleFunc("POST /uploads/{path...}", h.guard(scopePath, h.createUpload))
 	mux.HandleFunc("GET /uploads/{id}", h.guard(scopeUpload, h.uploadStatus))
@@ -160,6 +162,19 @@ func (h *handler) list(w http.ResponseWriter, r *http.Request) {
 		files = []client.FileInfo{}
 	}
 	writeJSON(w, http.StatusOK, files)
+}
+
+func (h *handler) setRetention(w http.ResponseWriter, r *http.Request) {
+	n, err := strconv.ParseUint(r.URL.Query().Get("epochs"), 10, 32)
+	if err != nil {
+		writeError(w, iface.Errorf(iface.CodeInvalid, "epochs: want a number"), 0)
+		return
+	}
+	if err := h.api.SetRetention(r.Context(), filePath(r), uint32(n)); err != nil {
+		writeError(w, err, 0)
+		return
+	}
+	w.WriteHeader(http.StatusNoContent)
 }
 
 func (h *handler) delete(w http.ResponseWriter, r *http.Request) {
@@ -299,7 +314,7 @@ func WithUI(api http.Handler, dir string) http.Handler {
 	mux := http.NewServeMux()
 	// Every API route from Handler; a missing one falls through to the
 	// file server and answers a plain 404.
-	for _, p := range []string{"/files", "/files/", "/undelete/", "/cluster", "/nodes/", "/uploads/"} {
+	for _, p := range []string{"/files", "/files/", "/undelete/", "/cluster", "/nodes/", "/uploads/", "/retention/"} {
 		mux.Handle(p, api)
 	}
 	mux.HandleFunc("GET /mode.json", func(w http.ResponseWriter, _ *http.Request) {
