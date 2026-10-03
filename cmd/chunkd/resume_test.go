@@ -13,6 +13,7 @@ import (
 
 	"github.com/insanityatpeak/chunkd/internal/client"
 	"github.com/insanityatpeak/chunkd/internal/core/meta"
+	"github.com/insanityatpeak/chunkd/internal/iface"
 	"github.com/insanityatpeak/chunkd/internal/real/local"
 )
 
@@ -98,3 +99,55 @@ func TestPutResumeAfterCutOff(t *testing.T) {
 }
 
 func fileExists(p string) bool { _, err := os.Stat(p); return err == nil }
+
+func TestDiffManifests(t *testing.T) {
+	ch := func(ids ...string) client.Manifest {
+		m := client.Manifest{}
+		for i, id := range ids {
+			m.Chunk = append(m.Chunk, client.ChunkRef{Index: i, ID: id, Size: 4})
+		}
+		return m
+	}
+	d := diffManifests(ch("a", "b", "c", "d"), ch("a", "x", "c", "d", "e"))
+	if d.Same != 3 || d.Changed != 1 || d.Added != 1 || d.Removed != 0 || d.NewBytes != 8 || d.SharedBytes != 12 {
+		t.Fatalf("%+v", d)
+	}
+	if d := diffManifests(ch("a", "b", "c"), ch("a")); d.Removed != 2 || d.Same != 1 || d.NewBytes != 0 {
+		t.Fatalf("%+v", d)
+	}
+}
+
+func TestExitCodes(t *testing.T) {
+	for code, want := range map[iface.Code]int{iface.CodeNotFound: 3, iface.CodeConflict: 4, iface.CodeQuota: 5, iface.CodeDenied: 6, iface.CodeUnavailable: 7, iface.CodeCorrupt: 8, iface.CodeInternal: 1} {
+		if got := exitCode(iface.Errorf(code, "x")); got != want {
+			t.Errorf("%v: exit %d, want %d", code, got, want)
+		}
+	}
+}
+
+func TestDiffAgainstACluster(t *testing.T) {
+	c, err := local.Start(t.TempDir(), 3, meta.DefaultConfig(""))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer c.Close()
+	ctx := context.Background()
+	a := make([]byte, 9<<20)
+	for i := range a {
+		a[i] = byte(i * 7)
+	}
+	b := bytes.Clone(a)
+	b[5<<20] ^= 1 // chunk 1 of 3
+	for _, data := range [][]byte{a, b} {
+		if _, err := c.Client.Put(ctx, "/d/f", bytes.NewReader(data), int64(len(data)), client.PutOptions{Overwrite: true}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	d, err := diffVersions(ctx, c.Client, "/d/f", 1, 2)
+	if err != nil || d.Same != 2 || d.Changed != 1 || len(d.Changes) != 1 || d.Changes[0] != 1 {
+		t.Fatalf("%+v, %v", d, err)
+	}
+	if err := bench(ctx, c.Client, 1<<20, 1, client.PutOptions{Overwrite: true}, printer{json: true}); err != nil {
+		t.Fatal(err)
+	}
+}

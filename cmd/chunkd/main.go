@@ -8,10 +8,18 @@
 //	chunkd cluster [status]                 nodes, detector state and replication health
 //	chunkd node drain|undrain|decommission <id>   retire a storage node (decommission -wait 10m polls until safe)
 //	chunkd keygen -name alice [-quota N] [-admin]   a new API key and its entry for the gateway's keys file
+//	chunkd diff|restore|retain|bench <path> <from> <to>          chunk-level difference of two versions (what a rewrite would send)
+//	chunkd restore <path> <version>         make an old version the live one again
+//	chunkd retain <path> <epochs>           keep the path's retired versions this many GC epochs (0: cluster default)
+//	chunkd bench [-size MiB -count N]       put, get and remove random files, report MiB/s
+//	chunkd completion bash|zsh|powershell   shell completion script
 //	chunkd ping <grpc-addr>                 ping a process
 //	chunkd probe <http-url>                 exit 0 if the URL returns 200 (health checks)
 //	chunkd debug corrupt                    flip a byte in -n chunk files under -root (fault injection;
 //	                                        run on the node's host or with docker compose exec)
+//
+// Exit codes: 0 ok, 1 other failure, 2 usage, 3 not found, 4 conflict, 5 quota exceeded,
+// 6 denied, 7 unavailable, 8 corrupt.
 //
 // By default it talks to the gateway (-gateway, $CHUNKD_GATEWAY). With -meta
 // it talks gRPC to the metadata server and nodes directly.
@@ -29,6 +37,7 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"text/tabwriter"
 	"time"
@@ -64,12 +73,14 @@ func main() {
 	rotN := fs.Int("n", 1, "debug corrupt: number of chunks")
 	pick := fs.Uint64("pick", 0, "debug corrupt: first chunk, as an index into the chunks in ID order")
 	wait := fs.Duration("wait", 0, "node decommission: keep retrying this long while the node's chunks are still short elsewhere")
+	benchSize := fs.Int64("size", 16, "bench: MiB per file")
+	benchCount := fs.Int("count", 3, "bench: files to put and get")
 	keyName := fs.String("name", "", "keygen: the key's name; its namespace unless -namespace is set")
 	keyNS := fs.String("namespace", "", "keygen: the path segment the key owns")
 	keyQuota := fs.Int64("quota", 0, "keygen: byte quota of the namespace (0: unlimited)")
 	keyAdmin := fs.Bool("admin", false, "keygen: an admin key (every path, node controls)")
 	fs.Usage = func() {
-		fmt.Fprintln(os.Stderr, "usage: chunkd [flags] put|get|log|ls|stat|rm|undelete|cluster|node|keygen|ping|probe|debug corrupt ...")
+		fmt.Fprintln(os.Stderr, "usage: chunkd [flags] put|get|log|ls|stat|rm|undelete|cluster|node|keygen|diff|restore|bench|completion|ping|probe|debug corrupt ...")
 		fs.PrintDefaults()
 	}
 	// Flags may come before or after the command.
@@ -85,7 +96,7 @@ func main() {
 	}
 	if len(args) == 0 {
 		fs.Usage()
-		os.Exit(2)
+		os.Exit(exitUsage)
 	}
 
 	var api client.API
@@ -155,6 +166,37 @@ func main() {
 		}
 	case cmd == "node" && len(args) == 3:
 		err = nodeAdmin(ctx, api, args[1], args[2], *wait, out)
+	case cmd == "diff" && len(args) == 4:
+		var from, to uint64
+		if from, err = strconv.ParseUint(args[2], 10, 64); err == nil {
+			if to, err = strconv.ParseUint(args[3], 10, 64); err == nil {
+				var d Diff
+				if d, err = diffVersions(ctx, api, args[1], from, to); err == nil {
+					out.diff(d)
+				}
+			}
+		}
+	case cmd == "restore" && len(args) == 3:
+		var v, restored uint64
+		if v, err = strconv.ParseUint(args[2], 10, 64); err == nil {
+			if restored, err = api.Undelete(ctx, args[1], v); err == nil {
+				fmt.Printf("restored %s v%d as v%d\n", args[1], v, restored)
+			}
+		}
+	case cmd == "retain" && len(args) == 3:
+		var n uint64
+		if n, err = strconv.ParseUint(args[2], 10, 32); err == nil {
+			if err = api.SetRetention(ctx, args[1], uint32(n)); err == nil {
+				fmt.Printf("%s keeps retired versions for %d epochs\n", args[1], n)
+			}
+		}
+	case cmd == "bench" && len(args) == 1:
+		opts := client.PutOptions{Overwrite: true}
+		if opts.Redundancy, err = client.ParseRedundancy(*redundancy); err == nil {
+			err = bench(ctx, api, *benchSize<<20, *benchCount, opts, out)
+		}
+	case cmd == "completion" && len(args) == 2:
+		err = completion(args[1])
 	case cmd == "keygen" && len(args) == 1:
 		err = keygen(*keyName, *keyNS, *keyQuota, *keyAdmin)
 	case cmd == "ping" && len(args) == 2:
@@ -169,11 +211,11 @@ func main() {
 		}
 	default:
 		fs.Usage()
-		os.Exit(2)
+		os.Exit(exitUsage)
 	}
 	if err != nil {
 		fmt.Fprintln(os.Stderr, "chunkd:", err)
-		os.Exit(1)
+		os.Exit(exitCode(err))
 	}
 }
 
@@ -193,7 +235,9 @@ func get(ctx context.Context, api client.API, path, local string, version uint64
 	}
 	defer os.Remove(tmp.Name())
 	h := sha256.New()
-	m, err := api.GetVersion(ctx, path, version, io.MultiWriter(tmp, h))
+	prog := newProgress()
+	m, err := api.GetVersion(ctx, path, version, io.MultiWriter(tmp, h, prog))
+	prog.done()
 	if cerr := tmp.Close(); err == nil {
 		err = cerr
 	}
