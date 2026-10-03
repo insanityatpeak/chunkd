@@ -62,7 +62,7 @@ func report(out string) error {
 	}
 
 	// Sim latency: get p99 by fault and hedging.
-	t, err = section("Latency under a gray node and loss (sim)", "40 files of 1 MiB read 3 times, 30 puts, 3 seeds pooled, a new client for every operation (a long-lived client learns the slow node from its first reads and avoids it). Gray node: node-1 adds 2 s to every message. Loss: 1% of messages, and a lost call waits out the 10 s call timeout.", "latency.csv", "latency-get-p99.svg")
+	t, err = section("Latency under a gray node and loss (sim)", "40 files of 1 MiB read 3 times, 30 puts, 3 seeds pooled, a new client for every operation (a long-lived client learns the slow node from its first reads and avoids it). Gray node: node-1 adds 2 s to every message. Loss: 1% of messages, and a lost call waits out the 10 s call timeout. Hedging off reads one replica at a time and makes a put wait for every replica; on, a put returns once two replicas stored each chunk and a 50 ms grace has passed (ADR-0029).", "latency.csv", "latency-get-p99.svg")
 	if err != nil {
 		return err
 	}
@@ -78,7 +78,7 @@ func report(out string) error {
 	}
 
 	// Repair time.
-	t, err = section("Time to repair after a node kill (sim)", "RF 3, 5 nodes, 4 MiB files, node-3 killed. The detector (10 s) plus the repair delay (20 s) make a 30 s floor; `past_floor_s` is what the copies add. `mib_s_past_floor` is 0 when that is under one second.", "repair-time.csv", "repair-time.svg")
+	t, err = section("Time to repair after a node kill (sim)", "RF 3, 5 nodes, 4 MiB files, no message loss (a lost repair message costs a 10 s call timeout, which would swamp the copy time), node-3 killed. The detector (10 s) plus the repair delay (20 s) make a 30 s floor; `past_floor_s` is what the copies add. `mib_s_past_floor` is 0 when that is under one second.", "repair-time.csv", "repair-time.svg")
 	if err != nil {
 		return err
 	}

@@ -29,7 +29,7 @@ A question goes to the tier that can answer it. The effect of repair on foregrou
 ## Consequences
 
 - The committed sim tables re-run to identical CSVs. The real tables re-run within noise: about 10% on large files, more on small ones and at the tail.
-- The benchmarks found two things the tests had not: writes are not hedged (a gray node moves put p50 from 188 ms to 4.1 s), and a limited Begin scans every file in every namespace (29 ms at 100,000 files, inside the Raft apply loop). The second is in Known limitations.
+- The benchmarks found two things the tests had not: writes were not hedged (a gray node moved put p50 from 188 ms to 4.1 s; fixed by ADR-0029), and a limited Begin scans every file in every namespace (29 ms at 100,000 files, inside the Raft apply loop). The second was fixed by ADR-0028.
 - Hedging only shows with a new client per operation: a long-lived client learns the slow node from its first reads and avoids it.
 - SIMPLIFIED: one client, sequential operations. S3 and MinIO benchmarks (warp, COSBench) drive many clients and report aggregate throughput.
 - SIMPLIFIED: real numbers come from one process on loopback. A multi-host run needs machines this repo does not assume.

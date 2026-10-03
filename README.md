@@ -127,7 +127,7 @@ Bugs these tests caught, with root causes and fixes: [docs/bugs-found.md](docs/b
 | Get, 16 / 128 / 1024 MiB | 182 / 187 / 157 MiB/s, every chunk and the file hash verified | real |
 | 256 KiB files, p50 / p99 | put 42 / 328 ms, get 2.6 / 11.8 ms, stat 0.5 / 13 ms | real |
 | Get p99, one gray node (2 s added), fresh client | 4,141 ms unhedged, 235 ms hedged; identical with no fault | sim |
-| Time to RF 3 after a node kill, 240 MiB lost | 77.5 s at a 5 MiB/s cap, 42 s at 20 MiB/s: a 30 s floor (detector and delay) plus copies | sim |
+| Time to RF 3 after a node kill, 240 MiB lost | 77 s at a 5 MiB/s cap, 41.5 s at 20 MiB/s, 32.75 s at 80: a 30 s floor (detector and delay) plus copies | sim |
 | Storage, replicate:3 against ec:4+2 | 3.00x against 1.50x; repair reads 4 bytes per byte rebuilt ([ec.md](docs/benchmarks/ec.md)) | sim |
 | Dedup, base plus 10 small edits | 220 MiB logical in 60 MiB ([dedup.md](docs/benchmarks/dedup.md)) | sim |
 | Cut-off 32 MiB upload at 90% | resume re-sends a 4 MiB body; a restart re-sends 32 MiB (the same bytes reach the nodes, since stored chunks are skipped) | sim |
@@ -180,7 +180,7 @@ Charts and every table: [docs/benchmarks/results.md](docs/benchmarks/results.md)
 | An erasure-coded upload needs 6 placeable nodes, and the begin is refused with fewer | Two shards on one node would turn one failure into two | Wider clusters, or a narrower code for small ones |
 | A small file still takes 6 shards (a 1-byte file stores 6 × 34 bytes) | Negligible at 4 MiB chunks | Keep small objects replicated or inline, as S3 and MinIO do |
 | The balancer leaves shards where they are; a joining node gets shards only from rebuilds | A shard is a quarter of a chunk, and upload placement already spreads stripes | A planner that keeps a stripe on distinct nodes, as Ceph's balancer moves EC placement groups |
-| Writes are not hedged: with one gray node a put waits for the slowest of its replicas (put p50 188 ms to 4,112 ms with 2 s added to one node) | Reads are hedged and a client orders replicas by its own latency score; writes need 2 of 3 acks (ADR-0007) | Feed client latency into placement, or hedge the third replica's write |
+| A put returns once two replicas hold each chunk (plus a 50 ms grace); the third copy is not retried if it is abandoned or lost, and repair fills it in. Placement still sends a third of the copies to a slow node, and erasure-coded puts still wait for every shard | Put p50 with one gray node is 214 ms against 4,111 ms waiting for all three (ADR-0029); commit needs 2 reported copies either way | Feed client latency into placement; quorum for EC puts (4 of 6 shards) |
 | The effect of repair on foreground reads is not measured | The sim shares no capacity between messages, so it is flat by construction; the repair cap itself is measured (peak rate against each limit) | A multi-host run with real disks and NICs |
 | Benchmarks use one client, sequential operations, and a 5-node cluster in one process on loopback | They show what the code costs on one machine, not what a cluster delivers ([docs/benchmarks](docs/benchmarks/README.md)) | Many clients across hosts, warp-style |
 | No real-mode (compose) run of `put -resume`; the dashboard shows version history and restore but no diff | The sim covers resume across a leader failover, and `TestPutResumeAfterCutOff` covers the CLI over real disks | A compose scenario for resume; a diff view on the chunk grid |

@@ -1,6 +1,6 @@
 # 0007. Write path: client fan-out, commit at 2 of 3
 
-Status: accepted
+Status: accepted (the client returns at the quorum, not after every replica: ADR-0029)
 Date: 2026-09-29
 
 ## Context
@@ -11,7 +11,7 @@ Each chunk must reach N=3 storage nodes on distinct racks. The write path decide
 
 | | **Client fan-out, commit at W** | Pipeline chain (GFS, HDFS) | Primary-backup |
 |---|---|---|---|
-| Latency | Slowest of the W fastest replicas | One transfer plus a hop per replica; streamed, so close to one transfer | Two hops |
+| Latency | Slowest of the W fastest replicas (ADR-0029 made the client wait for exactly that, plus a 50 ms grace) | One transfer plus a hop per replica; streamed, so close to one transfer | Two hops |
 | Client egress | N× the data | 1× | 1× |
 | Failure mid-write | Independent replicas; a failure costs that ack only | Chain breaks; pipeline recovery rebuilds it (HDFS's most complex code) | Primary failover, leases |
 | Retry | Re-put is idempotent: content-addressed chunks | Rebuild the chain | Through the primary |

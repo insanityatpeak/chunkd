@@ -41,7 +41,7 @@ Raw: [data/real-latency.csv](data/real-latency.csv)
 
 ## Latency under a gray node and loss (sim)
 
-40 files of 1 MiB read 3 times, 30 puts, 3 seeds pooled, a new client for every operation (a long-lived client learns the slow node from its first reads and avoids it). Gray node: node-1 adds 2 s to every message. Loss: 1% of messages, and a lost call waits out the 10 s call timeout.
+40 files of 1 MiB read 3 times, 30 puts, 3 seeds pooled, a new client for every operation (a long-lived client learns the slow node from its first reads and avoids it). Gray node: node-1 adds 2 s to every message. Loss: 1% of messages, and a lost call waits out the 10 s call timeout. Hedging off reads one replica at a time and makes a put wait for every replica; on, a put returns once two replicas stored each chunk and a 50 ms grace has passed (ADR-0029).
 
 | fault | hedging | op | samples | p50_ms | p95_ms | p99_ms |
 |---|---|---|---|---|---|---|
@@ -51,18 +51,18 @@ Raw: [data/real-latency.csv](data/real-latency.csv)
 | none | off | put | 90 | 187.611 | 240.195 | 272.369 |
 | none | off | get | 360 | 92.087 | 128.469 | 140.468 |
 | none | off | stat | 360 | 42.898 | 68.309 | 75.087 |
-| gray-node | on | put | 90 | 4111.655 | 4216.061 | 4231.576 |
-| gray-node | on | get | 360 | 138.456 | 222.231 | 234.615 |
-| gray-node | on | stat | 360 | 40.205 | 67.397 | 75.872 |
+| gray-node | on | put | 90 | 213.782 | 284.089 | 293.847 |
+| gray-node | on | get | 360 | 136.033 | 220.815 | 234.606 |
+| gray-node | on | stat | 360 | 40.591 | 67.027 | 71.758 |
 | gray-node | off | put | 90 | 4111.180 | 4209.087 | 4258.604 |
 | gray-node | off | get | 360 | 138.895 | 4123.965 | 4140.923 |
 | gray-node | off | stat | 360 | 40.012 | 67.555 | 73.592 |
-| loss-1pct | on | put | 90 | 199.780 | 10274.231 | 30208.952 |
-| loss-1pct | on | get | 360 | 92.092 | 141.516 | 10206.708 |
-| loss-1pct | on | stat | 360 | 40.894 | 72.059 | 10137.435 |
-| loss-1pct | off | put | 90 | 202.805 | 10319.322 | 30208.952 |
-| loss-1pct | off | get | 360 | 92.209 | 134.535 | 10195.546 |
-| loss-1pct | off | stat | 360 | 42.024 | 71.043 | 10143.774 |
+| loss-1pct | on | put | 90 | 184.477 | 10300.546 | 20334.537 |
+| loss-1pct | on | get | 360 | 93.128 | 138.336 | 10183.733 |
+| loss-1pct | on | stat | 360 | 41.537 | 71.187 | 10143.582 |
+| loss-1pct | off | put | 90 | 192.607 | 10300.456 | 20308.909 |
+| loss-1pct | off | get | 360 | 93.016 | 155.832 | 10195.352 |
+| loss-1pct | off | stat | 360 | 42.448 | 69.999 | 10140.975 |
 
 ![Latency under a gray node and loss (sim)](charts/latency-get-p99.svg)
 
@@ -70,19 +70,19 @@ Raw: [data/latency.csv](data/latency.csv)
 
 ## Time to repair after a node kill (sim)
 
-RF 3, 5 nodes, 4 MiB files, node-3 killed. The detector (10 s) plus the repair delay (20 s) make a 30 s floor; `past_floor_s` is what the copies add. `mib_s_past_floor` is 0 when that is under one second.
+RF 3, 5 nodes, 4 MiB files, no message loss (a lost repair message costs a 10 s call timeout, which would swamp the copy time), node-3 killed. The detector (10 s) plus the repair delay (20 s) make a 30 s floor; `past_floor_s` is what the copies add. `mib_s_past_floor` is 0 when that is under one second.
 
 | volume_mib | limit_mib_s | lost_mib | copies | whole_after_kill_s | past_floor_s | mib_s_past_floor |
 |---|---|---|---|---|---|---|
 | 40 | 5 | 40.000 | 10 | 36.500 | 6.500 | 6.154 |
-| 40 | 20 | 40.000 | 10 | 31.250 | 1.250 | 32.000 |
+| 40 | 20 | 40.000 | 10 | 31.000 | 1.000 | 40.000 |
 | 40 | 80 | 40.000 | 10 | 29.750 | 0.000 | 0.000 |
-| 120 | 5 | 120.000 | 30 | 62.500 | 32.500 | 3.692 |
-| 120 | 20 | 120.000 | 29 | 49.500 | 19.500 | 6.154 |
+| 120 | 5 | 120.000 | 30 | 53.250 | 23.250 | 5.161 |
+| 120 | 20 | 120.000 | 30 | 35.750 | 5.750 | 20.870 |
 | 120 | 80 | 120.000 | 30 | 31.500 | 1.500 | 80.000 |
-| 240 | 5 | 240.000 | 60 | 77.500 | 47.500 | 5.053 |
-| 240 | 20 | 240.000 | 60 | 42.000 | 12.000 | 20.000 |
-| 240 | 80 | 240.000 | 60 | 42.750 | 12.750 | 18.824 |
+| 240 | 5 | 240.000 | 60 | 77.000 | 47.000 | 5.106 |
+| 240 | 20 | 240.000 | 60 | 41.500 | 11.500 | 20.870 |
+| 240 | 80 | 240.000 | 60 | 32.750 | 2.750 | 87.273 |
 
 ![Time to repair after a node kill (sim)](charts/repair-time.svg)
 
@@ -94,10 +94,10 @@ Raw: [data/repair-time.csv](data/repair-time.csv)
 
 | mode | samples | p50_ms | p95_ms | p99_ms | max_ms | copy_phase_s | peak_repair_mib_s |
 |---|---|---|---|---|---|---|---|
-| no-fault | 900 | 114.767 | 149.611 | 163.605 | 177.982 | 0.000 | 0.000 |
-| limit-10-mib-s | 621 | 115.053 | 150.311 | 163.789 | 174.184 | 23.687 | 15.423 |
-| limit-40-mib-s | 157 | 114.619 | 148.714 | 161.247 | 168.343 | 5.967 | 43.460 |
-| unlimited | 7 | 124.400 | 145.318 | 145.318 | 145.318 | 0.292 | 592.175 |
+| no-fault | 900 | 114.674 | 149.563 | 164.660 | 177.982 | 0.000 | 0.000 |
+| limit-10-mib-s | 618 | 114.222 | 150.311 | 162.972 | 172.459 | 23.510 | 15.423 |
+| limit-40-mib-s | 152 | 117.335 | 148.714 | 167.571 | 168.343 | 5.783 | 43.460 |
+| unlimited | 3 | 129.990 | 145.318 | 145.318 | 145.318 | 0.135 | 592.175 |
 
 ![Repair rate cap and foreground reads (sim)](charts/repair-foreground.svg)
 
@@ -124,7 +124,7 @@ Raw: [data/resume.csv](data/resume.csv)
 
 ## Cost of a quota check (state machine)
 
-Microseconds for one Begin in the metadata state machine, by number of files in the namespace; ten other namespaces hold that many files between them. With a quota the state machine scans every file (ADR-0025).
+Microseconds for one Begin in the metadata state machine, by number of files in the namespace; ten other namespaces hold that many files between them. With a quota the state machine reads a per-namespace counter (ADR-0028); before it, a limited Begin scanned every file and cost 825 us at 10,000 files and 29,379 us at 100,000.
 
 | mode | files | us_per_begin |
 |---|---|---|

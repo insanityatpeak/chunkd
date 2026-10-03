@@ -1,6 +1,6 @@
 # Architecture decision records
 
-Format: Context, Options considered, Decision, Consequences, At 100× scale ([template](0000-template.md)). No ADR has been superseded. Four were amended by later ones; the status line of each says how.
+Format: Context, Options considered, Decision, Consequences, At 100× scale ([template](0000-template.md)). No ADR has been superseded. Five were amended by later ones; the status line of each says how.
 
 | ADR | Title | Status | Amended by |
 |---|---|---|---|
@@ -10,7 +10,7 @@ Format: Context, Options considered, Decision, Consequences, At 100× scale ([te
 | [0004](0004-event-driven-transport.md) | Event-driven transport and deterministic executor | accepted |  |
 | [0005](0005-chunk-size.md) | Chunk size: 4 MiB | accepted |  |
 | [0006](0006-metadata-model-and-durability.md) | Metadata model and durability | accepted | [0017](0017-raft-library-and-log-storage.md) to [0019](0019-metadata-reads-fencing-and-failover.md) |
-| [0007](0007-write-path.md) | Write path: client fan-out, commit at 2 of 3 | accepted |  |
+| [0007](0007-write-path.md) | Write path: client fan-out, commit at 2 of 3 | accepted | [0029](0029-quorum-puts.md) (the client returns at the quorum) |
 | [0008](0008-placement.md) | Replica placement: rack spread, then least loaded | accepted |  |
 | [0009](0009-rpc-layer.md) | Request/response on top of the event-driven transport | accepted |  |
 | [0010](0010-failure-detector.md) | Failure detector: alive, suspect, dead | accepted |  |
@@ -32,3 +32,4 @@ Format: Context, Options considered, Decision, Consequences, At 100× scale ([te
 | [0026](0026-version-retention-and-diff.md) | Per-path retention and chunk-level version diff | accepted |  |
 | [0027](0027-benchmark-method.md) | Benchmark method: a sim tier and a real tier | accepted |  |
 | [0028](0028-quota-counter.md) | A per-namespace usage counter for quotas | accepted |  |
+| [0029](0029-quorum-puts.md) | Puts return at the replica quorum | accepted |  |
