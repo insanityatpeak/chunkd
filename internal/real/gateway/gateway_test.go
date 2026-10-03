@@ -88,13 +88,18 @@ func (l *locked) GetVersion(ctx context.Context, p string, v uint64, w io.Writer
 
 func setup(t *testing.T) (*httptest.Server, *cluster.Cluster) {
 	t.Helper()
+	return setupWith(t)
+}
+
+func setupWith(t *testing.T, opts ...gateway.Option) (*httptest.Server, *cluster.Cluster) {
+	t.Helper()
 	cfg := cluster.DefaultConfig()
 	cfg.Meta.ChunkSize = 64 << 10
 	c := cluster.New(7, cfg, io.Discard)
 	c.Tick(3 * time.Second)
 	caller := c.NewCaller("gateway")
 	api := &locked{api: client.New(caller, client.Options{Meta: cluster.MetaID, Sleep: caller.Sleep})}
-	srv := httptest.NewServer(gateway.Handler(api, slog.New(slog.NewTextHandler(io.Discard, nil))))
+	srv := httptest.NewServer(gateway.Handler(api, slog.New(slog.NewTextHandler(io.Discard, nil)), opts...))
 	t.Cleanup(srv.Close)
 	return srv, c
 }
