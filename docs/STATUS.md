@@ -1,6 +1,25 @@
 # Status
 
-Current phase: **Phase 7 complete** (erasure coding, resumable uploads, API keys and quotas, versions and CLI), released as [v0.4.0](https://github.com/insanityatpeak/chunkd/releases/tag/v0.4.0). Phase 6 was released as [v0.3.0](https://github.com/insanityatpeak/chunkd/releases/tag/v0.3.0). Phase 5 was released as [v0.2.0](https://github.com/insanityatpeak/chunkd/releases/tag/v0.2.0). Phase 8 (benchmarks, docs, final ship) is next.
+Current phase: **Phase 8 complete** (benchmarks, documentation, final hygiene). Release: v1.0.0, pending the owner's go to merge and tag. Phase 7 was released as [v0.4.0](https://github.com/insanityatpeak/chunkd/releases/tag/v0.4.0), Phase 6 as [v0.3.0](https://github.com/insanityatpeak/chunkd/releases/tag/v0.3.0), Phase 5 as [v0.2.0](https://github.com/insanityatpeak/chunkd/releases/tag/v0.2.0).
+
+## Phase 8 (complete)
+
+No protocol, log-format or on-disk change. Benchmarks, a rewritten design document, an ADR audit, design questions, a write-up and a README pass.
+
+| Item | Evidence |
+|---|---|
+| Benchmarks re-run with one command and produce the committed tables | `go run ./tools/task bench`: `docs/benchmarks/{data,charts,results.md}`; sim tables are exact for a seed, real tables are within noise. ADR-0027 |
+| Design document complete | `docs/design.md`: every phase's mechanism, consistency per operation, CAP per plane, decisions table, prior art, what the sim cannot capture |
+| ADR audit | 0001 to 0027; none superseded; 0001, 0002 and 0006 amended by 0017 to 0019, with an index in `docs/adr/README.md`; stale phase references corrected |
+| Design questions and write-up | `docs/interview.md` (15), `docs/writeup-chaos-harness.md` (about 1,180 words) |
+| README | Benchmark table, dashboard capture, new "What's proven" rows, updated Known limitations and roadmap |
+| Gates | lint, lint-imports, wasm 11.07 MiB, `go test -race -p 1 ./...` green (sim/cluster 684 s), trace-check clean over the tree and all 146 commits |
+
+Findings from the benchmarks, now in Known limitations: a limited Begin scans every file (29 ms at 100,000 files); writes are not hedged; the effect of repair on foreground reads is not measured because the sim shares no capacity.
+
+Not done: the demo GIF is the Phase 7 recording (a refresh needs the compose cluster and the `vhs` image); `docker compose up`, `demo` and the live demo from a fresh clone are to be checked at release.
+
+Possible future work: a per-namespace usage counter for quotas, hedged or latency-aware writes, content-defined chunking, background tiering from copies to erasure coding, a multi-host benchmark run, a compose scenario for `put -resume` and for EC, and a diff view in the dashboard.
 
 ## Phase 7 (complete)
 

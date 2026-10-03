@@ -1,5 +1,20 @@
 # Changelog
 
+## v1.0.0 (2026-10-03)
+
+No change to the protocol, the log format or the data on disk: a v0.4.0 cluster upgrades in place.
+
+### Benchmarks
+- `go run ./tools/task bench` runs every benchmark and writes `docs/benchmarks`: raw CSVs, SVG charts drawn by `internal/bench`, and a generated `results.md`. Stages: `sim` (the `TestBench*` tests in `internal/sim/cluster`, exact for a seed), `meta` (`BenchmarkBegin`, the cost of a quota check), `real` (`cmd/chunkd-bench`: 5 nodes in one process over loopback gRPC and real disks), `report`. A manual `bench` workflow runs it on the standard runner. ADR-0027.
+- Measured for the first time: throughput by size (put 52 to 60 MiB/s, get 157 to 187 MiB/s from 16 MiB up), p50/p95/p99 of put, get and stat, hedged reads against one gray node (get p99 4,141 ms unhedged, 235 ms hedged), repair time by volume and rate cap, the peak repair rate under each cap, and what a resumed upload sends against a restarted one.
+- Found by them, and listed in Known limitations: a limited Begin scans every file in every namespace (29 ms at 100,000 files, inside the apply loop), and writes are not hedged (a gray node moves put p50 from 188 ms to 4,112 ms).
+
+### Documentation
+- `docs/design.md` rewritten to cover versions and CAS, claims, GC, the Raft group and failover, rebalance and drain, erasure coding, resumable uploads, auth and quotas, retention, a consistency table per operation, CAP per plane, a decisions table, prior art (GFS, HDFS, Ceph, S3, MinIO, SeaweedFS) and what the simulator cannot capture.
+- `docs/interview.md`: fifteen design questions answered from the code, tests and measurements. `docs/writeup-chaos-harness.md`: what the chaos harness found. `docs/adr/README.md`: an index with statuses; stale phase references in ADR-0001, 0002, 0005 to 0008 and 0014 corrected.
+- README: a dashboard capture, a benchmark table, more rows in "What's proven", updated Known limitations and roadmap.
+- `web/scripts/capture.mjs` records the dashboard capture.
+
 ## v0.4.0 (2026-10-03)
 
 ### Erasure coding
