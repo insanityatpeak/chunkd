@@ -21,7 +21,7 @@ func (c *Direct) BeginResumable(ctx context.Context, path string, size int64, su
 	}
 	var begin chunkdv1.BeginUploadResponse
 	if err := c.meta(ctx, wire.KindBegin, &chunkdv1.BeginUploadRequest{Path: path, ExpectedVersion: expected, Size: size, LastWriterWins: opts.LastWriterWins,
-		RequestId: c.requestID(), Redundancy: opts.Redundancy.proto(), Sha256: sum[:]}, &begin); err != nil {
+		RequestId: c.requestID(), Redundancy: opts.Redundancy.proto(), Sha256: sum[:], Quota: quotaOf(ctx)}, &begin); err != nil {
 		return UploadInfo{}, err
 	}
 	if begin.GetRedundancy() != opts.Redundancy.proto() {

@@ -178,6 +178,51 @@ func ValidPath(p string) bool {
 	return strings.HasPrefix(p, "/") && p != "/" && path.Clean(p) == p && !strings.ContainsRune(p, 0)
 }
 
+// Namespace is the first segment of a path: what an API key owns and what a
+// quota limits (ADR-0025).
+func Namespace(p string) string {
+	rest := strings.TrimPrefix(p, "/")
+	if i := strings.IndexByte(rest, '/'); i >= 0 {
+		return rest[:i]
+	}
+	return rest
+}
+
+// NamespaceBytes is the logical size of the live versions under ns plus the
+// size every pending upload there has reserved. Retired versions kept for
+// undelete are not counted.
+// SIMPLIFIED: a scan per quota-limited Begin; S3-compatible stores keep a
+// running usage counter per bucket. An overwrite counts the old and the new
+// version until the commit.
+func (s *State) NamespaceBytes(ns string) int64 {
+	var n int64
+	for p, f := range s.files {
+		if Namespace(p) != ns || len(f.Versions) == 0 {
+			continue
+		}
+		if v := f.Versions[len(f.Versions)-1]; !v.Tombstone {
+			n += v.Size
+		}
+	}
+	for _, u := range s.uploads {
+		if Namespace(u.Path) == ns {
+			n += u.Size
+		}
+	}
+	return n
+}
+
+// overQuota refuses growing ns by add bytes past limit (0: unlimited).
+func (s *State) overQuota(path string, add, limit int64) error {
+	if limit <= 0 {
+		return nil
+	}
+	if used := s.NamespaceBytes(Namespace(path)); used+add > limit {
+		return iface.Errorf(iface.CodeQuota, "namespace %q holds %d of %d bytes, %d more would pass its quota", Namespace(path), used, limit, add)
+	}
+	return nil
+}
+
 func (s *State) lastVersion(p string) uint64 {
 	f := s.files[p]
 	if f == nil || len(f.Versions) == 0 {
@@ -241,6 +286,9 @@ func (s *State) Validate(op *chunkdv1.Op) error {
 		}
 		if live := s.liveVersion(b.GetPath()); live != b.GetExpectedVersion() && !b.GetLastWriterWins() {
 			return iface.Errorf(iface.CodeConflict, "%s is at version %d, expected %d", b.GetPath(), live, b.GetExpectedVersion())
+		}
+		if err := s.overQuota(b.GetPath(), b.GetSize(), b.GetQuota()); err != nil {
+			return err
 		}
 	case *chunkdv1.Op_Commit:
 		c := o.Commit
@@ -316,6 +364,10 @@ func (s *State) Validate(op *chunkdv1.Op) error {
 		}
 		if live := s.liveVersion(u.GetPath()); live != u.GetExpectedVersion() {
 			return iface.Errorf(iface.CodeConflict, "%s is at version %d, expected %d", u.GetPath(), live, u.GetExpectedVersion())
+		}
+		src, _ := s.StatVersion(u.GetPath(), u.GetVersion())
+		if err := s.overQuota(u.GetPath(), src.Size, u.GetQuota()); err != nil {
+			return err
 		}
 	case *chunkdv1.Op_AdvanceEpoch:
 		if o.AdvanceEpoch.GetRetainEpochs() == 0 {

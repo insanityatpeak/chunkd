@@ -19,9 +19,11 @@ const (
 	CodeInternal         // a bug
 	CodeCorrupt          // stored data does not match its hash; no intact copy was served
 	CodeNotLeader        // this metadata peer is not the leader; Msg names the leader, or is empty if unknown
+	CodeQuota            // the namespace would pass its byte quota (ADR-0025)
+	CodeDenied           // the key may not touch this path or upload
 )
 
-var codeNames = [...]string{"unknown", "not_found", "conflict", "invalid", "unavailable", "retry", "internal", "corrupt", "not_leader"}
+var codeNames = [...]string{"unknown", "not_found", "conflict", "invalid", "unavailable", "retry", "internal", "corrupt", "not_leader", "quota_exceeded", "denied"}
 
 func (c Code) String() string {
 	if int(c) < len(codeNames) {

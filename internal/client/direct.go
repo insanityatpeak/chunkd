@@ -177,7 +177,7 @@ func (c *Direct) Put(ctx context.Context, path string, r io.Reader, size int64, 
 		return Manifest{}, err
 	}
 	var begin chunkdv1.BeginUploadResponse
-	if err := c.meta(ctx, wire.KindBegin, &chunkdv1.BeginUploadRequest{Path: path, ExpectedVersion: expected, Size: size, LastWriterWins: opts.LastWriterWins, RequestId: c.requestID(), Redundancy: opts.Redundancy.proto()}, &begin); err != nil {
+	if err := c.meta(ctx, wire.KindBegin, &chunkdv1.BeginUploadRequest{Path: path, ExpectedVersion: expected, Size: size, LastWriterWins: opts.LastWriterWins, RequestId: c.requestID(), Redundancy: opts.Redundancy.proto(), Quota: quotaOf(ctx)}, &begin); err != nil {
 		return Manifest{}, err
 	}
 	var m Manifest
@@ -580,7 +580,7 @@ func (c *Direct) Undelete(ctx context.Context, path string, version uint64) (uin
 		return 0, err
 	}
 	var resp chunkdv1.UndeleteResponse
-	err := c.meta(ctx, wire.KindUndelete, &chunkdv1.UndeleteRequest{Path: path, Version: version, ExpectedVersion: expected}, &resp)
+	err := c.meta(ctx, wire.KindUndelete, &chunkdv1.UndeleteRequest{Path: path, Version: version, ExpectedVersion: expected, Quota: quotaOf(ctx)}, &resp)
 	return resp.GetVersion(), err
 }
 

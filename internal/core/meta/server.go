@@ -534,7 +534,7 @@ func (s *Server) begin(m iface.Message, respond iface.Responder) {
 		return
 	}
 	op := &chunkdv1.BeginUploadOp{Path: req.GetPath(), ExpectedVersion: req.GetExpectedVersion(), Size: req.GetSize(), ChunkSize: int32(s.cfg.ChunkSize),
-		Claims: true, LastWriterWins: req.GetLastWriterWins(), RequestId: req.GetRequestId(), Redundancy: req.GetRedundancy(), Sha256: req.GetSha256()}
+		Claims: true, LastWriterWins: req.GetLastWriterWins(), RequestId: req.GetRequestId(), Redundancy: req.GetRedundancy(), Sha256: req.GetSha256(), Quota: req.GetQuota()}
 	for _, nodes := range pl {
 		r := &chunkdv1.Replicas{}
 		for _, id := range nodes {
@@ -797,7 +797,7 @@ func (s *Server) undelete(m iface.Message, respond iface.Responder) {
 		respond(wire.Marshal(&chunkdv1.UndeleteResponse{Version: v}), nil)
 		return
 	}
-	s.propose(&chunkdv1.Op{Op: &chunkdv1.Op_Undelete{Undelete: &chunkdv1.UndeleteOp{Path: req.GetPath(), Version: req.GetVersion(), ExpectedVersion: req.GetExpectedVersion()}}}, func(res Result, err error) {
+	s.propose(&chunkdv1.Op{Op: &chunkdv1.Op_Undelete{Undelete: &chunkdv1.UndeleteOp{Path: req.GetPath(), Version: req.GetVersion(), ExpectedVersion: req.GetExpectedVersion(), Quota: req.GetQuota()}}}, func(res Result, err error) {
 		if err != nil && notOutcomeUnknown(err) {
 			if v, ok := s.state.Restored(req.GetPath(), req.GetVersion(), req.GetExpectedVersion()); ok {
 				respond(wire.Marshal(&chunkdv1.UndeleteResponse{Version: v}), nil)

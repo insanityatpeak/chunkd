@@ -241,7 +241,11 @@ type BeginUploadOp struct {
 	Redundancy Redundancy `protobuf:"varint,9,opt,name=redundancy,proto3,enum=chunkd.v1.Redundancy" json:"redundancy,omitempty"`
 	// The whole file's SHA-256, declared at Begin by a resumable upload
 	// (ADR-0024); Commit must then carry the same. Empty: not declared.
-	Sha256        []byte `protobuf:"bytes,10,opt,name=sha256,proto3" json:"sha256,omitempty"`
+	Sha256 []byte `protobuf:"bytes,10,opt,name=sha256,proto3" json:"sha256,omitempty"`
+	// Byte limit of the path's namespace (its first segment), set by a gateway
+	// that authenticates; 0 is unlimited. Begin is refused when the namespace's
+	// live bytes plus pending uploads plus size would pass it (ADR-0025).
+	Quota         int64 `protobuf:"varint,11,opt,name=quota,proto3" json:"quota,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -344,6 +348,13 @@ func (x *BeginUploadOp) GetSha256() []byte {
 		return x.Sha256
 	}
 	return nil
+}
+
+func (x *BeginUploadOp) GetQuota() int64 {
+	if x != nil {
+		return x.Quota
+	}
+	return 0
 }
 
 type ChunkClaim struct {
@@ -626,8 +637,10 @@ type UndeleteOp struct {
 	Version uint64                 `protobuf:"varint,2,opt,name=version,proto3" json:"version,omitempty"`
 	// Live version the caller expects; 0 means the path must be deleted.
 	ExpectedVersion uint64 `protobuf:"varint,3,opt,name=expected_version,json=expectedVersion,proto3" json:"expected_version,omitempty"`
-	unknownFields   protoimpl.UnknownFields
-	sizeCache       protoimpl.SizeCache
+	// See BeginUploadOp.quota.
+	Quota         int64 `protobuf:"varint,4,opt,name=quota,proto3" json:"quota,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
 }
 
 func (x *UndeleteOp) Reset() {
@@ -677,6 +690,13 @@ func (x *UndeleteOp) GetVersion() uint64 {
 func (x *UndeleteOp) GetExpectedVersion() uint64 {
 	if x != nil {
 		return x.ExpectedVersion
+	}
+	return 0
+}
+
+func (x *UndeleteOp) GetQuota() int64 {
+	if x != nil {
+		return x.Quota
 	}
 	return 0
 }
@@ -1886,7 +1906,9 @@ type BeginUploadRequest struct {
 	RequestId  []byte     `protobuf:"bytes,5,opt,name=request_id,json=requestId,proto3" json:"request_id,omitempty"`
 	Redundancy Redundancy `protobuf:"varint,6,opt,name=redundancy,proto3,enum=chunkd.v1.Redundancy" json:"redundancy,omitempty"`
 	// See BeginUploadOp.sha256.
-	Sha256        []byte `protobuf:"bytes,7,opt,name=sha256,proto3" json:"sha256,omitempty"`
+	Sha256 []byte `protobuf:"bytes,7,opt,name=sha256,proto3" json:"sha256,omitempty"`
+	// See BeginUploadOp.quota.
+	Quota         int64 `protobuf:"varint,8,opt,name=quota,proto3" json:"quota,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -1968,6 +1990,13 @@ func (x *BeginUploadRequest) GetSha256() []byte {
 		return x.Sha256
 	}
 	return nil
+}
+
+func (x *BeginUploadRequest) GetQuota() int64 {
+	if x != nil {
+		return x.Quota
+	}
+	return 0
 }
 
 type BeginUploadResponse struct {
@@ -2661,8 +2690,10 @@ type UndeleteRequest struct {
 	// 0 restores the newest retained version that is not a delete marker.
 	Version         uint64 `protobuf:"varint,2,opt,name=version,proto3" json:"version,omitempty"`
 	ExpectedVersion uint64 `protobuf:"varint,3,opt,name=expected_version,json=expectedVersion,proto3" json:"expected_version,omitempty"`
-	unknownFields   protoimpl.UnknownFields
-	sizeCache       protoimpl.SizeCache
+	// See BeginUploadOp.quota.
+	Quota         int64 `protobuf:"varint,4,opt,name=quota,proto3" json:"quota,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
 }
 
 func (x *UndeleteRequest) Reset() {
@@ -2712,6 +2743,13 @@ func (x *UndeleteRequest) GetVersion() uint64 {
 func (x *UndeleteRequest) GetExpectedVersion() uint64 {
 	if x != nil {
 		return x.ExpectedVersion
+	}
+	return 0
+}
+
+func (x *UndeleteRequest) GetQuota() int64 {
+	if x != nil {
+		return x.Quota
 	}
 	return 0
 }
@@ -4704,7 +4742,7 @@ const file_chunkd_v1_meta_proto_rawDesc = "" +
 	"\n" +
 	"\x14chunkd/v1/meta.proto\x12\tchunkd.v1\" \n" +
 	"\bReplicas\x12\x14\n" +
-	"\x05nodes\x18\x01 \x03(\tR\x05nodes\"\xe4\x02\n" +
+	"\x05nodes\x18\x01 \x03(\tR\x05nodes\"\xfa\x02\n" +
 	"\rBeginUploadOp\x12\x12\n" +
 	"\x04path\x18\x01 \x01(\tR\x04path\x12)\n" +
 	"\x10expected_version\x18\x02 \x01(\x04R\x0fexpectedVersion\x12\x12\n" +
@@ -4720,7 +4758,8 @@ const file_chunkd_v1_meta_proto_rawDesc = "" +
 	"redundancy\x18\t \x01(\x0e2\x15.chunkd.v1.RedundancyR\n" +
 	"redundancy\x12\x16\n" +
 	"\x06sha256\x18\n" +
-	" \x01(\fR\x06sha256\"J\n" +
+	" \x01(\fR\x06sha256\x12\x14\n" +
+	"\x05quota\x18\v \x01(\x03R\x05quota\"J\n" +
 	"\n" +
 	"ChunkClaim\x12\x14\n" +
 	"\x05index\x18\x01 \x01(\x05R\x05index\x12\x0e\n" +
@@ -4737,12 +4776,13 @@ const file_chunkd_v1_meta_proto_rawDesc = "" +
 	"\tupload_id\x18\x01 \x01(\x04R\buploadId\"I\n" +
 	"\bDeleteOp\x12\x12\n" +
 	"\x04path\x18\x01 \x01(\tR\x04path\x12)\n" +
-	"\x10expected_version\x18\x02 \x01(\x04R\x0fexpectedVersion\"e\n" +
+	"\x10expected_version\x18\x02 \x01(\x04R\x0fexpectedVersion\"{\n" +
 	"\n" +
 	"UndeleteOp\x12\x12\n" +
 	"\x04path\x18\x01 \x01(\tR\x04path\x12\x18\n" +
 	"\aversion\x18\x02 \x01(\x04R\aversion\x12)\n" +
-	"\x10expected_version\x18\x03 \x01(\x04R\x0fexpectedVersion\"X\n" +
+	"\x10expected_version\x18\x03 \x01(\x04R\x0fexpectedVersion\x12\x14\n" +
+	"\x05quota\x18\x04 \x01(\x03R\x05quota\"X\n" +
 	"\x0eAdvanceEpochOp\x12#\n" +
 	"\rretain_epochs\x18\x01 \x01(\rR\fretainEpochs\x12!\n" +
 	"\flease_epochs\x18\x02 \x01(\rR\vleaseEpochs\"\x83\x01\n" +
@@ -4832,7 +4872,7 @@ const file_chunkd_v1_meta_proto_rawDesc = "" +
 	"\x04addr\x18\x02 \x01(\tR\x04addr\x12\x18\n" +
 	"\asuspect\x18\x03 \x01(\bR\asuspect\"@\n" +
 	"\x0eChunkPlacement\x12.\n" +
-	"\breplicas\x18\x01 \x03(\v2\x12.chunkd.v1.ReplicaR\breplicas\"\xff\x01\n" +
+	"\breplicas\x18\x01 \x03(\v2\x12.chunkd.v1.ReplicaR\breplicas\"\x95\x02\n" +
 	"\x12BeginUploadRequest\x12\x12\n" +
 	"\x04path\x18\x01 \x01(\tR\x04path\x12)\n" +
 	"\x10expected_version\x18\x02 \x01(\x04R\x0fexpectedVersion\x12\x12\n" +
@@ -4843,7 +4883,8 @@ const file_chunkd_v1_meta_proto_rawDesc = "" +
 	"\n" +
 	"redundancy\x18\x06 \x01(\x0e2\x15.chunkd.v1.RedundancyR\n" +
 	"redundancy\x12\x16\n" +
-	"\x06sha256\x18\a \x01(\fR\x06sha256\"\xe4\x01\n" +
+	"\x06sha256\x18\a \x01(\fR\x06sha256\x12\x14\n" +
+	"\x05quota\x18\b \x01(\x03R\x05quota\"\xe4\x01\n" +
 	"\x13BeginUploadResponse\x12\x1b\n" +
 	"\tupload_id\x18\x01 \x01(\x04R\buploadId\x12\x1d\n" +
 	"\n" +
@@ -4888,11 +4929,12 @@ const file_chunkd_v1_meta_proto_rawDesc = "" +
 	"\x04path\x18\x01 \x01(\tR\x04path\x12)\n" +
 	"\x10expected_version\x18\x02 \x01(\x04R\x0fexpectedVersion\"*\n" +
 	"\x0eDeleteResponse\x12\x18\n" +
-	"\aversion\x18\x01 \x01(\x04R\aversion\"j\n" +
+	"\aversion\x18\x01 \x01(\x04R\aversion\"\x80\x01\n" +
 	"\x0fUndeleteRequest\x12\x12\n" +
 	"\x04path\x18\x01 \x01(\tR\x04path\x12\x18\n" +
 	"\aversion\x18\x02 \x01(\x04R\aversion\x12)\n" +
-	"\x10expected_version\x18\x03 \x01(\x04R\x0fexpectedVersion\",\n" +
+	"\x10expected_version\x18\x03 \x01(\x04R\x0fexpectedVersion\x12\x14\n" +
+	"\x05quota\x18\x04 \x01(\x03R\x05quota\",\n" +
 	"\x10UndeleteResponse\x12\x18\n" +
 	"\aversion\x18\x01 \x01(\x04R\aversion\"\x95\x01\n" +
 	"\rChunkLocation\x12\x0e\n" +

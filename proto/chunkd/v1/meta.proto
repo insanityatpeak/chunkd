@@ -43,6 +43,10 @@ message BeginUploadOp {
   // The whole file's SHA-256, declared at Begin by a resumable upload
   // (ADR-0024); Commit must then carry the same. Empty: not declared.
   bytes sha256 = 10;
+  // Byte limit of the path's namespace (its first segment), set by a gateway
+  // that authenticates; 0 is unlimited. Begin is refused when the namespace's
+  // live bytes plus pending uploads plus size would pass it (ADR-0025).
+  int64 quota = 11;
 }
 
 message ChunkClaim {
@@ -82,6 +86,8 @@ message UndeleteOp {
   uint64 version = 2;
   // Live version the caller expects; 0 means the path must be deleted.
   uint64 expected_version = 3;
+  // See BeginUploadOp.quota.
+  int64 quota = 4;
 }
 
 // AdvanceEpochOp moves logical time forward one GC epoch. Retired versions
@@ -261,6 +267,8 @@ message BeginUploadRequest {
   Redundancy redundancy = 6;
   // See BeginUploadOp.sha256.
   bytes sha256 = 7;
+  // See BeginUploadOp.quota.
+  int64 quota = 8;
 }
 
 message BeginUploadResponse {
@@ -346,6 +354,8 @@ message UndeleteRequest {
   // 0 restores the newest retained version that is not a delete marker.
   uint64 version = 2;
   uint64 expected_version = 3;
+  // See BeginUploadOp.quota.
+  int64 quota = 4;
 }
 
 message UndeleteResponse {
