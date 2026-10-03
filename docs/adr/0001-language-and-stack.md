@@ -1,6 +1,6 @@
 # 0001. Language and stack
 
-Status: accepted
+Status: accepted (the Raft library was changed by ADR-0017: etcd raft, not hashicorp/raft)
 Date: 2026-09-29
 
 ## Context
@@ -22,7 +22,7 @@ chunkd is a metadata service, storage nodes and a gateway that talk over RPC, st
 
 ## Decision
 
-Go. The deciding factors are the race detector for concurrent code, hashicorp/raft plus porcupine for the hard parts, and a WASM target in the standard toolchain. The module declares `go 1.25` because grpc-go 1.84 requires it; CI and the Docker build use Go 1.27.
+Go. The deciding factors are the race detector for concurrent code, etcd raft (first hashicorp/raft; see ADR-0017) plus porcupine for the hard parts, and a WASM target in the standard toolchain. The module declares `go 1.26` (grpc-go 1.84 needs a recent toolchain); CI and the Docker build use Go 1.27.
 
 Rest of the stack (locked): gRPC + protobuf with buf, bbolt for metadata, plain files for chunks, `log/slog` JSON logs, Prometheus text metrics, Docker compose, Preact + TypeScript + Vite for the dashboard.
 

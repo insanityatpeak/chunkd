@@ -31,4 +31,4 @@ Old versions stay readable (`chunkd get --version N`, `chunkd log <path>`) until
 
 ## At 100× scale
 
-Contention per path does not change with cluster size, but the metadata server serialises every commit. The per-path check stays O(1); the bottleneck is the single log (Phase 5 replicates it but does not shard it). Sharding the namespace across metadata groups keeps CAS per path local to one group.
+Contention per path does not change with cluster size, but the metadata server serialises every commit. The per-path check stays O(1); the bottleneck is the single log (ADR-0017 replicates it but does not shard it). Sharding the namespace across metadata groups keeps CAS per path local to one group.

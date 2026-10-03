@@ -1,11 +1,11 @@
 # 0006. Metadata model and durability
 
-Status: accepted
+Status: accepted (the single server became a Raft group in ADR-0017 to 0019; the model is as described; the WAL now stores Raft entries and hard state, ADR-0017)
 Date: 2026-09-29
 
 ## Context
 
-The metadata server maps paths to versions and versions to chunks. It must survive crashes without losing acknowledged commits, never expose a half-written file, and be ready for Raft replication (Phase 5) and garbage collection (Phase 4).
+The metadata server maps paths to versions and versions to chunks. It must survive crashes without losing acknowledged commits, never expose a half-written file, and be ready for Raft replication (ADR-0017) and garbage collection (ADR-0016).
 
 ## Model
 
@@ -18,7 +18,7 @@ NOT durable: chunk locations, node load, liveness. Rebuilt from heartbeats and b
 
 - Versions are logical and per path. `BeginUpload(path, expected_version)` is a compare-and-swap against the live version (0 = must not exist); the check repeats at commit, so of two racing writers exactly one wins.
 - A version becomes visible in the single log entry that commits it. Pending uploads never appear in `Stat` or `List`.
-- `refcount` counts committed references; Phase 4 GC decrements it. The schema is refcount-ready now.
+- `refcount` counts committed references; GC decrements it (ADR-0016). The schema is refcount-ready now.
 - Each version records the upload that created it, so a repeated commit returns the same version (see `docs/bugs-found.md` #2).
 
 ## Options considered for durability
@@ -26,7 +26,7 @@ NOT durable: chunk locations, node load, liveness. Rebuilt from heartbeats and b
 | Option | For | Against |
 |---|---|---|
 | bbolt only, one transaction per op | Simple; bbolt fsyncs each commit | Every op rewrites B+tree pages; no op log to replicate later |
-| **WAL of ops + periodic snapshot in bbolt** | Append-only fsync per op; the op log is exactly what Raft replicates in Phase 5; snapshots bound replay time | Two files to keep consistent |
+| **WAL of ops + periodic snapshot in bbolt** | Append-only fsync per op; the op log is exactly what Raft replicates (ADR-0017); snapshots bound replay time | Two files to keep consistent |
 | Snapshot only (GFS checkpoint + edit log) | This is the same design under other names | — |
 
 ## Decision
@@ -39,14 +39,14 @@ Locations are not persisted. As in GFS and HDFS, nodes are the source of truth f
 
 ## Consequences
 
-- Single metadata server: while it is down nothing can be read or written. Chunk data on nodes is untouched, and the server recovers from its own disk.
+- With a single metadata server (the original deployment, still the `small` profile): while it is down nothing can be read or written. Chunk data on nodes is untouched, and the server recovers from its own disk.
 - After a restart, reads return no replicas for a chunk until its holders report (under a second with 1 s heartbeats).
-- Abandoned pending uploads stay in the state until Phase 4 GC.
+- Abandoned pending uploads stay in the state until their lease runs out (ADR-0016).
 - `TestRestartRecoversStateAndLocations`, `TestSnapshotDuringOperationRecovers` and the metastore torn-tail tests back these claims.
 
-## Path to high availability (Phase 5)
+## High availability (done in ADR-0017 to 0019)
 
-`MetaStore.Append` becomes "propose to Raft and wait for commit". The state machine, op format and snapshot format do not change. The three metadata containers in compose already exist for this; today meta-2 and meta-3 are idle.
+The log became Raft's: `MetaStore` is the durable state of one peer, and a write is "propose and wait for apply" (ADR-0017). The state machine and op format did not change; the WAL record format did. Compose runs three metadata peers; the `small` profile runs one.
 
 ## At 100× scale
 

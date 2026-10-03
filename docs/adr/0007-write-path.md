@@ -23,7 +23,7 @@ The client sends each chunk to all N placed replicas in parallel and retries fai
 
 Ordering and chains exist to serialise mutations. Chunks here are immutable and named by their hash, so neither is needed.
 
-W=2 of 3 keeps writes available with one node down. The cost is a window where a chunk has two copies; Phase 2 repair closes it.
+W=2 of 3 keeps writes available with one node down. The cost is a window where a chunk has two copies; repair (ADR-0011) closes it.
 
 ## Consequences
 

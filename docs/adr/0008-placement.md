@@ -31,7 +31,7 @@ The chosen placement is written into the `BeginUpload` log entry, so replay does
 ## Consequences
 
 - Rack spread outranks load. With 5 nodes over 3 racks (the compose layout: r1 ×2, r2 ×2, r3 ×1) the single r3 node holds a replica of every chunk and fills first. The e2e run shows it: node-3 held all 5 chunks of a 20 MiB file. Balanced racks avoid this.
-- Placement ignores chunks that already exist. Two identical chunks in one upload are placed twice and end up on the union of both placements (4 replicas were observed in a test). Phase 4 dedup will place on existing locations first.
+- Placement ignores chunks that already exist. Two identical chunks in one upload are placed twice and end up on the union of both placements (4 replicas were observed in a test). Dedup (ADR-0015) skips writing a chunk the cluster already holds with 2 reported copies, but chunks written close together can still each be placed.
 - `TestPlacementProperties` checks over 300 random clusters: distinct nodes, distinct racks whenever enough racks exist, never on dead or draining nodes.
 
 ## At 100× scale

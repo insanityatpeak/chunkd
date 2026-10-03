@@ -5,7 +5,7 @@ Date: 2026-09-29
 
 ## Context
 
-Files are split into fixed-size, content-addressed chunks (SHA-256 of the bytes). The chunk is the unit of placement, replication, repair, verification and, from Phase 4, deduplication. The target is a small cluster (3 to 10 nodes, terabytes), plus a browser demo that uploads files up to 50 MiB.
+Files are split into fixed-size, content-addressed chunks (SHA-256 of the bytes). The chunk is the unit of placement, replication, repair, verification and deduplication (ADR-0015). The target is a small cluster (3 to 10 nodes, terabytes), plus a browser demo that uploads files up to 50 MiB.
 
 ## Options considered
 
