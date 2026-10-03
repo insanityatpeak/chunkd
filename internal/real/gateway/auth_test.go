@@ -199,3 +199,21 @@ func TestQuotaRefusalReadsNoBytes(t *testing.T) {
 		t.Fatal(err)
 	}
 }
+
+func TestRetentionIsPerNamespace(t *testing.T) {
+	_, alice, bob, _ := keyed(t)
+	ctx := context.Background()
+	data := payload(10 << 10)
+	if _, err := alice.Put(ctx, "/alice/r", bytes.NewReader(data), int64(len(data)), client.PutOptions{}); err != nil {
+		t.Fatal(err)
+	}
+	if err := alice.SetRetention(ctx, "/alice/r", 5); err != nil {
+		t.Fatal(err)
+	}
+	if err := bob.SetRetention(ctx, "/alice/r", 5); iface.CodeOf(err) != iface.CodeDenied {
+		t.Fatalf("bob sets alice's retention: %v", err)
+	}
+	if err := alice.SetRetention(ctx, "/alice/missing", 5); iface.CodeOf(err) != iface.CodeNotFound {
+		t.Fatalf("a path with no versions: %v", err)
+	}
+}
