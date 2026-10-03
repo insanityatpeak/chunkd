@@ -213,6 +213,26 @@ type PutOptions struct {
 	Redundancy Redundancy
 }
 
+// UploadInfo is a resumable upload's progress (ADR-0024).
+type UploadInfo struct {
+	ID         uint64     `json:"id"`
+	Path       string     `json:"path"`
+	Size       int64      `json:"size"`
+	SHA256     string     `json:"sha256"` // hex, declared at begin
+	ChunkSize  int        `json:"chunkSize"`
+	Redundancy Redundancy `json:"redundancy,omitempty"`
+	// Offset is where to append next: the bytes of the leading chunks that
+	// are claimed and stored. Claimed is the end of the leading claimed run,
+	// the furthest offset Append accepts.
+	Offset  int64 `json:"offset"`
+	Claimed int64 `json:"claimed"`
+	// Version is set once the upload committed.
+	Version uint64 `json:"version,omitempty"`
+	// LeaseExpiresEpoch is the GC epoch at which a pending upload expires.
+	LeaseExpiresEpoch uint64 `json:"leaseExpiresEpoch,omitempty"`
+	Epoch             uint64 `json:"epoch,omitempty"`
+}
+
 // VersionInfo is one entry of a file's history.
 type VersionInfo struct {
 	Version uint64 `json:"version"`
@@ -251,6 +271,13 @@ type API interface {
 	// NodeAdmin sets a storage node's admin state: "draining", "active"
 	// (undrain) or "decommissioned", refused while unsafe (ADR-0021).
 	NodeAdmin(ctx context.Context, node, state string) (NodeAdminResult, error)
+	// BeginResumable, UploadStatus and Append are the resumable upload
+	// (ADR-0024): open one with the file's size and SHA-256, ask where it
+	// is from any process, and append whole chunks from there. The append
+	// that reaches the end commits.
+	BeginResumable(ctx context.Context, path string, size int64, sum [32]byte, opts PutOptions) (UploadInfo, error)
+	UploadStatus(ctx context.Context, id uint64) (UploadInfo, error)
+	Append(ctx context.Context, id uint64, offset int64, r io.Reader, n int64) (UploadInfo, error)
 }
 
 // ManifestWriter is an io.Writer that wants the manifest before the first

@@ -43,9 +43,17 @@ func (c *Client) url(p string, q url.Values) string {
 func filesURL(path string) string { return "/files" + path }
 
 func (c *Client) do(ctx context.Context, method, u string, body io.Reader, size int64, out any) (*http.Response, error) {
+	return c.doHeader(ctx, method, u, nil, body, size, out)
+}
+
+// doHeader is do with request headers.
+func (c *Client) doHeader(ctx context.Context, method, u string, hdr http.Header, body io.Reader, size int64, out any) (*http.Response, error) {
 	req, err := http.NewRequestWithContext(ctx, method, u, body)
 	if err != nil {
 		return nil, err
+	}
+	for k, v := range hdr {
+		req.Header[k] = v
 	}
 	if body != nil {
 		req.ContentLength = size
@@ -206,4 +214,45 @@ func (c *Client) Cluster(ctx context.Context, eventsAfter uint64) (client.Cluste
 	}
 	_, err := c.do(ctx, http.MethodGet, c.url("/cluster", q), nil, 0, &out)
 	return out, err
+}
+
+// BeginResumable opens a resumable upload at the gateway (POST /uploads).
+func (c *Client) BeginResumable(ctx context.Context, path string, size int64, sum [32]byte, opts client.PutOptions) (client.UploadInfo, error) {
+	q := url.Values{}
+	switch {
+	case opts.LastWriterWins:
+		q.Set("lww", "1")
+	case !opts.Overwrite:
+		q.Set("expected", strconv.FormatUint(opts.ExpectedVersion, 10))
+	}
+	if opts.Redundancy != client.Replicated {
+		q.Set("redundancy", string(opts.Redundancy))
+	}
+	hdr := http.Header{}
+	hdr.Set(gateway.HeaderTus, gateway.TusVersion)
+	hdr.Set(gateway.HeaderUploadLength, strconv.FormatInt(size, 10))
+	hdr.Set(gateway.HeaderUploadSHA256, hex.EncodeToString(sum[:]))
+	var info client.UploadInfo
+	_, err := c.doHeader(ctx, http.MethodPost, c.url("/uploads"+path, q), hdr, nil, 0, &info)
+	return info, err
+}
+
+// UploadStatus reads a resumable upload's progress (GET /uploads/{id}).
+func (c *Client) UploadStatus(ctx context.Context, id uint64) (client.UploadInfo, error) {
+	var info client.UploadInfo
+	_, err := c.do(ctx, http.MethodGet, c.url("/uploads/"+strconv.FormatUint(id, 10), nil), nil, 0, &info)
+	return info, err
+}
+
+// Append sends whole chunks at offset (PATCH /uploads/{id}) and returns the
+// upload's progress afterwards.
+func (c *Client) Append(ctx context.Context, id uint64, offset int64, r io.Reader, n int64) (client.UploadInfo, error) {
+	hdr := http.Header{}
+	hdr.Set(gateway.HeaderTus, gateway.TusVersion)
+	hdr.Set(gateway.HeaderUploadOffset, strconv.FormatInt(offset, 10))
+	hdr.Set("Content-Type", gateway.ContentTypeOffset)
+	if _, err := c.doHeader(ctx, http.MethodPatch, c.url("/uploads/"+strconv.FormatUint(id, 10), nil), hdr, r, n, nil); err != nil {
+		return client.UploadInfo{}, err
+	}
+	return c.UploadStatus(ctx, id)
 }

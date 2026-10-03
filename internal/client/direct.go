@@ -147,6 +147,22 @@ const (
 	groupAttempts = 10
 )
 
+// expectedVersion is the live version a write replaces: opts.ExpectedVersion,
+// or with Overwrite whatever is live now (0 if nothing).
+func (c *Direct) expectedVersion(ctx context.Context, path string, opts PutOptions) (uint64, error) {
+	if !opts.Overwrite || opts.LastWriterWins {
+		return opts.ExpectedVersion, nil
+	}
+	st, err := c.Stat(ctx, path)
+	switch {
+	case err == nil:
+		return st.Version, nil
+	case iface.CodeOf(err) == iface.CodeNotFound:
+		return 0, nil
+	}
+	return 0, err
+}
+
 // Put uploads r (exactly size bytes) as a new version of path.
 //
 // Protocol: Begin (placement per chunk) → for each chunk, Claim it, then
@@ -156,23 +172,15 @@ const (
 // SIMPLIFIED: chunks go one at a time, with one claim round trip each. HDFS
 // keeps a window of packets in flight so disk and network overlap.
 func (c *Direct) Put(ctx context.Context, path string, r io.Reader, size int64, opts PutOptions) (Manifest, error) {
-	expected := opts.ExpectedVersion
-	if opts.Overwrite && !opts.LastWriterWins {
-		expected = 0
-		st, err := c.Stat(ctx, path)
-		switch {
-		case err == nil:
-			expected = st.Version
-		case iface.CodeOf(err) != iface.CodeNotFound:
-			return Manifest{}, err
-		}
+	expected, err := c.expectedVersion(ctx, path, opts)
+	if err != nil {
+		return Manifest{}, err
 	}
 	var begin chunkdv1.BeginUploadResponse
 	if err := c.meta(ctx, wire.KindBegin, &chunkdv1.BeginUploadRequest{Path: path, ExpectedVersion: expected, Size: size, LastWriterWins: opts.LastWriterWins, RequestId: c.requestID(), Redundancy: opts.Redundancy.proto()}, &begin); err != nil {
 		return Manifest{}, err
 	}
 	var m Manifest
-	var err error
 	if begin.GetRedundancy() != opts.Redundancy.proto() {
 		// A server that predates EC ignores the field and places copies.
 		err = iface.Errorf(iface.CodeInvalid, "asked for %q, the metadata server opened a %v upload", opts.Redundancy, begin.GetRedundancy())
@@ -192,7 +200,6 @@ func (c *Direct) Put(ctx context.Context, path string, r io.Reader, size int64, 
 func (c *Direct) upload(ctx context.Context, path string, r io.Reader, size int64, begin *chunkdv1.BeginUploadResponse) (Manifest, error) {
 	chunkSize := int(begin.GetChunkSize())
 	split := chunk.NewSplitter(r, chunkSize)
-	stripes := begin.GetRedundancy() == chunkdv1.Redundancy_REDUNDANCY_EC_4_2
 	m := Manifest{FileInfo: FileInfo{Path: path, Size: size, Redundancy: redundancy(begin.GetRedundancy())}, ChunkSize: chunkSize}
 	var ids [][]byte
 	for {
@@ -206,36 +213,7 @@ func (c *Direct) upload(ctx context.Context, path string, r io.Reader, size int6
 		if ch.Index >= len(begin.GetPlacement()) {
 			return Manifest{}, iface.Errorf(iface.CodeInvalid, "input longer than the declared %d bytes", size)
 		}
-		id := ch.ID
-		cl := &chunkdv1.ChunkClaim{Index: int32(ch.Index), Id: id[:]}
-		var shards []ec.Shard
-		if stripes {
-			// The claim names the stripe and its shards, so it is encoded first.
-			if shards, err = c.codec.Encode(ch.Data); err != nil {
-				return Manifest{}, err
-			}
-			id = ec.LogicalID(ch.ID)
-			cl.Id = id[:]
-			for _, s := range shards {
-				cl.Shards = append(cl.Shards, s.ID[:])
-			}
-		}
-		var claim chunkdv1.ClaimChunksResponse
-		if err := c.meta(ctx, wire.KindClaim, &chunkdv1.ClaimChunksRequest{UploadId: begin.GetUploadId(), Claims: []*chunkdv1.ChunkClaim{cl}}, &claim); err != nil {
-			return Manifest{}, err
-		}
-		var ref ChunkRef
-		switch {
-		case len(claim.GetPresent()) == 1 && claim.GetPresent()[0]:
-			ref = ChunkRef{Index: ch.Index, ID: id.String(), Size: int64(len(ch.Data)), Deduped: true}
-			for _, r := range claim.GetLocations()[0].GetReplicas() {
-				ref.Replicas = append(ref.Replicas, r.GetNode())
-			}
-		case stripes:
-			ref, err = c.putStripe(ctx, ch, shards, begin.GetPlacement()[ch.Index], int(begin.GetMinReplicas()))
-		default:
-			ref, err = c.putChunk(ctx, ch, begin.GetPlacement()[ch.Index], int(begin.GetMinReplicas()))
-		}
+		id, ref, err := c.storeChunk(ctx, begin, ch)
 		if err != nil {
 			return Manifest{}, err
 		}
@@ -246,23 +224,71 @@ func (c *Direct) upload(ctx context.Context, path string, r io.Reader, size int6
 		return Manifest{}, iface.Errorf(iface.CodeInvalid, "read %d bytes, declared %d", split.Total(), size)
 	}
 	sum := split.Sum()
-	req := &chunkdv1.CommitUploadRequest{UploadId: begin.GetUploadId(), ChunkIds: ids, Sha256: sum[:]}
+	version, err := c.commit(ctx, &chunkdv1.CommitUploadRequest{UploadId: begin.GetUploadId(), ChunkIds: ids, Sha256: sum[:]})
+	if err != nil {
+		return Manifest{}, err
+	}
+	m.Version, m.SHA256, m.Chunks = version, hex.EncodeToString(sum[:]), len(ids)
+	return m, nil
+}
+
+// storeChunk claims chunk ch of an upload and stores it, unless the claim
+// finds it present. It returns the ID the commit names: the chunk's, or
+// its stripe's.
+func (c *Direct) storeChunk(ctx context.Context, begin *chunkdv1.BeginUploadResponse, ch chunk.Chunk) (iface.ChunkID, ChunkRef, error) {
+	stripes := begin.GetRedundancy() == chunkdv1.Redundancy_REDUNDANCY_EC_4_2
+	id := ch.ID
+	cl := &chunkdv1.ChunkClaim{Index: int32(ch.Index), Id: id[:]}
+	var shards []ec.Shard
+	if stripes {
+		// The claim names the stripe and its shards, so it is encoded first.
+		var err error
+		if shards, err = c.codec.Encode(ch.Data); err != nil {
+			return id, ChunkRef{}, err
+		}
+		id = ec.LogicalID(ch.ID)
+		cl.Id = id[:]
+		for _, s := range shards {
+			cl.Shards = append(cl.Shards, s.ID[:])
+		}
+	}
+	var claim chunkdv1.ClaimChunksResponse
+	if err := c.meta(ctx, wire.KindClaim, &chunkdv1.ClaimChunksRequest{UploadId: begin.GetUploadId(), Claims: []*chunkdv1.ChunkClaim{cl}}, &claim); err != nil {
+		return id, ChunkRef{}, err
+	}
+	switch {
+	case len(claim.GetPresent()) == 1 && claim.GetPresent()[0]:
+		ref := ChunkRef{Index: ch.Index, ID: id.String(), Size: int64(len(ch.Data)), Deduped: true}
+		for _, r := range claim.GetLocations()[0].GetReplicas() {
+			ref.Replicas = append(ref.Replicas, r.GetNode())
+		}
+		return id, ref, nil
+	case stripes:
+		ref, err := c.putStripe(ctx, ch, shards, begin.GetPlacement()[ch.Index], int(begin.GetMinReplicas()))
+		return id, ref, err
+	default:
+		ref, err := c.putChunk(ctx, ch, begin.GetPlacement()[ch.Index], int(begin.GetMinReplicas()))
+		return id, ref, err
+	}
+}
+
+// commit publishes an upload, retried while block reports are in flight or
+// the metadata group elects a leader.
+func (c *Direct) commit(ctx context.Context, req *chunkdv1.CommitUploadRequest) (uint64, error) {
 	var resp chunkdv1.CommitUploadResponse
 	backoff := 50 * time.Millisecond
 	for waited := time.Duration(0); ; {
 		err := c.meta(ctx, wire.KindCommit, req, &resp)
 		if err == nil {
-			break
+			return resp.GetVersion(), nil
 		}
 		if code := iface.CodeOf(err); (code != iface.CodeRetry && code != iface.CodeUnavailable) || waited >= c.opts.CommitTimeout {
-			return Manifest{}, err
+			return 0, err
 		}
 		c.opts.Sleep(backoff)
 		waited += backoff
 		backoff = min(backoff*2, 2*time.Second)
 	}
-	m.Version, m.SHA256, m.Chunks = resp.GetVersion(), hex.EncodeToString(sum[:]), len(ids)
-	return m, nil
 }
 
 // putChunk sends one chunk to all its replicas at once and fails if fewer
