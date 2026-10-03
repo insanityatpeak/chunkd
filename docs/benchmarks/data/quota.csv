@@ -1,0 +1,9 @@
+mode,files,us_per_begin
+no-quota,100,0.668
+quota,100,4.120
+no-quota,1000,0.859
+quota,1000,40.653
+no-quota,10000,0.686
+quota,10000,825.468
+no-quota,100000,0.768
+quota,100000,29378.886

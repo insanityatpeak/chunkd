@@ -1,0 +1,31 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 720 360" width="720" height="360" font-family="system-ui, sans-serif" font-size="12">
+<rect width="720" height="360" fill="#fff"/>
+<text x="64" y="22" font-size="14" font-weight="600" fill="#222">Time to RF 3 after a node kill (sim)</text>
+<line x1="64" y1="296.0" x2="690" y2="296.0" stroke="#ddd"/><text x="58" y="300.0" text-anchor="end" fill="#555">0</text>
+<line x1="64" y1="244.8" x2="690" y2="244.8" stroke="#ddd"/><text x="58" y="248.8" text-anchor="end" fill="#555">20</text>
+<line x1="64" y1="193.6" x2="690" y2="193.6" stroke="#ddd"/><text x="58" y="197.6" text-anchor="end" fill="#555">40</text>
+<line x1="64" y1="142.4" x2="690" y2="142.4" stroke="#ddd"/><text x="58" y="146.4" text-anchor="end" fill="#555">60</text>
+<line x1="64" y1="91.2" x2="690" y2="91.2" stroke="#ddd"/><text x="58" y="95.2" text-anchor="end" fill="#555">80</text>
+<line x1="64" y1="40.0" x2="690" y2="40.0" stroke="#ddd"/><text x="58" y="44.0" text-anchor="end" fill="#555">100</text>
+<text x="64.0" y="312" text-anchor="middle" fill="#222">40</text>
+<text x="314.4" y="312" text-anchor="middle" fill="#222">120</text>
+<text x="690.0" y="312" text-anchor="middle" fill="#222">240</text>
+<text x="377" y="328" text-anchor="middle" fill="#555">distinct data stored (MiB)</text>
+<text x="14" y="168" fill="#555" transform="rotate(-90 14 168)" text-anchor="middle">seconds after the kill</text>
+<polyline fill="none" stroke="#1f6f9f" stroke-width="2" points="64.0,202.6 314.4,136.0 690.0,97.6"/>
+<circle cx="64.0" cy="202.6" r="3" fill="#1f6f9f"><title>5 MiB/s limit, x=40: 36</title></circle>
+<circle cx="314.4" cy="136.0" r="3" fill="#1f6f9f"><title>5 MiB/s limit, x=120: 62</title></circle>
+<circle cx="690.0" cy="97.6" r="3" fill="#1f6f9f"><title>5 MiB/s limit, x=240: 78</title></circle>
+<polyline fill="none" stroke="#d9822b" stroke-width="2" points="64.0,216.0 314.4,169.3 690.0,188.5"/>
+<circle cx="64.0" cy="216.0" r="3" fill="#d9822b"><title>20 MiB/s limit, x=40: 31</title></circle>
+<circle cx="314.4" cy="169.3" r="3" fill="#d9822b"><title>20 MiB/s limit, x=120: 50</title></circle>
+<circle cx="690.0" cy="188.5" r="3" fill="#d9822b"><title>20 MiB/s limit, x=240: 42</title></circle>
+<polyline fill="none" stroke="#3a9e6b" stroke-width="2" points="64.0,219.8 314.4,215.4 690.0,186.6"/>
+<circle cx="64.0" cy="219.8" r="3" fill="#3a9e6b"><title>80 MiB/s limit, x=40: 30</title></circle>
+<circle cx="314.4" cy="215.4" r="3" fill="#3a9e6b"><title>80 MiB/s limit, x=120: 32</title></circle>
+<circle cx="690.0" cy="186.6" r="3" fill="#3a9e6b"><title>80 MiB/s limit, x=240: 43</title></circle>
+<line x1="64" y1="296" x2="690" y2="296" stroke="#555"/>
+<rect x="64" y="342" width="10" height="10" fill="#1f6f9f"/><text x="78" y="351" fill="#222">5 MiB/s limit</text>
+<rect x="187" y="342" width="10" height="10" fill="#d9822b"/><text x="201" y="351" fill="#222">20 MiB/s limit</text>
+<rect x="317" y="342" width="10" height="10" fill="#3a9e6b"/><text x="331" y="351" fill="#222">80 MiB/s limit</text>
+</svg>

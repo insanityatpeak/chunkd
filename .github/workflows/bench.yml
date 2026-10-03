@@ -1,0 +1,27 @@
+name: bench
+
+# Benchmarks on demand. Hosted runners are shared, so absolute numbers vary
+# from run to run; the sim tables are exact and the real tables are not.
+# The hardware line in results.md says what ran.
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  bench:
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-go@v6
+        with:
+          go-version: '1.27.x'
+          cache-dependency-path: go.sum
+      - name: bench
+        run: go run ./tools/task bench
+      - uses: actions/upload-artifact@v4
+        with:
+          name: benchmarks
+          path: docs/benchmarks
