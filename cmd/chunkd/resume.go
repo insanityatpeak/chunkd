@@ -2,9 +2,11 @@ package main
 
 import (
 	"context"
+	"crypto/rand"
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"os"
@@ -13,6 +15,7 @@ import (
 
 	"github.com/insanityatpeak/chunkd/internal/client"
 	"github.com/insanityatpeak/chunkd/internal/iface"
+	"github.com/insanityatpeak/chunkd/internal/real/gateway"
 )
 
 // appendBatch is how many chunks one append carries: progress is reported and
@@ -163,5 +166,25 @@ func putResumable(ctx context.Context, api client.API, local, path string, opts 
 		policy = string(m.Redundancy)
 	}
 	fmt.Printf("put %s v%d  %s in %d chunks (%s)  %.1fs\nsha256 %s\n", m.Path, info.Version, human(m.Size), m.Chunks, policy, time.Since(start).Seconds(), m.SHA256)
+	return nil
+}
+
+// keygen prints a random API key and the keys-file entry that admits it. The
+// key is shown once; the file keeps only its hash.
+func keygen(name, namespace string, quota int64, admin bool) error {
+	if name == "" {
+		return errors.New("keygen needs -name")
+	}
+	if namespace == "" && !admin {
+		namespace = name
+	}
+	raw := make([]byte, 24)
+	if _, err := rand.Read(raw); err != nil {
+		return err
+	}
+	key := hex.EncodeToString(raw)
+	entry := gateway.Key{Name: name, SHA256: gateway.HashKey(key), Namespace: namespace, Quota: quota, Admin: admin}
+	b, _ := json.MarshalIndent(entry, "", "  ")
+	fmt.Printf("key: %s\nadd to the keys file (a JSON array):\n%s\n", key, b)
 	return nil
 }

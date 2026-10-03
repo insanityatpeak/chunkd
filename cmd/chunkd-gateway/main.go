@@ -24,9 +24,19 @@ func main() {
 	metaID := flag.String("meta-id", server.Env("CHUNKD_META_ID", "meta-1"), "metadata server ID (a single server)")
 	metaAddr := flag.String("meta", server.Env("CHUNKD_META", "localhost:7000"), "metadata server gRPC address (a single server)")
 	metas := flag.String("metas", server.Env("CHUNKD_METAS", ""), "the metadata group as id=host:port,...; overrides -meta")
+	keysFile := flag.String("keys", server.Env("CHUNKD_KEYS", ""), "API keys file (JSON); empty leaves the gateway open")
 	uiDir := flag.String("ui", server.Env("CHUNKD_UI", ""), "serve the dashboard's static build from this directory at /")
 	flag.Parse()
 
+	var gwOpts []gateway.Option
+	if *keysFile != "" {
+		keys, err := gateway.LoadKeys(*keysFile)
+		if err != nil {
+			fmt.Fprintln(os.Stderr, "chunkd-gateway:", err)
+			os.Exit(1)
+		}
+		gwOpts = append(gwOpts, gateway.WithKeys(keys))
+	}
 	group := *metas
 	if group == "" {
 		group = *metaAddr
@@ -54,7 +64,7 @@ func main() {
 			}
 			return nil
 		}
-		p.HTTP = gateway.Handler(api, p.Log)
+		p.HTTP = gateway.Handler(api, p.Log, gwOpts...)
 		if *uiDir != "" {
 			p.HTTP = gateway.WithUI(p.HTTP, *uiDir)
 		}

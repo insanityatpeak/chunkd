@@ -7,6 +7,7 @@
 //	chunkd rm <path>                        delete
 //	chunkd cluster [status]                 nodes, detector state and replication health
 //	chunkd node drain|undrain|decommission <id>   retire a storage node (decommission -wait 10m polls until safe)
+//	chunkd keygen -name alice [-quota N] [-admin]   a new API key and its entry for the gateway's keys file
 //	chunkd ping <grpc-addr>                 ping a process
 //	chunkd probe <http-url>                 exit 0 if the URL returns 200 (health checks)
 //	chunkd debug corrupt                    flip a byte in -n chunk files under -root (fault injection;
@@ -57,13 +58,18 @@ func main() {
 	redundancy := fs.String("redundancy", "replicated", "put: replicated (3 copies) or ec-4+2 (4 data + 2 parity shards on 6 nodes, 1.5x storage)")
 	version := fs.Uint64("version", 0, "get: download this version instead of the live one; undelete: the version to restore (default newest)")
 	expectSHA := fs.String("expect-sha256", "", "get: fail unless the content has this SHA-256")
+	apiKey := fs.String("key", envOr("CHUNKD_KEY", ""), "API key, when the gateway requires one")
 	asJSON := fs.Bool("json", false, "print JSON")
 	root := fs.String("root", envOr("CHUNKD_DATA", "data/node"), "debug corrupt: the node's chunk directory")
 	rotN := fs.Int("n", 1, "debug corrupt: number of chunks")
 	pick := fs.Uint64("pick", 0, "debug corrupt: first chunk, as an index into the chunks in ID order")
 	wait := fs.Duration("wait", 0, "node decommission: keep retrying this long while the node's chunks are still short elsewhere")
+	keyName := fs.String("name", "", "keygen: the key's name; its namespace unless -namespace is set")
+	keyNS := fs.String("namespace", "", "keygen: the path segment the key owns")
+	keyQuota := fs.Int64("quota", 0, "keygen: byte quota of the namespace (0: unlimited)")
+	keyAdmin := fs.Bool("admin", false, "keygen: an admin key (every path, node controls)")
 	fs.Usage = func() {
-		fmt.Fprintln(os.Stderr, "usage: chunkd [flags] put|get|log|ls|stat|rm|undelete|cluster|node|ping|probe|debug corrupt ...")
+		fmt.Fprintln(os.Stderr, "usage: chunkd [flags] put|get|log|ls|stat|rm|undelete|cluster|node|keygen|ping|probe|debug corrupt ...")
 		fs.PrintDefaults()
 	}
 	// Flags may come before or after the command.
@@ -97,7 +103,9 @@ func main() {
 		}
 		api = client.New(caller, opts)
 	} else {
-		api = httpclient.New(*gatewayURL)
+		hc := httpclient.New(*gatewayURL)
+		hc.Key = *apiKey
+		api = hc
 	}
 	ctx := context.Background()
 	out := printer{json: *asJSON}
@@ -147,6 +155,8 @@ func main() {
 		}
 	case cmd == "node" && len(args) == 3:
 		err = nodeAdmin(ctx, api, args[1], args[2], *wait, out)
+	case cmd == "keygen" && len(args) == 1:
+		err = keygen(*keyName, *keyNS, *keyQuota, *keyAdmin)
 	case cmd == "ping" && len(args) == 2:
 		err = ping(args[1])
 	case cmd == "probe" && len(args) == 2:
