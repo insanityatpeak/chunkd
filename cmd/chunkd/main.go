@@ -1,6 +1,6 @@
 // Command chunkd is the operator CLI.
 //
-//	chunkd put <local-file> <path>          upload (overwrites; -expected N for compare-and-swap)
+//	chunkd put <local-file> <path>          upload (overwrites; -expected N for compare-and-swap; -resume continues a broken put)
 //	chunkd get <path> <local-file>          download and verify (-expect-sha256 to pin the content)
 //	chunkd ls [prefix]                      list files
 //	chunkd stat <path>                      version, hash and chunk placement
@@ -53,6 +53,7 @@ func main() {
 	expected := fs.Uint64("expected", 0, "put/rm: expected live version (compare-and-swap); 0 with put means overwrite")
 	create := fs.Bool("create", false, "put: fail if the path exists")
 	lww := fs.Bool("lww", false, "put: last writer wins, no version check (a concurrent update is lost)")
+	resume := fs.Bool("resume", false, "put: continue the upload a broken put left, if the file is unchanged")
 	redundancy := fs.String("redundancy", "replicated", "put: replicated (3 copies) or ec-4+2 (4 data + 2 parity shards on 6 nodes, 1.5x storage)")
 	version := fs.Uint64("version", 0, "get: download this version instead of the live one; undelete: the version to restore (default newest)")
 	expectSHA := fs.String("expect-sha256", "", "get: fail unless the content has this SHA-256")
@@ -106,7 +107,7 @@ func main() {
 	case cmd == "put" && len(args) == 3:
 		opts := client.PutOptions{Overwrite: *expected == 0 && !*create, ExpectedVersion: *expected, LastWriterWins: *lww}
 		if opts.Redundancy, err = client.ParseRedundancy(*redundancy); err == nil {
-			err = put(ctx, api, args[1], args[2], opts, out)
+			err = putResumable(ctx, api, args[1], args[2], opts, *resume, out)
 		}
 	case cmd == "get" && len(args) == 3:
 		err = get(ctx, api, args[1], args[2], *version, *expectSHA, out)
@@ -171,33 +172,6 @@ func envOr(k, def string) string {
 		return v
 	}
 	return def
-}
-
-func put(ctx context.Context, api client.API, local, path string, opts client.PutOptions, out printer) error {
-	f, err := os.Open(local)
-	if err != nil {
-		return err
-	}
-	defer f.Close()
-	fi, err := f.Stat()
-	if err != nil {
-		return err
-	}
-	start := time.Now()
-	m, err := api.Put(ctx, path, f, fi.Size(), opts)
-	if err != nil {
-		return err
-	}
-	if out.json {
-		out.print(m)
-		return nil
-	}
-	policy := "replicated"
-	if m.Redundancy != client.Replicated {
-		policy = string(m.Redundancy)
-	}
-	fmt.Printf("put %s v%d  %s in %d chunks (%s)  %.1fs\nsha256 %s\n", m.Path, m.Version, human(m.Size), m.Chunks, policy, time.Since(start).Seconds(), m.SHA256)
-	return nil
 }
 
 // get writes to a temp file next to the target and renames it only after
