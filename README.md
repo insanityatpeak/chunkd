@@ -9,6 +9,10 @@ A fault-tolerant distributed file store in Go, in the style of GFS and HDFS.
 
 ![A storage node is killed; the cluster detects it, re-replicates its chunks, verifies a download, and trims the extra copies when the node returns](docs/assets/demo.gif)
 
+The same story in the browser dashboard, running the real core code compiled to WebAssembly (seed 7, 10×; [MP4](docs/assets/dashboard.mp4)):
+
+![The dashboard replays a node kill: the card turns red, repair copies appear in the events list, and the replication bar returns to three copies](docs/assets/dashboard.gif)
+
 **[Try it in your browser →](https://insanityatpeak.github.io/chunkd/)** A simulated cluster running the same core code, compiled to WebAssembly. Kill nodes, rot a disk, partition the network, and watch it recover. Nothing to install.
 
 chunkd splits files into 4 MiB chunks named by their SHA-256 and keeps three copies of each, on nodes in different racks. A metadata group of three Raft peers tracks versions and where every copy lives; killing, freezing or cutting off its leader loses no acknowledged write. Nodes can join, or be drained and retired, while the cluster serves: a balancer moves copies toward rack-feasible targets, and no chunk drops below three copies on the way. An upload can instead store each chunk as a Reed-Solomon stripe, 4 data and 2 parity shards on six nodes: half the bytes of three copies, still readable with any two shards gone, and a lost shard is rebuilt from four others. Identical chunks are stored once, every file keeps its recent versions, a delete can be undone for a retention window, and garbage collection reclaims what nothing references. It is built to stay correct while things break. A node can crash, freeze, turn slow or come back with an empty disk, and a disk can silently rot bits. Throughout, acknowledged data stays readable, every read is verified end to end, and lost copies are rebuilt within a stated time bound, at a capped rate, without copying anything for a node that only rebooted. Every claim below is a test that runs in CI: 1,000 seeded chaos schedules on every push in a deterministic simulator that replays any failure from its seed, 500 more over the metadata group with leader faults and every client history checked for linearizability, plus a real-mode suite that kills, freezes and corrupts Docker containers, the metadata leader included.
@@ -103,17 +107,40 @@ Shared dashboard links replay exactly: [kill a node](https://insanityatpeak.gith
 | An erasure-coded file reads with any 2 of a stripe's 6 shards gone, decoding from parity, and fails loudly with 3 gone | `TestECReadSurvivesTwoLostNodesNotThree`, `TestECReadDecodesAroundARottedShard`, `ec.TestJoinSurvivesAnyTwoLosses`; every size round-trips as stripes over real gRPC and disk (`e2e.TestRoundTripEC`) | go |
 | A dead node's shards are rebuilt, each from 4 others, onto nodes outside the stripe within the repair bound; EC stores 1.50× against 3.00×, and repair reads 4 bytes per byte rebuilt | `TestECRepairRebuildsLostShards`, `TestECBenchmark` ([docs/benchmarks/ec.md](docs/benchmarks/ec.md)) | go |
 | Under random faults with about half the puts erasure-coded, the same invariants hold, counted per shard | 500 chaos seeds with `--ec` per push | go |
+| A resumed upload sends no stored chunk again, survives a client crash and a metadata leader failover, and refuses a wrong offset | `TestResumeAfterClientCrash`, `TestResumeAcrossLeaderFailover`, `TestResumeRefusals`, `TestPutResumeAfterCutOff` (CLI over real disks), gateway tus tests | go |
+| A namespace quota holds under concurrent uploads, and a refused upload reads no bytes of the source | `TestQuotaReservesAtBegin`, `TestQuotaRefusalReadsNoBytes`, `TestQuotaRefusesBeforeBytesAreSent` | go |
+| Keys see only their namespace and their own uploads | `TestAuthScopesPathsToNamespace`, `TestAuthUploadsBelongToTheirKey` | go |
+| Retention is per path and survives a snapshot; diff compares two versions chunk by chunk | `TestRetentionPerPath`, `TestRetentionSurvivesSnapshot`, `TestDiffManifests`, `TestDiffAgainstACluster` | go |
+| Hedged reads cut a fresh client's get p99 from 4,141 ms to 235 ms with one gray node, and cost nothing without a fault | `go run ./tools/task bench` ([docs/benchmarks/results.md](docs/benchmarks/results.md)); `TestSlowNodeHedgedRead` asserts the bound in CI | go |
 | A seed replays the same run, in Go and in the browser | `TestSameSeedSameTrace`, `TestScenarioGolden` + Playwright replay | go, web |
 | The demo runs with only Docker installed | `docker compose run --rm demo` | compose |
 
 Bugs these tests caught, with root causes and fixes: [docs/bugs-found.md](docs/bugs-found.md).
+
+## Benchmarks
+
+`go run ./tools/task bench` re-runs everything and rewrites [docs/benchmarks](docs/benchmarks/README.md): CSVs, SVG charts and a generated summary. Sim numbers are exact for a seed. Real numbers are one client, sequential, a 5-node cluster in one process on loopback with real disks (AMD Ryzen 7 7840HS, 16 threads, 15 GiB, Go 1.27, Windows 11, otherwise idle); expect about 10% on large files and more on small ones.
+
+| Measurement | Result | Tier |
+|---|---|---|
+| Put, RF 3, 16 / 128 / 1024 MiB | 52 / 60 / 58 MiB/s (every byte is written three times) | real |
+| Get, 16 / 128 / 1024 MiB | 182 / 187 / 157 MiB/s, every chunk and the file hash verified | real |
+| 256 KiB files, p50 / p99 | put 42 / 328 ms, get 2.6 / 11.8 ms, stat 0.5 / 13 ms | real |
+| Get p99, one gray node (2 s added), fresh client | 4,141 ms unhedged, 235 ms hedged; identical with no fault | sim |
+| Time to RF 3 after a node kill, 240 MiB lost | 77.5 s at a 5 MiB/s cap, 42 s at 20 MiB/s: a 30 s floor (detector and delay) plus copies | sim |
+| Storage, replicate:3 against ec:4+2 | 3.00x against 1.50x; repair reads 4 bytes per byte rebuilt ([ec.md](docs/benchmarks/ec.md)) | sim |
+| Dedup, base plus 10 small edits | 220 MiB logical in 60 MiB ([dedup.md](docs/benchmarks/dedup.md)) | sim |
+| Cut-off 32 MiB upload at 90% | resume re-sends a 4 MiB body; a restart re-sends 32 MiB (the same bytes reach the nodes, since stored chunks are skipped) | sim |
+| Quota check per Begin, 100 / 10,000 / 100,000 files | 4 / 825 / 29,400 us, against 0.7 us without a quota | state machine |
+
+Charts and every table: [docs/benchmarks/results.md](docs/benchmarks/results.md). What the numbers do and do not show: [docs/benchmarks/README.md](docs/benchmarks/README.md).
 
 ## Known limitations
 
 | Limitation | Why it is acceptable now | Plan |
 |---|---|---|
 | Authentication is optional static bearer keys at the gateway (`-keys`); with none the gateway is open. gRPC between processes, and HTTP, are plaintext, and node chunk calls are unauthenticated | Runs on a private Docker network; put TLS in front of a keyed gateway (ADR-0025) | mTLS in the transport, signed requests, a logged key table with rotation |
-| A key owns one path segment and a byte quota counted in logical bytes of live versions and pending uploads; retired versions are not counted, an overwrite counts old and new until it commits, and each limited begin scans the namespace | The check is one log entry, so concurrent uploads cannot overshoot (ADR-0025) | A per-namespace usage counter, stored-byte accounting, S3-style IAM policies |
+| A key owns one path segment and a byte quota counted in logical bytes of live versions and pending uploads; retired versions are not counted, an overwrite counts old and new until it commits, and each limited begin scans every file: 0.7 us without a quota, 825 us at 10,000 files and 29 ms at 100,000, inside the log's apply loop | The check is one log entry, so concurrent uploads cannot overshoot (ADR-0025); the cost is measured in [docs/benchmarks](docs/benchmarks/results.md) | A per-namespace usage counter, stored-byte accounting, S3-style IAM policies |
 | An upload ID is a sequence number, and an interrupted upload lives one lease (3 minutes at the demo setting) | Dedup makes a restarted upload cost claims, not bytes (ADR-0024) | A longer per-upload lease charged to its owner |
 | A split resumable upload cannot be checked against its declared hash before commit | A wrong hash commits a version every read refuses, never one that serves wrong bytes (ADR-0024) | A composite checksum over chunk IDs, as S3 multipart does |
 | Upload size must be known up front | Placement is computed per chunk at `BeginUpload` | HDFS-style `addBlock` per chunk |
@@ -153,6 +180,10 @@ Bugs these tests caught, with root causes and fixes: [docs/bugs-found.md](docs/b
 | An erasure-coded upload needs 6 placeable nodes, and the begin is refused with fewer | Two shards on one node would turn one failure into two | Wider clusters, or a narrower code for small ones |
 | A small file still takes 6 shards (a 1-byte file stores 6 × 34 bytes) | Negligible at 4 MiB chunks | Keep small objects replicated or inline, as S3 and MinIO do |
 | The balancer leaves shards where they are; a joining node gets shards only from rebuilds | A shard is a quarter of a chunk, and upload placement already spreads stripes | A planner that keeps a stripe on distinct nodes, as Ceph's balancer moves EC placement groups |
+| Writes are not hedged: with one gray node a put waits for the slowest of its replicas (put p50 188 ms to 4,112 ms with 2 s added to one node) | Reads are hedged and a client orders replicas by its own latency score; writes need 2 of 3 acks (ADR-0007) | Feed client latency into placement, or hedge the third replica's write |
+| The effect of repair on foreground reads is not measured | The sim shares no capacity between messages, so it is flat by construction; the repair cap itself is measured (peak rate against each limit) | A multi-host run with real disks and NICs |
+| Benchmarks use one client, sequential operations, and a 5-node cluster in one process on loopback | They show what the code costs on one machine, not what a cluster delivers ([docs/benchmarks](docs/benchmarks/README.md)) | Many clients across hosts, warp-style |
+| No real-mode (compose) run of `put -resume`; the dashboard shows version history and restore but no diff | The sim covers resume across a leader failover, and `TestPutResumeAfterCutOff` covers the CLI over real disks | A compose scenario for resume; a diff view on the chunk grid |
 | No real-mode chaos scenario uses erasure coding | Compose runs 5 nodes and a stripe needs 6; the sim runs 500 EC seeds per push, and `e2e.TestRoundTripEC` covers the real transport and disks | A compose profile with 7 nodes and an EC scenario in the short suite |
 | The client encodes stripes, and the cluster trusts the shard IDs it claims | A wrong claim fails its read-time check against the stripe ID, as a wrong chunk ID already does | Encode on a server, as Ceph's primary OSD does |
 | A decommissioned node stays in the metadata log; starting one again with the same ID needs an undrain | It takes nothing while decommissioned, which is the safe default; the compose add-node path undrains it | Remove a decommissioned node from the log once its last copy is trimmed |
@@ -167,10 +198,11 @@ Bugs these tests caught, with root causes and fixes: [docs/bugs-found.md](docs/b
 | `internal/real/` | gRPC transport, disk block store, WAL + bbolt metadata log, HTTP gateway, process runtime |
 | `internal/chaos/` | Seeded fault schedules with invariant checks, in the sim and against docker compose |
 | `internal/client/` | The client library the CLI, gateway, tests and browser all use |
-| `cmd/` | `chunkd` (CLI), `chunkd-meta`, `chunkd-node`, `chunkd-gateway`, `chunkd-demo`, `chunkd-chaos`, `chunkd-wasm` |
+| `cmd/` | `chunkd` (CLI), `chunkd-meta`, `chunkd-node`, `chunkd-gateway`, `chunkd-demo`, `chunkd-chaos`, `chunkd-bench`, `chunkd-wasm` |
+| `internal/bench/` | CSV files, hardware probe and SVG charts shared by the benchmarks |
 | `web/` | Preact + TypeScript dashboard, one UI for the simulation and the real cluster |
 | `deploy/` | Dockerfile, compose file, the GIF's `vhs` tape |
-| `docs/` | ADRs, design, status, bugs found |
+| `docs/` | [Design](docs/design.md), [ADRs](docs/adr/README.md), [benchmarks](docs/benchmarks/README.md), [design questions](docs/interview.md), [what the chaos harness found](docs/writeup-chaos-harness.md), [bugs found](docs/bugs-found.md), [status](docs/STATUS.md) |
 
 Every command runs through `go run ./tools/task <name>`, the same on Windows, Linux and CI; see [CONTRIBUTING.md](CONTRIBUTING.md).
 
@@ -184,7 +216,9 @@ Every command runs through `go run ./tools/task <name>`, the same on Windows, Li
 - [x] Rebalancing when nodes join, drain and decommission
 - [x] Erasure coding, chosen per upload (Reed-Solomon 4+2)
 - [x] Resumable uploads, API keys with byte quotas, version diff and per-path retention, CLI polish
+- [x] Reproducible benchmarks, a design document, interview notes and a write-up
 - [ ] Moving cold data from copies to erasure coding in the background
+- [ ] A per-namespace usage counter for quotas, content-defined chunking, hedged writes
 
 ## License
 

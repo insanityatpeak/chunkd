@@ -37,9 +37,12 @@ Everything runs through `go run ./tools/task <command>` so it behaves the same o
 | `wasm` | Builds `web/public/cluster.wasm`, copies `wasm_exec.js` from the same toolchain, fails above 20 MiB or if gRPC/`net/http` reach the WASM build |
 | `web` | `npm ci` and `npm run build` into `web/dist` |
 | `up` / `down` | Compose cluster; `up --small` runs 1 meta + 3 nodes; `down -v` deletes the volumes |
+| `bench` | Benchmarks into `docs/benchmarks` (`-stages=sim,meta,real,report`); run it with the machine otherwise idle. See `docs/benchmarks/README.md` |
 | `e2e` | Builds the CLI, puts and gets 20 MiB through the compose gateway, compares hashes (`--up`, `--down`) |
 | `trace-check` | Fails on attribution trailers in tracked files or unpushed commit messages; run before every push |
 | `ci` | build, lint, lint-imports, test, wasm, web in CI order |
+
+The dashboard capture in `docs/assets/dashboard.{mp4,gif}` comes from `web/scripts/capture.mjs` (needs a built `web/dist` served on :4173 and ffmpeg).
 
 Local dashboard: `go run ./tools/task wasm && cd web && npm run dev`. Add `?gateway=http://localhost:8080` to point it at the compose cluster.
 
