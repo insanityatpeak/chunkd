@@ -308,3 +308,18 @@ func TestGatewayNodeAdmin(t *testing.T) {
 		t.Fatalf("unknown action: %d, want 400", resp.StatusCode)
 	}
 }
+func (l *locked) BeginResumable(ctx context.Context, p string, n int64, sum [32]byte, o client.PutOptions) (client.UploadInfo, error) {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	return l.api.BeginResumable(ctx, p, n, sum, o)
+}
+func (l *locked) UploadStatus(ctx context.Context, id uint64) (client.UploadInfo, error) {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	return l.api.UploadStatus(ctx, id)
+}
+func (l *locked) Append(ctx context.Context, id uint64, off int64, r io.Reader, n int64) (client.UploadInfo, error) {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	return l.api.Append(ctx, id, off, r, n)
+}

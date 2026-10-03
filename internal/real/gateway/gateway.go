@@ -30,6 +30,10 @@ const (
 //	POST   /undelete/{path}         restore a retained version; ?version=N, else the newest
 //	POST   /nodes/{id}/{action}     drain, undrain or decommission a storage node
 //	GET    /cluster                 nodes, health, copies; ?events_after=N
+//	POST   /uploads/{path}          open a resumable upload (tus core): Upload-Length, Upload-Sha256; the POST /files query
+//	HEAD   /uploads/{id}            Upload-Offset to append at, Upload-Claimed the furthest allowed (GET serves HEAD)
+//	GET    /uploads/{id}            the same as JSON
+//	PATCH  /uploads/{id}            append whole chunks at Upload-Offset; the append that ends the file commits
 func Handler(api client.API, log *slog.Logger) http.Handler {
 	h := &handler{api: api, log: log}
 	mux := http.NewServeMux()
@@ -40,6 +44,9 @@ func Handler(api client.API, log *slog.Logger) http.Handler {
 	mux.HandleFunc("POST /undelete/{path...}", h.undelete)
 	mux.HandleFunc("GET /cluster", h.cluster)
 	mux.HandleFunc("POST /nodes/{node}/{action}", h.nodeAdmin)
+	mux.HandleFunc("POST /uploads/{path...}", h.createUpload)
+	mux.HandleFunc("GET /uploads/{id}", h.uploadStatus)
+	mux.HandleFunc("PATCH /uploads/{id}", h.appendUpload)
 	return cors(mux)
 }
 
@@ -55,27 +62,33 @@ func (h *handler) put(w http.ResponseWriter, r *http.Request) {
 		writeError(w, iface.Errorf(iface.CodeInvalid, "Content-Length required: placement needs the size up front"), http.StatusLengthRequired)
 		return
 	}
-	opts := client.PutOptions{Overwrite: true, LastWriterWins: r.URL.Query().Get("lww") == "1"}
-	if e := r.URL.Query().Get("expected"); e != "" && !opts.LastWriterWins {
-		v, err := strconv.ParseUint(e, 10, 64)
-		if err != nil {
-			writeError(w, iface.Errorf(iface.CodeInvalid, "bad expected version %q", e), 0)
-			return
-		}
-		opts = client.PutOptions{ExpectedVersion: v}
-	}
-	policy, err := client.ParseRedundancy(r.URL.Query().Get("redundancy"))
+	opts, err := putOptions(r)
 	if err != nil {
 		writeError(w, err, 0)
 		return
 	}
-	opts.Redundancy = policy
 	m, err := h.api.Put(r.Context(), filePath(r), r.Body, r.ContentLength, opts)
 	if err != nil {
 		writeError(w, err, 0)
 		return
 	}
 	writeJSON(w, http.StatusCreated, m)
+}
+
+// putOptions reads ?expected=N (compare-and-swap), ?lww=1 (last writer
+// wins), else overwrite, and ?redundancy.
+func putOptions(r *http.Request) (client.PutOptions, error) {
+	opts := client.PutOptions{Overwrite: true, LastWriterWins: r.URL.Query().Get("lww") == "1"}
+	if e := r.URL.Query().Get("expected"); e != "" && !opts.LastWriterWins {
+		v, err := strconv.ParseUint(e, 10, 64)
+		if err != nil {
+			return opts, iface.Errorf(iface.CodeInvalid, "bad expected version %q", e)
+		}
+		opts = client.PutOptions{ExpectedVersion: v}
+	}
+	policy, err := client.ParseRedundancy(r.URL.Query().Get("redundancy"))
+	opts.Redundancy = policy
+	return opts, err
 }
 
 // streamWriter sets headers from the manifest before the first byte.
@@ -257,10 +270,10 @@ func cors(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		h := w.Header()
 		h.Set("Access-Control-Allow-Origin", "*")
-		h.Set("Access-Control-Expose-Headers", HeaderVersion+", "+HeaderSHA256+", Content-Length")
+		h.Set("Access-Control-Expose-Headers", HeaderVersion+", "+HeaderSHA256+", Content-Length, Location, "+HeaderTus+", "+HeaderUploadOffset+", "+HeaderUploadLength+", "+HeaderUploadClaimed)
 		if r.Method == http.MethodOptions {
-			h.Set("Access-Control-Allow-Methods", "GET, POST, DELETE, OPTIONS")
-			h.Set("Access-Control-Allow-Headers", "Content-Type")
+			h.Set("Access-Control-Allow-Methods", "GET, HEAD, POST, PATCH, DELETE, OPTIONS")
+			h.Set("Access-Control-Allow-Headers", "Content-Type, "+HeaderTus+", "+HeaderUploadOffset+", "+HeaderUploadLength+", "+HeaderUploadSHA256)
 			// Chrome's Private Network Access: a public page calling localhost.
 			h.Set("Access-Control-Allow-Private-Network", "true")
 			w.WriteHeader(http.StatusNoContent)
@@ -278,7 +291,7 @@ func WithUI(api http.Handler, dir string) http.Handler {
 	mux := http.NewServeMux()
 	// Every API route from Handler; a missing one falls through to the
 	// file server and answers a plain 404.
-	for _, p := range []string{"/files", "/files/", "/undelete/", "/cluster", "/nodes/"} {
+	for _, p := range []string{"/files", "/files/", "/undelete/", "/cluster", "/nodes/", "/uploads/"} {
 		mux.Handle(p, api)
 	}
 	mux.HandleFunc("GET /mode.json", func(w http.ResponseWriter, _ *http.Request) {
