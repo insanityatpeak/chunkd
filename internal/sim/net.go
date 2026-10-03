@@ -548,3 +548,64 @@ func (n *Net) Slow(id iface.NodeID) time.Duration { return n.slow[id] }
 
 // Crashed reports whether a node is crashed.
 func (n *Net) Crashed(id iface.NodeID) bool { return n.down[id] }
+
+// Quorum implements iface.Caller. A call left running keeps going: its
+// request is already on the network and the node still stores the chunk.
+func (c *Caller) Quorum(ctx context.Context, calls []iface.Call, need int, grace time.Duration) []iface.Result {
+	results := make([]iface.Result, len(calls))
+	ids := make([]uint64, len(calls))
+	for i, ic := range calls {
+		ids[i] = c.send(ic, &results[i])
+	}
+	deadline := c.net.clock.Now().Add(c.timeout)
+	var quorumAt iface.Instant = -1
+	timedOut := false
+	for ctx.Err() == nil {
+		open, ok := 0, 0
+		for i, id := range ids {
+			if _, pending := c.pending[id]; pending {
+				open++
+			} else if results[i].Err == nil {
+				ok++
+			}
+		}
+		if open == 0 {
+			break
+		}
+		now := c.net.clock.Now()
+		if ok >= need && quorumAt < 0 {
+			quorumAt = now
+		}
+		wake := deadline
+		if quorumAt >= 0 {
+			if now >= quorumAt.Add(grace) {
+				break
+			}
+			wake = min(wake, quorumAt.Add(grace))
+		}
+		if next, has := c.net.clock.Next(); has && next <= wake {
+			c.net.clock.Step()
+		} else {
+			c.net.clock.Advance(wake.Sub(now))
+			if wake == deadline {
+				timedOut = true
+				break
+			}
+		}
+	}
+	now := c.net.clock.Now()
+	for i, id := range ids {
+		p, open := c.pending[id]
+		if !open {
+			continue
+		}
+		if timedOut && ctx.Err() == nil {
+			c.expire(id, calls[i], ctx) // out of time, not abandoned: a failure, as Do reports it
+			continue
+		}
+		delete(c.pending, id)
+		results[i] = iface.Result{Err: iface.Errorf(iface.CodeUnavailable, "%s to %s: abandoned", calls[i].Kind, calls[i].To),
+			Latency: now.Sub(p.sent), Pending: true}
+	}
+	return results
+}

@@ -110,6 +110,11 @@ type Caller interface {
 	// returns once need results are accepted or every call sent has settled
 	// and none is left; accept runs on the caller's goroutine.
 	Gather(ctx context.Context, calls []Call, first, need int, after time.Duration, accept func(i int, r Result) bool) GatherResult
+	// Quorum sends every call at once and returns when all have settled, or
+	// when need have succeeded (Err == nil) and grace has passed since the
+	// need-th. Calls still running are not cancelled: they finish in the
+	// background, and are reported Pending in the results.
+	Quorum(ctx context.Context, calls []Call, need int, grace time.Duration) []Result
 }
 
 // GatherResult is the outcome of Caller.Gather.

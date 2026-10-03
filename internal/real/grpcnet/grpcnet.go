@@ -629,3 +629,52 @@ func stream(ctx context.Context, client rpcv1.TransportServiceClient, env *chunk
 		out = append(out, f.GetData()...)
 	}
 }
+
+// Quorum implements iface.Caller. Calls left running use the caller's ctx, not
+// one cancelled on return, so a slow replica still receives its copy.
+func (c *Caller) Quorum(ctx context.Context, calls []iface.Call, need int, grace time.Duration) []iface.Result {
+	out := make([]iface.Result, len(calls))
+	type done struct {
+		i int
+		r iface.Result
+	}
+	ch := make(chan done, len(calls)) // buffered: stragglers finish after we return
+	starts := make([]time.Time, len(calls))
+	for i, call := range calls {
+		starts[i] = time.Now()
+		go func() {
+			r := c.one(ctx, call)
+			r.Latency = time.Since(starts[i])
+			ch <- done{i, r}
+		}()
+	}
+	settled := make([]bool, len(calls))
+	finished, ok := 0, 0
+	var graceC <-chan time.Time
+	for finished < len(calls) {
+		select {
+		case d := <-ch:
+			out[d.i], settled[d.i] = d.r, true
+			finished++
+			if d.r.Err == nil {
+				if ok++; ok == need {
+					t := time.NewTimer(grace)
+					defer t.Stop()
+					graceC = t.C
+				}
+			}
+		case <-graceC:
+			goto abandon
+		case <-ctx.Done():
+			goto abandon
+		}
+	}
+abandon:
+	for i := range calls {
+		if !settled[i] {
+			out[i] = iface.Result{Err: iface.Errorf(iface.CodeUnavailable, "%s to %s: abandoned", calls[i].Kind, calls[i].To),
+				Latency: time.Since(starts[i]), Pending: true}
+		}
+	}
+	return out
+}

@@ -54,21 +54,21 @@
     },
     {
       "seq": 8,
-      "atMs": 37500,
+      "atMs": 27600,
       "kind": "raft",
       "node": "meta-3",
-      "text": "no contact from leader meta-2 for 1.38s: starting an election"
+      "text": "no contact from leader meta-2 for 1.46s: starting an election"
     },
     {
       "seq": 9,
-      "atMs": 37530,
+      "atMs": 27677,
       "kind": "raft",
       "node": "",
       "text": "term 3: election, no leader yet"
     },
     {
       "seq": 10,
-      "atMs": 37564,
+      "atMs": 27715,
       "kind": "raft",
       "node": "meta-3",
       "text": "term 3: meta-3 leads"
@@ -77,52 +77,52 @@
   "reads": [
     {
       "seq": 1,
-      "atMs": 31380,
+      "atMs": 21375,
       "kind": "read",
       "node": "client",
-      "text": "read /demo/file-0.bin (5120 KiB) in 220ms from node-1, node-3"
+      "text": "read /demo/file-0.bin (5120 KiB) in 201ms from node-1, node-3"
     },
     {
       "seq": 2,
-      "atMs": 47149,
+      "atMs": 37199,
       "kind": "write",
       "node": "client",
-      "text": "write /demo/during-election.bin (1024 KiB) v1 in 10.49s"
+      "text": "write /demo/during-election.bin (1024 KiB) v1 in 10.526s"
     },
     {
       "seq": 3,
-      "atMs": 51343,
+      "atMs": 41383,
       "kind": "read",
       "node": "client",
-      "text": "read /demo/file-1.bin (5120 KiB) in 184ms from node-2, node-5"
+      "text": "read /demo/file-1.bin (5120 KiB) in 209ms from node-2, node-5"
     },
     {
       "seq": 4,
-      "atMs": 56556,
+      "atMs": 46525,
       "kind": "write",
       "node": "client",
-      "text": "write /demo/new-leader.bin (1024 KiB) v1 in 397ms"
+      "text": "write /demo/new-leader.bin (1024 KiB) v1 in 351ms"
     },
     {
       "seq": 5,
-      "atMs": 66367,
+      "atMs": 56334,
       "kind": "read",
       "node": "client",
-      "text": "read /demo/file-2.bin (5120 KiB) in 208ms from node-1"
+      "text": "read /demo/file-2.bin (5120 KiB) in 160ms from node-1"
     },
     {
       "seq": 6,
-      "atMs": 96331,
+      "atMs": 86351,
       "kind": "read",
       "node": "client",
-      "text": "read /demo/file-3.bin (5120 KiB) in 172ms from node-1, node-4"
+      "text": "read /demo/file-3.bin (5120 KiB) in 177ms from node-1, node-4"
     },
     {
       "seq": 7,
-      "atMs": 101506,
+      "atMs": 101681,
       "kind": "write",
       "node": "client",
-      "text": "write /demo/after-return.bin (1024 KiB) v1 in 347ms"
+      "text": "write /demo/after-return.bin (1024 KiB) v1 in 10.507s"
     }
   ]
 }

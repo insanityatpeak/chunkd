@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"fmt"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -248,6 +249,79 @@ func RPC(t *testing.T, newEnv func(t *testing.T) RPCEnv) {
 				}
 			})
 		}
+	})
+
+	t.Run("quorum", func(t *testing.T) {
+		env := newEnv(t)
+		var landed atomic.Int32 // requests the slow node received
+		for _, id := range []iface.NodeID{"fast1", "fast2", "slow", "down"} {
+			clk := env.Clock(id)
+			srv := env.Server(id)
+			srv.Serve(id, "test.quorum", func(m iface.Message, respond iface.Responder) {
+				switch m.To {
+				case "slow":
+					landed.Add(1)
+					clk.AfterFunc(400*time.Millisecond, func() { respond([]byte("ok"), nil) })
+				case "down":
+					respond(nil, iface.Errorf(iface.CodeInternal, "disk"))
+				default:
+					respond([]byte("ok"), nil)
+				}
+			}, iface.ServeOpts{})
+			srv.Serve(id, "test.ping", echo, iface.ServeOpts{})
+		}
+		mk := func(ids ...iface.NodeID) []iface.Call {
+			var out []iface.Call
+			for _, id := range ids {
+				out = append(out, iface.Call{To: id, Addr: env.Addr(id), Kind: "test.quorum"})
+			}
+			return out
+		}
+		const long = time.Hour
+		tests := []struct {
+			name    string
+			calls   []iface.Call
+			need    int
+			grace   time.Duration
+			ok      int
+			pending int // the call that must still be running, or -1
+		}{
+			{"need met, grace passes: the slow one is left running", mk("fast1", "fast2", "slow"), 2, 50 * time.Millisecond, 2, 2},
+			{"a long grace waits for every call", mk("fast1", "fast2", "slow"), 2, long, 3, -1},
+			{"an error does not count toward need", mk("down", "fast1", "fast2"), 2, 50 * time.Millisecond, 2, -1},
+			{"need not met: every call settles", mk("down", "fast1", "slow"), 3, long, 2, -1},
+		}
+		for _, tc := range tests {
+			t.Run(tc.name, func(t *testing.T) {
+				res := env.Caller().Quorum(ctx, tc.calls, tc.need, tc.grace)
+				ok := 0
+				for i, r := range res {
+					if r.Err == nil {
+						ok++
+					}
+					if r.Pending != (i == tc.pending) {
+						t.Fatalf("call %d pending = %v (%+v)", i, r.Pending, res)
+					}
+				}
+				if ok != tc.ok {
+					t.Fatalf("%d calls succeeded, want %d (%+v)", ok, tc.ok, res)
+				}
+				if tc.pending >= 0 && res[tc.pending].Latency >= 400*time.Millisecond {
+					t.Fatalf("returned after %v: it waited for the slow call", res[tc.pending].Latency)
+				}
+			})
+		}
+		t.Run("an abandoned call still reaches its node", func(t *testing.T) {
+			landed.Store(0)
+			env.Caller().Quorum(ctx, mk("fast1", "fast2", "slow"), 2, 0)
+			for range 50 {
+				if landed.Load() > 0 {
+					return
+				}
+				env.Caller().Do(ctx, []iface.Call{{To: "slow", Addr: env.Addr("slow"), Kind: "test.ping"}})
+			}
+			t.Fatal("the slow node never received the abandoned request")
+		})
 	})
 
 	t.Run("async call from inside a handler", func(t *testing.T) {

@@ -64,6 +64,7 @@ func TestBenchRepairTime(t *testing.T) {
 	for _, vol := range []int{40, 120, 240} {
 		for _, limit := range []int64{5, 20, 80} {
 			cfg := DefaultConfig()
+			cfg.Faults.DropRate = 0 // a lost repair message costs a 10 s call timeout, which would swamp the copy time
 			cfg.Meta.Repair.BytesPerSec = limit << 20
 			c := New(11, cfg, io.Discard)
 			uploadFiles(t, c, vol/4, 4<<20)
@@ -191,7 +192,11 @@ func TestBenchLatency(t *testing.T) {
 				// A new client per operation: a long-lived one learns which node is
 				// slow from its first reads and avoids it, which hides the hedge.
 				fresh := func() *client.Direct {
-					return client.New(caller, client.Options{Meta: MetaID, Sleep: caller.Sleep, NoHedge: noHedge})
+					grace := time.Duration(0) // default quorum put; hedging off also waits for every replica (ADR-0029)
+					if noHedge {
+						grace = -1
+					}
+					return client.New(caller, client.Options{Meta: MetaID, Sleep: caller.Sleep, NoHedge: noHedge, PutGrace: grace})
 				}
 				ctx := context.Background()
 				var paths []string

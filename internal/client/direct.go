@@ -51,7 +51,14 @@ type Options struct {
 	// NoHedge reads one replica at a time, moving on only after an error or
 	// timeout. Tests use it as the baseline hedging is measured against.
 	NoHedge bool
+	// PutGrace is how long a put waits for the remaining replicas once min_replicas
+	// have stored a chunk: 0 uses DefaultPutGrace, negative waits for all of them.
+	PutGrace time.Duration
 }
+
+// DefaultPutGrace lets a healthy third replica finish, so a healthy put still
+// stores every copy, without letting a slow one hold the put.
+const DefaultPutGrace = 50 * time.Millisecond
 
 // Direct talks to the metadata server and storage nodes itself.
 type Direct struct {
@@ -291,8 +298,10 @@ func (c *Direct) commit(ctx context.Context, req *chunkdv1.CommitUploadRequest) 
 	}
 }
 
-// putChunk sends one chunk to all its replicas at once and fails if fewer
-// than min acknowledge.
+// putChunk sends one chunk to all its replicas at once and returns once min
+// have stored it and PutGrace has passed for the rest: a replica that is slow
+// no longer sets the put's latency. Replicas still in flight keep going; if one
+// never lands, repair tops the chunk up from the others.
 func (c *Direct) putChunk(ctx context.Context, ch chunk.Chunk, pl *chunkdv1.ChunkPlacement, min int) (ChunkRef, error) {
 	body := wire.Marshal(&chunkdv1.PutChunkRequest{Id: ch.ID[:], Data: ch.Data})
 	calls := make([]iface.Call, len(pl.GetReplicas()))
@@ -306,13 +315,16 @@ func (c *Direct) putChunk(ctx context.Context, ch chunk.Chunk, pl *chunkdv1.Chun
 	for round := 0; round < 2 && len(calls) > 0; round++ {
 		errs = errs[:0]
 		var failed []iface.Call
-		for i, res := range c.caller.Do(ctx, calls) {
-			if res.Err != nil {
+		for i, res := range c.putRound(ctx, calls, min-len(ref.Replicas)) {
+			switch {
+			case res.Pending:
+				// Still in flight: not a failure, and not retried.
+			case res.Err != nil:
 				errs = append(errs, fmt.Errorf("%s: %w", calls[i].To, res.Err))
 				failed = append(failed, calls[i])
-				continue
+			default:
+				ref.Replicas = append(ref.Replicas, string(calls[i].To))
 			}
-			ref.Replicas = append(ref.Replicas, string(calls[i].To))
 		}
 		calls = failed
 	}
@@ -320,6 +332,19 @@ func (c *Direct) putChunk(ctx context.Context, ch chunk.Chunk, pl *chunkdv1.Chun
 		return ChunkRef{}, iface.Errorf(iface.CodeUnavailable, "chunk %d: %d of %d required replicas stored: %v", ch.Index, len(ref.Replicas), min, errors.Join(errs...))
 	}
 	return ref, nil
+}
+
+// putRound sends calls and waits for need of them plus the grace period; a
+// negative PutGrace waits for every call, as before ADR-0029.
+func (c *Direct) putRound(ctx context.Context, calls []iface.Call, need int) []iface.Result {
+	if c.opts.PutGrace < 0 {
+		return c.caller.Do(ctx, calls)
+	}
+	grace := c.opts.PutGrace
+	if grace == 0 {
+		grace = DefaultPutGrace
+	}
+	return c.caller.Quorum(ctx, calls, max(need, 1), grace)
 }
 
 // Stat returns the live version of path and where its chunks are.
