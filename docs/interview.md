@@ -101,7 +101,7 @@ Why per-chunk striping and not stripes across chunks: dedup. A chunk shared by t
 
 In the order I would expect to hit them, with the measurement where I have one.
 
-1. **The quota check.** A limited Begin scans every file in every namespace, inside the apply loop: 0.7 us without a quota, 825 us at 10,000 files and 29 ms at 100,000 ([benchmarks/results.md](benchmarks/results.md)). At 29 ms every other metadata write waits. A running counter per namespace fixes it.
+1. **The quota check (fixed in ADR-0028).** A limited Begin scanned every file inside the apply loop: 29 ms at 100,000 files. A per-namespace counter brought it to 0.9 us ([benchmarks/results.md](benchmarks/results.md)); the next limit is the single group below.
 2. **One metadata group.** The whole namespace is in RAM and every commit goes through one log. ADR-0006 and ADR-0014 say the answer is to shard the namespace by path prefix; CAS stays per path, so it stays inside one group.
 3. **Chunk metadata and block reports.** At 4 MiB, 100 TB is about 4 GB of chunk records and full reports of hundreds of MB. Larger chunks for large files, split and rate-limited reports (ADR-0005).
 4. **The repair cap.** 40 MiB/s cluster-wide would take 29 hours for one 4 TB node. The limit has to be per node, with every survivor sourcing and sinking a share, so repair time falls as the cluster grows (ADR-0011).
@@ -121,7 +121,7 @@ The lesson I took from the same area: an end-state checker misses transient safe
 
 ## 10. What would you do differently?
 
-- **Quota accounting.** I chose a scan inside the log entry because it is exact and short, then measured 29 ms at 100,000 files. A per-namespace counter in the state machine, rebuilt from the snapshot, is the same exactness at O(1).
+- **Quota accounting.** I first chose a scan inside the log entry because it is exact and short, then measured 29 ms at 100,000 files and replaced it with a per-namespace counter (ADR-0028). I kept the counter out of the snapshot: it is derived, rebuilt on restore, and `Reconcile` recounts it, so no proto field exists for it to disagree with. I would have written the counter first; the property test that compares it with a recount after every op is what makes it safe to trust.
 - **Writes are not hedged.** A gray node adds 2 s to every message and moves put p50 from 188 ms to 4,112 ms, while hedging holds get p99 to 235 ms. A write waits for the slowest of its replicas. Placement ignores slow nodes. Both are listed; I would feed client latency back into placement.
 - **Content-defined chunking.** Fixed 4 MiB chunks give nothing after an insert (a 1-byte insert at offset 0 stores 20 MiB again). I picked them for simple placement and repair, and I would switch to FastCDC with a bounded size range if the workload were edits to large files.
 - **One chunk at a time on upload.** A window of chunks in flight, claims batched, would take the claim round trip off the critical path (ADR-0015).
@@ -141,7 +141,7 @@ I did not rely on a lease or on clocks: a frozen process breaks lease reads exac
 
 ## 12. How does a quota hold under concurrent uploads?
 
-The check and the reservation are one log entry. `BeginUploadOp.quota` carries the limit; `State.Validate` computes the namespace's live bytes plus every pending upload's size plus the new size and refuses with `CodeQuota` if it passes the limit. `Apply` runs `Validate` again on every peer, so all agree. A pending upload therefore reserves its whole size from Begin: two uploads that each fit alone cannot together pass the quota, because the second Begin sees the first's reservation. Commit swaps the reservation for a live version; abort and lease expiry release it; delete frees the bytes; undelete is checked as a new write. A repeated Begin with the same request ID returns the pending upload and is not charged twice.
+The check and the reservation are one log entry. `BeginUploadOp.quota` carries the limit; `State.Validate` reads the namespace counter (live bytes plus every pending upload's size, kept by `Begin`, `dropUpload` and `appendVersion`; ADR-0028) and refuses if it plus the new size passes the limit with `CodeQuota`. `Apply` runs `Validate` again on every peer, so all agree. A pending upload therefore reserves its whole size from Begin: two uploads that each fit alone cannot together pass the quota, because the second Begin sees the first's reservation. Commit swaps the reservation for a live version; abort and lease expiry release it; delete frees the bytes; undelete is checked as a new write. A repeated Begin with the same request ID returns the pending upload and is not charged twice.
 
 Tests: `TestQuotaReservesAtBegin` (`internal/core/meta`), `TestQuotaFreedByDeleteAndChargedByUndelete`, `TestQuotaSurvivesSnapshot`, `gateway.TestQuotaRefusesBeforeBytesAreSent`, `TestQuotaRefusalReadsNoBytes` (a refused upload reads zero bytes of the source).
 

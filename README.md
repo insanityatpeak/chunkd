@@ -131,7 +131,7 @@ Bugs these tests caught, with root causes and fixes: [docs/bugs-found.md](docs/b
 | Storage, replicate:3 against ec:4+2 | 3.00x against 1.50x; repair reads 4 bytes per byte rebuilt ([ec.md](docs/benchmarks/ec.md)) | sim |
 | Dedup, base plus 10 small edits | 220 MiB logical in 60 MiB ([dedup.md](docs/benchmarks/dedup.md)) | sim |
 | Cut-off 32 MiB upload at 90% | resume re-sends a 4 MiB body; a restart re-sends 32 MiB (the same bytes reach the nodes, since stored chunks are skipped) | sim |
-| Quota check per Begin, 100 / 10,000 / 100,000 files | 4 / 825 / 29,400 us, against 0.7 us without a quota | state machine |
+| Quota check per Begin, 100 / 10,000 / 100,000 files | 1.3 / 1.8 / 0.9 us, against 0.7 to 1.2 us without a quota (a scan cost 4 / 825 / 29,379 us before ADR-0028) | state machine |
 
 Charts and every table: [docs/benchmarks/results.md](docs/benchmarks/results.md). What the numbers do and do not show: [docs/benchmarks/README.md](docs/benchmarks/README.md).
 
@@ -140,7 +140,7 @@ Charts and every table: [docs/benchmarks/results.md](docs/benchmarks/results.md)
 | Limitation | Why it is acceptable now | Plan |
 |---|---|---|
 | Authentication is optional static bearer keys at the gateway (`-keys`); with none the gateway is open. gRPC between processes, and HTTP, are plaintext, and node chunk calls are unauthenticated | Runs on a private Docker network; put TLS in front of a keyed gateway (ADR-0025) | mTLS in the transport, signed requests, a logged key table with rotation |
-| A key owns one path segment and a byte quota counted in logical bytes of live versions and pending uploads; retired versions are not counted, an overwrite counts old and new until it commits, and each limited begin scans every file: 0.7 us without a quota, 825 us at 10,000 files and 29 ms at 100,000, inside the log's apply loop | The check is one log entry, so concurrent uploads cannot overshoot (ADR-0025); the cost is measured in [docs/benchmarks](docs/benchmarks/results.md) | A per-namespace usage counter, stored-byte accounting, S3-style IAM policies |
+| A key owns one path segment and a byte quota counted in logical bytes of live versions and pending uploads; retired versions are not counted, an overwrite counts old and new until it commits, and a limited begin reads a per-namespace counter, about 1 us at any size (ADR-0028) | The check is one log entry, so concurrent uploads cannot overshoot (ADR-0025); the cost is measured in [docs/benchmarks](docs/benchmarks/results.md) | Stored-byte accounting, S3-style IAM policies |
 | An upload ID is a sequence number, and an interrupted upload lives one lease (3 minutes at the demo setting) | Dedup makes a restarted upload cost claims, not bytes (ADR-0024) | A longer per-upload lease charged to its owner |
 | A split resumable upload cannot be checked against its declared hash before commit | A wrong hash commits a version every read refuses, never one that serves wrong bytes (ADR-0024) | A composite checksum over chunk IDs, as S3 multipart does |
 | Upload size must be known up front | Placement is computed per chunk at `BeginUpload` | HDFS-style `addBlock` per chunk |

@@ -20,10 +20,14 @@ type Drift struct {
 	// Stripes lists stripes whose hold count differs from their record plus
 	// the pending uploads claiming them: their shards' GC mark is wrong.
 	Stripes []iface.ChunkID
+	// Namespaces lists namespaces whose quota counter differs from a recount.
+	Namespaces []string
 }
 
 // Count is the number of drifted entries.
-func (d Drift) Count() int { return len(d.Refcounts) + len(d.Claims) + len(d.Stripes) }
+func (d Drift) Count() int {
+	return len(d.Refcounts) + len(d.Claims) + len(d.Stripes) + len(d.Namespaces)
+}
 
 // RefDrift is one chunk's stored and recounted refcount.
 type RefDrift struct {
@@ -104,6 +108,17 @@ func (s *State) Reconcile() Drift {
 	for _, id := range sortedIDs(sids) {
 		if st := s.stripes[id]; st == nil || st.holds != holds[id] {
 			d.Stripes = append(d.Stripes, id)
+		}
+	}
+	want := s.recountNamespaces()
+	for ns := range s.nsBytes {
+		if _, ok := want[ns]; !ok {
+			want[ns] = 0
+		}
+	}
+	for _, ns := range slices.Sorted(maps.Keys(want)) {
+		if s.nsBytes[ns] != want[ns] {
+			d.Namespaces = append(d.Namespaces, ns)
 		}
 	}
 	return d

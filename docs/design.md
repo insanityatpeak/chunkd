@@ -285,7 +285,7 @@ client ── Authorization: Bearer k ──▶ gateway ── sha256(k) in the 
                                                                        yes: 507, nothing applied
 ```
 
-A key owns one path segment and a byte quota. The quota is checked and reserved in the same log entry as Begin, so concurrent uploads that each fit cannot together pass it; commit swaps the reservation for a live version, abort and lease expiry release it. The check scans every file, which costs 0.7 us without a quota and 29 ms at 100,000 files with one ([results.md](benchmarks/results.md)); it runs inside the apply loop. Open mode (no keys file) is unchanged.
+A key owns one path segment and a byte quota. The quota is checked and reserved in the same log entry as Begin, so concurrent uploads that each fit cannot together pass it; commit swaps the reservation for a live version, abort and lease expiry release it. The check reads a per-namespace counter kept by the state machine (ADR-0028), so a limited Begin costs about 1 us at 100,000 files, where the scan it replaced cost 29 ms ([results.md](benchmarks/results.md)). `Reconcile` recounts it each epoch and alarms on drift. Open mode (no keys file) is unchanged.
 
 ## Retention and diff (ADR-0026)
 

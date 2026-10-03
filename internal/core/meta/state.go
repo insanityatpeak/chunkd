@@ -147,6 +147,9 @@ type State struct {
 	// and each of its shards; derived from chunks and uploads.
 	stripes map[iface.ChunkID]*stripe
 	shardOf map[iface.ChunkID]ShardRef
+	// nsBytes is each namespace's quota usage: live versions plus pending
+	// reservations. Derived, so rebuilt on restore, not stored.
+	nsBytes map[string]int64
 }
 
 // Committed locates the version an upload produced.
@@ -173,7 +176,7 @@ type Result struct {
 func New() *State {
 	return &State{files: map[string]*File{}, chunks: map[iface.ChunkID]*ChunkInfo{}, uploads: map[uint64]*Upload{}, committed: map[uint64]Committed{}, claimed: map[iface.ChunkID]int{},
 		requests: map[string]uint64{}, gcPending: map[iface.ChunkID]map[iface.NodeID]GCTarget{}, trimPending: map[iface.ChunkID]iface.NodeID{}, nodeAdmin: map[iface.NodeID]chunkdv1.NodeAdmin{},
-		stripes: map[iface.ChunkID]*stripe{}, shardOf: map[iface.ChunkID]ShardRef{}}
+		stripes: map[iface.ChunkID]*stripe{}, shardOf: map[iface.ChunkID]ShardRef{}, nsBytes: map[string]int64{}}
 }
 
 // ValidPath reports whether p is an absolute, clean path to a file.
@@ -193,26 +196,43 @@ func Namespace(p string) string {
 
 // NamespaceBytes is the logical size of the live versions under ns plus the
 // size every pending upload there has reserved. Retired versions kept for
-// undelete are not counted.
-// SIMPLIFIED: a scan per quota-limited Begin; S3-compatible stores keep a
+// undelete are not counted. It reads a counter that every op moving a live
+// version or a reservation keeps; recountNamespaces is the oracle (ADR-0028).
+// SIMPLIFIED: logical bytes, not stored bytes; S3-compatible stores keep a
 // running usage counter per bucket. An overwrite counts the old and the new
 // version until the commit.
-func (s *State) NamespaceBytes(ns string) int64 {
-	var n int64
+func (s *State) NamespaceBytes(ns string) int64 { return s.nsBytes[ns] }
+
+// addNS moves ns's usage by d; a namespace at zero is forgotten.
+func (s *State) addNS(ns string, d int64) {
+	if n := s.nsBytes[ns] + d; n != 0 {
+		s.nsBytes[ns] = n
+	} else {
+		delete(s.nsBytes, ns)
+	}
+}
+
+// recountNamespaces recomputes every namespace's usage from the files and
+// uploads: what the counter must equal.
+func (s *State) recountNamespaces() map[string]int64 {
+	out := map[string]int64{}
+	add := func(ns string, n int64) {
+		if out[ns] += n; out[ns] == 0 {
+			delete(out, ns)
+		}
+	}
 	for p, f := range s.files {
-		if Namespace(p) != ns || len(f.Versions) == 0 {
+		if len(f.Versions) == 0 {
 			continue
 		}
 		if v := f.Versions[len(f.Versions)-1]; !v.Tombstone {
-			n += v.Size
+			add(Namespace(p), v.Size)
 		}
 	}
 	for _, u := range s.uploads {
-		if Namespace(u.Path) == ns {
-			n += u.Size
-		}
+		add(Namespace(u.Path), u.Size)
 	}
-	return n
+	return out
 }
 
 // overQuota refuses growing ns by add bytes past limit (0: unlimited).
@@ -590,6 +610,7 @@ func (s *State) apply(op *chunkdv1.Op) Result {
 			u.Placement = append(u.Placement, nodes)
 		}
 		s.uploads[u.ID] = u
+		s.addNS(Namespace(u.Path), u.Size)
 		return Result{UploadID: u.ID}
 	case *chunkdv1.Op_Commit:
 		c := o.Commit
@@ -810,6 +831,7 @@ func (s *State) dropUpload(u *Upload) {
 		delete(s.requests, u.RequestID)
 	}
 	delete(s.uploads, u.ID)
+	s.addNS(Namespace(u.Path), -u.Size)
 }
 
 // Claimed reports whether a pending upload has claimed chunk id.
@@ -838,6 +860,12 @@ func (s *State) appendVersion(p string, v Version) {
 	}
 	if n := len(f.Versions); n > 0 {
 		f.Versions[n-1].Retired, f.Versions[n-1].RetiredAt = true, s.epoch
+		if !f.Versions[n-1].Tombstone {
+			s.addNS(Namespace(p), -f.Versions[n-1].Size)
+		}
+	}
+	if !v.Tombstone {
+		s.addNS(Namespace(p), v.Size)
 	}
 	f.Versions = append(f.Versions, v)
 }
@@ -1202,5 +1230,6 @@ func Restore(data []byte) (*State, error) {
 	for _, a := range snap.GetNodeAdmin() {
 		s.nodeAdmin[iface.NodeID(a.GetNode())] = a.GetState()
 	}
+	s.nsBytes = s.recountNamespaces()
 	return s, nil
 }

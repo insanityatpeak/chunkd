@@ -1,6 +1,8 @@
 package meta
 
 import (
+	"maps"
+	"slices"
 	"testing"
 
 	"github.com/insanityatpeak/chunkd/internal/iface"
@@ -125,4 +127,90 @@ func TestRetentionSurvivesSnapshot(t *testing.T) {
 	if got := r.RetainFor("/a", 1); got != 5 {
 		t.Fatalf("after restore RetainFor = %d", got)
 	}
+}
+
+// The counter must equal a recount after every op, through Delete, Undelete,
+// overwrites, lease expiry and a snapshot round trip (ADR-0028).
+func TestQuotaCounterMatchesRecount(t *testing.T) {
+	for seed := range uint64(40) {
+		rng := &lcg{seed*2 + 1}
+		s := New()
+		paths := []string{"/a/x", "/a/y", "/b/x", "/b/y/z", "/c"}
+		for i := range 300 {
+			var op *chunkdv1.Op
+			switch k := rng.IntN(8); k {
+			case 0, 1, 2:
+				p := paths[rng.IntN(len(paths))]
+				op = begin(p, 0, int64(rng.IntN(40)))
+				if o := op.GetBegin(); rng.IntN(2) == 0 {
+					o.ExpectedVersion = s.liveVersion(p)
+				} else {
+					o.LastWriterWins = true
+				}
+			case 3, 4:
+				if ids := slices.Sorted(maps.Keys(s.uploads)); len(ids) > 0 {
+					u := s.uploads[ids[rng.IntN(len(ids))]]
+					op = commit(u.ID, len(u.Placement), byte(rng.IntN(5)))
+				}
+			case 5:
+				if ids := slices.Sorted(maps.Keys(s.uploads)); len(ids) > 0 {
+					op = abort(ids[rng.IntN(len(ids))])
+				}
+			case 6:
+				p := paths[rng.IntN(len(paths))]
+				if rng.IntN(2) == 0 {
+					op = del(p, s.liveVersion(p))
+				} else if f := s.files[p]; f != nil {
+					op = undel(p, f.Versions[rng.IntN(len(f.Versions))].V, s.liveVersion(p))
+				}
+			default:
+				op = &chunkdv1.Op{Op: &chunkdv1.Op_AdvanceEpoch{AdvanceEpoch: &chunkdv1.AdvanceEpochOp{RetainEpochs: 1, LeaseEpochs: 2}}}
+			}
+			if op == nil {
+				continue
+			}
+			_, _ = s.Apply(op) // refusals leave the state alone
+			if got, want := s.nsBytes, s.recountNamespaces(); !maps.Equal(got, want) {
+				t.Fatalf("seed %d op %d: counter %v, recount %v", seed, i, got, want)
+			}
+			if i%50 == 0 {
+				r, err := Restore(s.Snapshot())
+				if err != nil {
+					t.Fatal(err)
+				}
+				if !maps.Equal(r.nsBytes, s.nsBytes) {
+					t.Fatalf("seed %d op %d: restored %v, live %v", seed, i, r.nsBytes, s.nsBytes)
+				}
+			}
+		}
+		if d := s.Reconcile(); !d.Empty() {
+			t.Fatalf("seed %d: drift %+v", seed, d)
+		}
+	}
+}
+
+func TestReconcileAlarmsQuotaDrift(t *testing.T) {
+	s := New()
+	run(t, s, []step{
+		{begin("/a/f", 0, 8), iface.CodeUnknown, Result{UploadID: 1}},
+		{commit(1, 2, 'a'), iface.CodeUnknown, Result{UploadID: 1, Version: 1}},
+	})
+	s.nsBytes["a"]++
+	s.nsBytes["ghost"] = 5
+	d := s.Reconcile()
+	if !slices.Equal(d.Namespaces, []string{"a", "ghost"}) {
+		t.Fatalf("drift = %+v", d)
+	}
+	if s.nsBytes["a"] != 9 {
+		t.Fatal("reconcile corrected the counter")
+	}
+}
+
+// lcg is a seeded generator local to the test; core code takes randomness
+// from iface, and a test needs only a fixed sequence.
+type lcg struct{ x uint64 }
+
+func (l *lcg) IntN(n int) int {
+	l.x = l.x*6364136223846793005 + 1442695040888963407
+	return int(l.x >> 33 % uint64(n))
 }

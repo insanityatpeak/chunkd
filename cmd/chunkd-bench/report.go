@@ -134,7 +134,7 @@ func report(out string) error {
 	_ = resWire
 
 	// Quota.
-	t, err = section("Cost of a quota check (state machine)", "Microseconds for one Begin in the metadata state machine, by number of files in the namespace; ten other namespaces hold that many files between them. With a quota the state machine scans every file (ADR-0025).", "quota.csv", "quota.svg")
+	t, err = section("Cost of a quota check (state machine)", "Microseconds for one Begin in the metadata state machine, by number of files in the namespace; ten other namespaces hold that many files between them. With a quota the state machine reads a per-namespace counter (ADR-0028); before it, a limited Begin scanned every file and cost 825 us at 10,000 files and 29,379 us at 100,000.", "quota.csv", "quota.svg")
 	if err != nil {
 		return err
 	}

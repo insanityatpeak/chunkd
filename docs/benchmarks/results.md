@@ -128,14 +128,14 @@ Microseconds for one Begin in the metadata state machine, by number of files in 
 
 | mode | files | us_per_begin |
 |---|---|---|
-| no-quota | 100 | 0.668 |
-| quota | 100 | 4.120 |
-| no-quota | 1000 | 0.859 |
-| quota | 1000 | 40.653 |
-| no-quota | 10000 | 0.686 |
-| quota | 10000 | 825.468 |
-| no-quota | 100000 | 0.768 |
-| quota | 100000 | 29378.886 |
+| no-quota | 100 | 1.070 |
+| quota | 100 | 1.327 |
+| no-quota | 1000 | 1.171 |
+| quota | 1000 | 0.925 |
+| no-quota | 10000 | 0.723 |
+| quota | 10000 | 1.848 |
+| no-quota | 100000 | 0.807 |
+| quota | 100000 | 0.881 |
 
 ![Cost of a quota check (state machine)](charts/quota.svg)
 

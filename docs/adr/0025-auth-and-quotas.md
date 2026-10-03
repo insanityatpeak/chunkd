@@ -1,6 +1,6 @@
 # 0025. API keys, namespaces and byte quotas
 
-Status: accepted
+Status: accepted (the usage scan was replaced by a counter in ADR-0028)
 Date: 2026-10-03
 
 ## Context
@@ -18,7 +18,7 @@ The gateway is open: anyone who reaches it can read, write, delete and drain nod
 | Key storage | Plain keys in a file; **SHA-256 of the key** | The hash. The keys file leaks nothing usable; `chunkd keygen` prints the key once and the entry to add |
 | Tenant scope | S3-style buckets in metadata; **the first path segment** | The first segment (`/alice/...`). No change to naming, listing or the sim. A key owns `/<namespace>/` as a whole segment, so `/alicex/` is not alice's. An admin key reaches every path and the node controls |
 | Where quota state lives | Gateway memory; gateway disk; **the metadata log** | The log. Begin carries the limit; every peer applies the same check in log order, so two gateways, a restart or a failover cannot overshoot |
-| What counts | A running counter per namespace; **a scan of live versions plus pending uploads** | The scan. Nothing extra to keep in the snapshot or to drift from the files; a snapshot restores the uploads, so reservations survive it |
+| What counts | A running counter per namespace; **a scan of live versions plus pending uploads** | The scan, first. ADR-0028 replaced it with a derived counter once the scan measured 29 ms at 100,000 files; a snapshot restores the uploads, so reservations survive it |
 | Upload ownership | A token per upload; **the upload's path** | The upload ID names no path, so the gateway asks the log for the upload's path and compares it with the key's namespace. Another key's ID answers `not_found`, as an unknown one does |
 
 ## Decision
@@ -43,7 +43,7 @@ client ── Authorization: Bearer k ──▶ gateway ── sha256(k) in keys
 ## Consequences
 
 - Quota holds under concurrency because the check and the reservation are one log entry. `TestQuotaReservesAtBegin` (state), `TestQuotaRefusesBeforeBytesAreSent` (gateway) and `TestQuotaRefusalReadsNoBytes` (library, zero bytes read).
-- SIMPLIFIED: each quota-limited Begin scans the namespace's files and uploads, O(files) on every peer. S3-compatible stores keep a usage counter per bucket.
+- SIMPLIFIED (fixed by ADR-0028): each quota-limited Begin scanned every file and upload, O(files) on every peer; it now reads a per-namespace counter, as S3-compatible stores do per bucket.
 - SIMPLIFIED: an overwrite counts the old and the new version until the commit, so a tenant at 60% of its quota cannot overwrite a file larger than 40% of it.
 - SIMPLIFIED: only live versions count. Retired versions kept for undelete (and the chunks they pin) cost the cluster bytes the quota does not see; Ceph and S3 count noncurrent versions.
 - SIMPLIFIED: the quota counts logical bytes, not stored bytes, so an erasure-coded tenant (1.5x) and a replicated one (3x) cost the cluster different amounts for the same quota, and dedup across tenants is invisible to it.
@@ -52,4 +52,4 @@ client ── Authorization: Bearer k ──▶ gateway ── sha256(k) in keys
 
 ## At 100x scale
 
-The scan becomes a counter in the state, maintained at commit, delete, expire and undelete and rebuilt on restore, with the limit in a logged namespace record instead of on every request. Keys move from a file to a logged table with rotation and expiry, and signed requests replace bearer tokens so a captured request cannot be replayed with another body. Quotas would count stored bytes per redundancy class, charge abandoned uploads to their owner at expiry, and report usage per namespace in `/cluster`.
+The limit moves into a logged namespace record instead of travelling on every request. Keys move from a file to a logged table with rotation and expiry, and signed requests replace bearer tokens so a captured request cannot be replayed with another body. Quotas would count stored bytes per redundancy class, charge abandoned uploads to their owner at expiry, and report usage per namespace in `/cluster`.

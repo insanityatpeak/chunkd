@@ -1,6 +1,6 @@
 # Architecture decision records
 
-Format: Context, Options considered, Decision, Consequences, At 100× scale ([template](0000-template.md)). No ADR has been superseded. Three were amended by later ones; the status line of each says how.
+Format: Context, Options considered, Decision, Consequences, At 100× scale ([template](0000-template.md)). No ADR has been superseded. Four were amended by later ones; the status line of each says how.
 
 | ADR | Title | Status | Amended by |
 |---|---|---|---|
@@ -28,6 +28,7 @@ Format: Context, Options considered, Decision, Consequences, At 100× scale ([te
 | [0022](0022-erasure-coding-layout.md) | Erasure coding: RS(4,2) stripes inside each chunk | accepted |  |
 | [0023](0023-ec-repair-and-degraded-reads.md) | EC repair: node-side shard rebuild | accepted |  |
 | [0024](0024-resumable-uploads.md) | Resumable uploads | accepted |  |
-| [0025](0025-auth-and-quotas.md) | API keys, namespaces and byte quotas | accepted |  |
+| [0025](0025-auth-and-quotas.md) | API keys, namespaces and byte quotas | accepted | [0028](0028-quota-counter.md) (the scan became a counter) |
 | [0026](0026-version-retention-and-diff.md) | Per-path retention and chunk-level version diff | accepted |  |
 | [0027](0027-benchmark-method.md) | Benchmark method: a sim tier and a real tier | accepted |  |
+| [0028](0028-quota-counter.md) | A per-namespace usage counter for quotas | accepted |  |
