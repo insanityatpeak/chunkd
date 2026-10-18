@@ -632,6 +632,12 @@ func (s *Scheduler) dispatch() {
 			blocked = append(blocked, it)
 			continue
 		}
+		// A second item for a chunk already copying (two planned moves of
+		// it, say) would replace the first in s.inflight and leak its slots.
+		if s.inflight[it.id] != nil {
+			s.stats.Cancelled++
+			continue
+		}
 		b, ok := s.view.Want(it.id)
 		if !ok {
 			s.stats.Cancelled++

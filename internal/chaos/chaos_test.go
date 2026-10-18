@@ -385,6 +385,19 @@ func TestChaosECRegressions(t *testing.T) {
 	}
 }
 
+// Seeds that found bugs-found #33: a second balance move of a chunk in flight
+// leaked a destination slot, and repair onto that node stopped.
+func TestChaosRepairSlotRegressions(t *testing.T) {
+	for _, c := range []struct {
+		seed  uint64
+		shape Shape
+	}{{2136, DefaultShape()}, {3320, DefaultShape()}, {658, MetaShape()}, {241, ECShape()}, {943, ECShape()}} {
+		if r := Run(Generate(c.seed, c.shape), io.Discard); r.Err != nil {
+			t.Fatalf("seed %d: %v", c.seed, r.Err)
+		}
+	}
+}
+
 func TestSameSeedSameTraceEC(t *testing.T) {
 	a := Run(Generate(7, ECShape()), io.Discard)
 	b := Run(Generate(7, ECShape()), io.Discard)

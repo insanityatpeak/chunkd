@@ -1,6 +1,7 @@
 package repair
 
 import (
+	"container/heap"
 	"slices"
 	"testing"
 	"time"
@@ -181,5 +182,30 @@ func TestBalanceWaitsForSettledMembership(t *testing.T) {
 	h.s.Scan()
 	if len(h.copies) == 0 {
 		t.Fatal("no moves once the dead node's delay was over")
+	}
+}
+
+// Two planned moves of one chunk must not both launch: the second would
+// replace the first in the in-flight table and leak its target and source
+// slots, which later blocks every repair onto that node (bugs-found #33).
+func TestSecondMoveOfAChunkInFlightIsDropped(t *testing.T) {
+	w := newWorld(5)
+	w.member(1, 2, 3, 4, 5)
+	w.add(chunk(1), 1<<20, 1, 2, 3)
+	h := newHarness(t, unthrottled(), w, -1) // the first copy stays in flight
+	h.applyTrims()
+	for _, m := range []move{{from: node(1), to: node(4)}, {from: node(2), to: node(5)}} {
+		s := h.s
+		s.seq++
+		it := &item{id: chunk(1), class: Balance, live: s.cfg.Replicas, seq: s.seq, move: &move{from: m.from, to: m.to}}
+		heap.Push(&s.q, it)
+		s.queued[chunk(1)] = it
+	}
+	h.s.dispatch()
+	if got := len(h.copies); got != 1 {
+		t.Fatalf("%d copies of one chunk launched, want 1", got)
+	}
+	if dst := h.s.dst[node(5)] + h.s.dst[node(4)]; dst != 1 {
+		t.Fatalf("target slots held = %d, want 1", dst)
 	}
 }
