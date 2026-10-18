@@ -1,5 +1,5 @@
 {
-  "seed": 7,
+  "seed": 1,
   "scenario": "corrupt-chunk",
   "untilMs": 120000,
   "events": [

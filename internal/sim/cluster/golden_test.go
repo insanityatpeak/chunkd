@@ -47,7 +47,7 @@ func TestScenarioGolden(t *testing.T) {
 			keep := func(es []client.Event) []client.Event {
 				return slices.DeleteFunc(slices.Clone(es), func(e client.Event) bool { return e.AtMs > until })
 			}
-			g := Golden{Seed: 7, Scenario: name, UntilMs: until, Events: keep(s.Events), Reads: keep(s.Reads)}
+			g := Golden{Seed: 1, Scenario: name, UntilMs: until, Events: keep(s.Events), Reads: keep(s.Reads)}
 			got, _ := json.MarshalIndent(g, "", "  ")
 			path := filepath.Join("..", "..", "..", "web", "e2e", "golden", name+".json")
 			if *update {
