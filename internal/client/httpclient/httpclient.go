@@ -15,6 +15,7 @@ import (
 	"strings"
 
 	"github.com/insanityatpeak/chunkd/internal/client"
+	"github.com/insanityatpeak/chunkd/internal/core/ec"
 	"github.com/insanityatpeak/chunkd/internal/iface"
 	"github.com/insanityatpeak/chunkd/internal/real/gateway"
 )
@@ -154,7 +155,11 @@ func (c *Client) GetVersion(ctx context.Context, path string, version uint64, w 
 		if _, err := io.ReadFull(resp.Body, buf); err != nil {
 			return m, iface.Errorf(iface.CodeUnavailable, "chunk %d: stream ended early: %v", ch.Index, err)
 		}
-		if sum := sha256.Sum256(buf); hex.EncodeToString(sum[:]) != ch.ID {
+		sum := sha256.Sum256(buf)
+		if len(ch.Shards) > 0 { // a stripe's ID names the chunk's hash, not the bytes (ADR-0022)
+			sum = ec.LogicalID(sum)
+		}
+		if hex.EncodeToString(sum[:]) != ch.ID {
 			return m, iface.Errorf(iface.CodeInternal, "chunk %d: data does not match its hash", ch.Index)
 		}
 		file.Write(buf)

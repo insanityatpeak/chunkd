@@ -333,3 +333,33 @@ func (l *locked) Append(ctx context.Context, id uint64, off int64, r io.Reader, 
 	defer l.mu.Unlock()
 	return l.api.Append(ctx, id, off, r, n)
 }
+
+// An erasure-coded chunk's ID is its stripe ID, not the SHA-256 of its bytes:
+// the HTTP client must verify it against the stripe ID, or every EC download
+// through the gateway fails (bugs-found #34).
+func TestGatewayRoundTripEC(t *testing.T) {
+	cfg := cluster.DefaultConfig()
+	cfg.Nodes = 7
+	cfg.Meta.ChunkSize = 64 << 10
+	c := cluster.New(7, cfg, io.Discard)
+	c.Tick(3 * time.Second)
+	caller := c.NewCaller("gateway")
+	api := &locked{api: client.New(caller, client.Options{Meta: cluster.MetaID, Sleep: caller.Sleep})}
+	srv := httptest.NewServer(gateway.Handler(api, slog.New(slog.NewTextHandler(io.Discard, nil))))
+	t.Cleanup(srv.Close)
+
+	hc := httpclient.New(srv.URL)
+	ctx := context.Background()
+	data := payload(300 << 10)
+	m, err := hc.Put(ctx, "/ec/a.bin", bytes.NewReader(data), int64(len(data)), client.PutOptions{Redundancy: client.EC42})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if m.Redundancy != client.EC42 {
+		t.Fatalf("put manifest redundancy %q", m.Redundancy)
+	}
+	var got bytes.Buffer
+	if _, err := hc.Get(ctx, "/ec/a.bin", &got); err != nil || !bytes.Equal(got.Bytes(), data) {
+		t.Fatalf("get: %d bytes, %v", got.Len(), err)
+	}
+}
