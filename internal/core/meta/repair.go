@@ -136,9 +136,13 @@ func (s *Server) corrupted(node iface.NodeID, corrupt, removed []iface.ChunkID) 
 // replica (a bad gateway or network path would condemn good copies), so
 // the node re-checks, and a mismatch comes back as an ordinary corrupt
 // report.
-// SIMPLIFIED: hints are not rate-limited; each costs the node one re-read.
-// HDFS DataNodes throttle client-reported bad blocks the same way scans
-// are throttled.
+// Each hint costs the node one re-read, so a node is asked at most HintRate
+// times a second (HintBurst at once); the rest are dropped and counted. The
+// scrubber finds a bad copy a dropped hint pointed at.
+// SIMPLIFIED: one bucket per node, no per-client budget: a client that is
+// refused cannot tell, and one noisy client can use a node's whole budget.
+// HDFS DataNodes throttle client-reported bad blocks the same way scans are
+// throttled.
 func (s *Server) suspect(m iface.Message, respond iface.Responder) {
 	if !s.requireLeader(respond) {
 		return
@@ -154,12 +158,27 @@ func (s *Server) suspect(m iface.Message, respond iface.Responder) {
 		return
 	}
 	node := iface.NodeID(req.GetNode())
-	if _, known := s.cluster.Node(node); known {
+	if _, known := s.cluster.Node(node); known && !s.hintAllowed(node) {
+		s.hintsDropped++
+	} else if known {
 		s.event("corrupt", node, "client saw bad bytes for chunk %s: node asked to re-check", id.String()[:12])
 		s.d.Net.Send(node, iface.Message{From: s.cfg.ID, Kind: wire.KindVerifyChunk, Body: wire.Marshal(&chunkdv1.VerifyChunk{ChunkId: id[:], Term: s.raft.Status().Term})})
 	}
 	respond(wire.Marshal(&chunkdv1.SuspectResponse{}), nil)
 }
+
+// hintAllowed spends one token of node's hint bucket.
+func (s *Server) hintAllowed(node iface.NodeID) bool {
+	b := s.hints[node]
+	if b == nil {
+		b = repair.NewBucket(s.cfg.HintRate, s.cfg.HintBurst)
+		s.hints[node] = b
+	}
+	return b.Take(1, s.d.Clock.Now())
+}
+
+// HintsDropped counts client re-check hints refused by the rate limit.
+func (s *Server) HintsDropped() uint64 { return s.hintsDropped }
 
 // verifyReport is where Phase 3 checks a returning node's copies against
 // the scrubber's record (stale or corrupt replicas). Today a reported copy

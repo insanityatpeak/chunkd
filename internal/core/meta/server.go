@@ -60,6 +60,9 @@ type Config struct {
 	// two sweeps, so a stall GC notices never costs the upload its lease.
 	LeaseEpochs int
 	GCGrace     time.Duration
+	// HintRate and HintBurst bound the client re-check hints one node is asked
+	// to act on, per second and at once; HintRate <= 0 is unlimited.
+	HintRate, HintBurst int64
 }
 
 // DefaultConfig is N=3, commit at 2 (ADR-0007), 4 MiB chunks (ADR-0005),
@@ -71,7 +74,7 @@ func DefaultConfig(id iface.NodeID) Config {
 	rc := consensus.DefaultConfig(1, nil, nil)
 	return Config{ID: id, Replicas: 3, MinReplicas: 2, ChunkSize: chunk.DefaultSize, Detector: detector.DefaultConfig(), Repair: repair.DefaultConfig(), SnapshotEvery: 1000,
 		TickEvery: rc.TickEvery, ElectionTimeout: rc.ElectionTimeout, RequestTimeout: rc.RequestTimeout, Trailing: rc.Trailing,
-		EpochEvery: 30 * time.Second, RetainEpochs: 3, LeaseEpochs: 6, GCGrace: time.Minute}
+		EpochEvery: 30 * time.Second, RetainEpochs: 3, LeaseEpochs: 6, GCGrace: time.Minute, HintRate: 1, HintBurst: 10}
 }
 
 // Server is one metadata peer. Everything runs on its event loop. The
@@ -100,6 +103,10 @@ type Server struct {
 	dedupSkipped uint64
 	gc           gcState
 	trims        trimState
+	// hints is a token bucket per node for client re-check hints (ADR-0013);
+	// hintsDropped counts the hints it refused. Soft state, one entry per node.
+	hints        map[iface.NodeID]*repair.Bucket
+	hintsDropped uint64
 	// drift is the latest reconciliation's result.
 	drift Drift
 }
@@ -121,7 +128,7 @@ func NewServer(ctx context.Context, d Deps, cfg Config) (*Server, error) {
 	if self == 0 {
 		return nil, fmt.Errorf("meta: %s is not among its peers %v", cfg.ID, peers)
 	}
-	s := &Server{d: d, cfg: cfg, state: New(), cluster: NewCluster(cfg.Detector), gc: newGCState(), trims: newTrimState()}
+	s := &Server{d: d, cfg: cfg, state: New(), cluster: NewCluster(cfg.Detector), gc: newGCState(), trims: newTrimState(), hints: map[iface.NodeID]*repair.Bucket{}}
 	rc := cfg.Repair
 	rc.Replicas = cfg.Replicas
 	s.repair = repair.New(rc, d.Clock, repairView{s}, repair.Sender{Copy: s.sendCopy, Trim: s.sendTrim, Done: s.copyDone})

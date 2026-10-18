@@ -9,6 +9,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/insanityatpeak/chunkd/internal/client"
 	"github.com/insanityatpeak/chunkd/internal/core/wire"
 	"github.com/insanityatpeak/chunkd/internal/iface"
 	chunkdv1 "github.com/insanityatpeak/chunkd/proto/gen/chunkd/v1"
@@ -199,4 +200,68 @@ func TestInvariantCatchesForeignBytes(t *testing.T) {
 	if err := c.AssertInvariants(); err == nil || !strings.Contains(err.Error(), "never written") {
 		t.Fatalf("forged read not reported: %v", err)
 	}
+}
+
+// TestSuspectHintsAreRateLimited: a flood of hints about one node costs it
+// HintBurst re-checks at once and HintRate a second after that; the rest are
+// dropped and counted, and the cluster stays healthy.
+func TestSuspectHintsAreRateLimited(t *testing.T) {
+	cfg := DefaultConfig()
+	cfg.Faults.DropRate, cfg.Faults.DupRate = 0, 0 // a lost call would wait 10 s and refill the bucket
+	c := New(6, cfg, io.Discard)
+	c.Tick(3 * time.Second)
+	st, data := uploadOne(t, c)
+	_ = data
+	raw, _ := hex.DecodeString(st.Chunk[0].ID)
+	var id iface.ChunkID
+	copy(id[:], raw)
+	node := iface.NodeID(st.Chunk[0].Replicas[0])
+	caller := c.NewCaller("client-9")
+	hint := func() {
+		r := caller.Do(t.Context(), []iface.Call{{To: MetaID, Kind: wire.KindSuspect,
+			Body: wire.Marshal(&chunkdv1.SuspectRequest{ChunkId: id[:], Node: string(node)})}})
+		if r[0].Err != nil {
+			t.Fatal(r[0].Err)
+		}
+	}
+	m := cfg.Meta
+	const flood = 40
+	start, base := c.Now(), c.Meta().HintsDropped()
+	for range flood {
+		hint()
+	}
+	// Each call takes simulated time, so the bucket refills a little during
+	// the flood: at most the burst plus the refill is allowed.
+	elapsed := int64(c.Now().Sub(start)/time.Second) + 1
+	allowed := m.HintBurst + m.HintRate*elapsed
+	dropped := int64(c.Meta().HintsDropped() - base)
+	if dropped == 0 || dropped < flood-allowed {
+		t.Fatalf("%d of %d hints dropped with burst %d and rate %d/s over %d s", dropped, flood, m.HintBurst, m.HintRate, elapsed)
+	}
+	// After a quiet spell the bucket has refilled: the next hint is served.
+	c.Tick(time.Duration(m.HintBurst) * time.Second / time.Duration(max(m.HintRate, 1)))
+	before := c.Meta().HintsDropped()
+	hint()
+	if c.Meta().HintsDropped() != before {
+		t.Fatal("a hint after the bucket refilled was dropped")
+	}
+	if len(c.Meta().Cluster().Locations(id)) != 3 {
+		t.Fatal("hints removed a copy")
+	}
+}
+
+func uploadOne(t *testing.T, c *Cluster) (client.Manifest, []byte) {
+	t.Helper()
+	_, data, err := c.UploadRandom("/f", 1<<20)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, ok := c.Settle(time.Minute); !ok {
+		t.Fatal("not at RF")
+	}
+	st, err := c.Client().Stat(t.Context(), "/f")
+	if err != nil {
+		t.Fatal(err)
+	}
+	return st, data
 }
