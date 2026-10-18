@@ -72,6 +72,9 @@ func TestDedupSavings(t *testing.T) {
 	if ref != logical || uniq != wantUnique {
 		t.Fatalf("referenced %d, unique %d; want %d, %d", ref, uniq, logical, wantUnique)
 	}
+	// An upload whose claim was retried after a lost message can leave an
+	// abandoned chunk; GC removes it after its grace.
+	c.Tick(2 * time.Minute)
 	if got := storedBytes(t, c); got != rf*wantUnique {
 		t.Fatalf("nodes store %d bytes, want %d (RF %d × %d distinct)", got, rf*wantUnique, rf, wantUnique)
 	}

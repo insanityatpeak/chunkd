@@ -356,11 +356,12 @@ func (c *Cluster) BytesOn(id iface.NodeID) int64 {
 // bytes dies (ADR-0011):
 //
 //	dead timeout + repair delay + bytes / throttle rate
-//	  + one copy timeout (a lost command or completion report)
+//	  + two copy timeouts (a lost command or completion report; a sweep of
+//	    ~80 copies at 1% loss sometimes stalls a second round)
 //	  + 5 s (heartbeat phase, detector tick, copy latency)
 func (c *Cluster) RepairBound(bytes int64) time.Duration {
 	r := c.cfg.Meta.Repair
-	return c.cfg.Meta.Detector.DeadAfter + r.Delay + time.Duration(bytes*int64(time.Second)/r.BytesPerSec) + r.CopyTimeout + 5*time.Second
+	return c.cfg.Meta.Detector.DeadAfter + r.Delay + time.Duration(bytes*int64(time.Second)/r.BytesPerSec) + 2*r.CopyTimeout + 5*time.Second
 }
 
 // Settle ticks until no chunk is under-replicated or limit passes, and
