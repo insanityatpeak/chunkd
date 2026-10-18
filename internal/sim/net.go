@@ -505,6 +505,16 @@ func (a *asyncCaller) Go(c iface.Call, cb func(iface.Result)) {
 	a.net.Send(c.To, iface.Message{From: a.id, Kind: c.Kind, ReqID: a.next, Body: c.Body})
 }
 
+// GoOff runs off and then its continuation in Go's callback, so the order of
+// events is the same as with Go.
+func (a *asyncCaller) GoOff(c iface.Call, off func(iface.Result) func()) {
+	a.Go(c, func(r iface.Result) {
+		if next := off(r); next != nil {
+			next()
+		}
+	})
+}
+
 // Freeze stops a node without killing it, like a long GC pause or a
 // SIGSTOP: messages to and from it are held, then released by Thaw.
 // SIMPLIFIED: the node's timers keep firing, so its heartbeats queue up and

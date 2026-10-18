@@ -132,6 +132,12 @@ type GatherResult struct {
 // with the response or a CodeUnavailable error after the caller's timeout.
 type AsyncCaller interface {
 	Go(c Call, cb func(Result))
+	// GoOff is Go for a callback that starts with slow work such as a disk
+	// write: off runs exactly once with the result, off the owner's loop in
+	// real mode (it must not touch loop-owned state), and the func it
+	// returns, if not nil, then runs on the loop. In the sim both run on the
+	// loop, back to back, at the time Go's callback would.
+	GoOff(c Call, off func(Result) func())
 }
 
 // Timer is a pending callback scheduled on a Clock.

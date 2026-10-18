@@ -15,7 +15,7 @@ Format: Context, Options considered, Decision, Consequences, At 100× scale ([te
 | [0009](0009-rpc-layer.md) | Request/response on top of the event-driven transport | accepted |  |
 | [0010](0010-failure-detector.md) | Failure detector: alive, suspect, dead | accepted |  |
 | [0011](0011-re-replication.md) | Re-replication: priority queue, delay, throttle, trim | accepted |  |
-| [0012](0012-async-caller-and-hedged-reads.md) | AsyncCaller for in-loop RPC, and Caller.Hedge | accepted |  |
+| [0012](0012-async-caller-and-hedged-reads.md) | AsyncCaller for in-loop RPC, and Caller.Hedge | accepted, `GoOff` added |  |
 | [0013](0013-integrity-model.md) | Integrity: verify on every read, scrub, quarantine | accepted |  |
 | [0014](0014-versioned-files-and-cas.md) | Versioned files, compare-and-swap commits, opt-in last writer wins | accepted |  |
 | [0015](0015-claims-and-atomic-commit.md) | Chunk claims: dedup, the GC mark for uploads, atomic commit | accepted |  |

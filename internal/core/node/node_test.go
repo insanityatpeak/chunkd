@@ -96,3 +96,73 @@ func TestGCDeleteFence(t *testing.T) {
 		t.Fatalf("stats %+v, want 2 deleted, 3 kept", st)
 	}
 }
+
+// offAsync marks when an off callback is running.
+type offAsync struct {
+	iface.AsyncCaller
+	inOff bool
+}
+
+func (a *offAsync) GoOff(c iface.Call, off func(iface.Result) func()) {
+	a.AsyncCaller.Go(c, func(r iface.Result) {
+		a.inOff = true
+		next := off(r)
+		a.inOff = false
+		if next != nil {
+			next()
+		}
+	})
+}
+
+// offStore records whether each Put ran inside an off callback.
+type offStore struct {
+	iface.BlockStore
+	a     *offAsync
+	puts  int
+	onOff int
+}
+
+func (s *offStore) Put(ctx context.Context, id iface.ChunkID, data []byte) error {
+	s.puts++
+	if s.a.inOff {
+		s.onOff++
+	}
+	return s.BlockStore.Put(ctx, id, data)
+}
+
+// TestRepairCopyWritesOffLoop: a repair copy's store write runs in the
+// async caller's off callback (off the event loop in real mode), and the
+// copy is still stored, reported and counted.
+func TestRepairCopyWritesOffLoop(t *testing.T) {
+	clock := sim.NewClock()
+	rng := sim.NewRand(1)
+	net := sim.NewNet(clock, rng, sim.Faults{MinDelay: time.Millisecond, MaxDelay: time.Millisecond})
+	data := []byte("chunk")
+	id := sha256.Sum256(data)
+	net.Serve("src", wire.KindGetChunk, func(_ iface.Message, respond iface.Responder) {
+		respond(wire.Marshal(&chunkdv1.GetChunkResponse{Data: data}), nil)
+	}, iface.ServeOpts{})
+	var added int
+	net.Listen("meta", func(m iface.Message) {
+		var r chunkdv1.BlockReport
+		if m.Kind == wire.KindBlockReport && wire.Decode(m.Body, &r) == nil && !r.GetFull() {
+			added += len(r.GetChunkIds())
+		}
+	})
+	async := &offAsync{AsyncCaller: net.AsyncCaller("n1", time.Second)}
+	store := &offStore{BlockStore: sim.NewBlockStore(), a: async}
+	n, err := node.New(node.Deps{Clock: clock, Net: net, Async: async, Store: store, Rand: rng, Log: slog.New(slog.NewTextHandler(io.Discard, nil))},
+		node.DefaultConfig("n1", "meta", "r1"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	n.Start()
+	net.Send("n1", iface.Message{From: "meta", Kind: wire.KindReplicate, Body: wire.Marshal(&chunkdv1.ReplicateChunk{CopyId: 1, ChunkId: id[:], Source: "src"})})
+	clock.Advance(100 * time.Millisecond)
+	if store.puts != 1 || store.onOff != 1 {
+		t.Fatalf("%d puts, %d in the off callback; want 1, 1", store.puts, store.onOff)
+	}
+	if added != 1 || n.Stats().RepairCopies != 1 {
+		t.Fatalf("%d chunks reported, %d repair copies counted; want 1, 1", added, n.Stats().RepairCopies)
+	}
+}

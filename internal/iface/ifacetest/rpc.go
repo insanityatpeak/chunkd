@@ -354,4 +354,36 @@ func RPC(t *testing.T, newEnv func(t *testing.T) RPCEnv) {
 			t.Fatalf("silent peer through async = %q, want unavailable", got)
 		}
 	})
+
+	t.Run("async off callback then loop continuation", func(t *testing.T) {
+		env := newEnv(t)
+		env.Server("s1").Serve("s1", "test.echo", echo, iface.ServeOpts{})
+		env.Server("s1").Serve("s1", "test.silent", func(iface.Message, iface.Responder) {}, iface.ServeOpts{})
+		async := env.Async("s2")
+		// off sees the result and hands it to the continuation, which
+		// answers on s2's loop; a nil continuation is allowed and skipped.
+		env.Server("s2").Serve("s2", "test.relay", func(m iface.Message, respond iface.Responder) {
+			async.GoOff(iface.Call{To: "s1", Addr: env.Addr("s1"), Kind: string(m.Body), Body: []byte("via s2")}, func(r iface.Result) func() {
+				got := string(r.Body)
+				if r.Err != nil {
+					got = iface.CodeOf(r.Err).String()
+				}
+				return func() { respond([]byte(got), nil) }
+			})
+			async.GoOff(iface.Call{To: "s1", Addr: env.Addr("s1"), Kind: "test.echo"}, func(iface.Result) func() { return nil })
+		}, iface.ServeOpts{})
+		relay := func(kind string) string {
+			r := env.Caller().Do(ctx, []iface.Call{{To: "s2", Addr: env.Addr("s2"), Kind: "test.relay", Body: []byte(kind)}})
+			if r[0].Err != nil {
+				t.Fatalf("relay %s: %v", kind, r[0].Err)
+			}
+			return string(r[0].Body)
+		}
+		if got := relay("test.echo"); got != "via s2" {
+			t.Fatalf("echo through GoOff = %q", got)
+		}
+		if got := relay("test.silent"); got != iface.CodeUnavailable.String() {
+			t.Fatalf("silent peer through GoOff = %q, want unavailable", got)
+		}
+	})
 }

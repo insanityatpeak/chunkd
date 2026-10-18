@@ -101,7 +101,7 @@ func (r *rebuild) more() {
 
 func (r *rebuild) read(src *chunkdv1.ShardSource, j int, res iface.Result) {
 	r.pending--
-	if r.done || r.n.stopped {
+	if r.done || r.n.stopped.Load() {
 		return
 	}
 	payload, err := r.verify(src, j, res)
@@ -158,7 +158,7 @@ func (r *rebuild) finish() {
 // hedge starts one more read while the rebuild is still waiting, and again
 // every rebuildHedge until it ends or the sources run out.
 func (r *rebuild) hedge() {
-	if r.done || r.n.stopped || r.next >= len(r.sources) {
+	if r.done || r.n.stopped.Load() || r.next >= len(r.sources) {
 		return
 	}
 	r.hedges++

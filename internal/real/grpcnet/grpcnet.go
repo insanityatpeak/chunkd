@@ -399,6 +399,16 @@ func (a *async) Go(call iface.Call, cb func(iface.Result)) {
 	}()
 }
 
+// GoOff runs off on the call's goroutine and posts its continuation.
+func (a *async) GoOff(call iface.Call, off func(iface.Result) func()) {
+	go func() {
+		r := a.c.Do(context.Background(), []iface.Call{call})[0]
+		if next := off(r); next != nil {
+			a.loop.Post(next)
+		}
+	}()
+}
+
 // Hedge implements iface.Caller. Losing calls are cancelled when it returns.
 func (c *Caller) Hedge(ctx context.Context, calls []iface.Call, after time.Duration, accept func(int, iface.Result) bool) iface.HedgeResult {
 	out := iface.HedgeResult{Winner: -1, Results: make([]iface.Result, len(calls))}

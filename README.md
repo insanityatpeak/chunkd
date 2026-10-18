@@ -157,7 +157,6 @@ Charts and every table: [docs/benchmarks/results.md](docs/benchmarks/results.md)
 | Directory fsync is a no-op on Windows | Production target is Linux; NTFS journals renames | None |
 | Real-mode chaos has no message-level faults (loss, duplication, delay) | The sim covers them in 1,000 seeds per push; real mode covers process faults (kill, pause, wipe) | `tc netem` in each container, which needs `NET_ADMIN` |
 | Repair targets ignore the surviving replicas' racks; a repaired chunk can end with two copies in one rack | Upload placement still spreads racks, and trims keep spread when a node returns | Rack-aware target choice, as HDFS's `BlockPlacementPolicy` does with existing replicas as input |
-| A repair copy's store write runs on the node's event loop | One chunk is at most 4 MiB, a few ms of disk | Move the write to the concurrent chunk path, as client writes already are |
 | Placement does not avoid slow nodes; only reads route around them | Hedged reads bound the read cost; writes need 2 of 3 | Feed client latency reports into placement (HDFS slow-node detection) |
 | Dedup is cluster-wide: an uploader can learn whether content exists by watching which chunks are skipped | Single tenant; the demo holds no one else's data | Per-tenant salt in chunk IDs, as Dropbox moved to after 2011 (ADR-0015) |
 | Fixed-size chunks: an insert shifts every later boundary, so dedup finds nothing after it | In-place edits dedup well (3.67× in the benchmark) | Content-defined chunking (FastCDC), as restic and Borg use |

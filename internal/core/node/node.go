@@ -78,7 +78,7 @@ type Node struct {
 	// incarnation changes on every start, so the metadata server can tell a
 	// restarted node (seq back at 1) from replayed old heartbeats.
 	incarnation uint64
-	stopped     bool
+	stopped     atomic.Bool
 	// maxTerm is the highest metadata term this node has obeyed or heard a
 	// leader announce, persisted with the chunks. A command below it comes
 	// from a deposed leader. Loop-owned: only handle and heartbeatAck touch it.
@@ -180,7 +180,7 @@ func (n *Node) raiseTerm(term uint64) bool {
 // Stop halts timers and ignores further messages, like a killed process.
 // The sim uses it to replace a node with a fresh incarnation on restart.
 func (n *Node) Stop() {
-	n.stopped = true
+	n.stopped.Store(true)
 	n.scrub.Stop()
 }
 
@@ -316,7 +316,7 @@ func (n *Node) quarantine(id iface.ChunkID) {
 }
 
 func (n *Node) handle(m iface.Message) {
-	if n.stopped {
+	if n.stopped.Load() {
 		return
 	}
 	switch m.Kind {
@@ -401,10 +401,9 @@ func (n *Node) gcDelete(id iface.ChunkID, fenceInc, fenceSeq uint64) {
 
 // replicate pulls one chunk from a peer and stores it. Put verifies the
 // hash, so a corrupt source is never copied; success is reported the same
-// way as a client write, with an incremental block report.
-// SIMPLIFIED: the store write runs on the event loop. HDFS DataNodes run
-// transfers on dedicated threads; here a 4 MiB write per copy (at most two
-// at a time, ADR-0011) is small next to the 3 s suspect timeout.
+// way as a client write, with an incremental block report. The store write
+// and the report run off the event loop, as putChunk's do, so a slow disk
+// never delays heartbeats; counters and the failure notice run on it.
 func (n *Node) replicate(m iface.Message) {
 	var cmd chunkdv1.ReplicateChunk
 	if err := wire.Decode(m.Body, &cmd); err != nil {
@@ -418,33 +417,38 @@ func (n *Node) replicate(m iface.Message) {
 	if err != nil {
 		return
 	}
-	fail := func(err error) {
-		n.stats.RepairFailed++
-		n.d.Log.Warn("repair copy failed", "copy", cmd.GetCopyId(), "chunk", id.String()[:12], "source", cmd.GetSource(), "err", err)
-		n.toMetas(wire.KindReplicateFailed,
-			wire.Marshal(&chunkdv1.ReplicateFailed{CopyId: cmd.GetCopyId(), ChunkId: id[:], Node: string(n.cfg.ID), Error: err.Error()}))
+	// fail runs on the loop.
+	fail := func(err error) func() {
+		return func() {
+			if n.stopped.Load() {
+				return
+			}
+			n.stats.RepairFailed++
+			n.d.Log.Warn("repair copy failed", "copy", cmd.GetCopyId(), "chunk", id.String()[:12], "source", cmd.GetSource(), "err", err)
+			n.toMetas(wire.KindReplicateFailed,
+				wire.Marshal(&chunkdv1.ReplicateFailed{CopyId: cmd.GetCopyId(), ChunkId: id[:], Node: string(n.cfg.ID), Error: err.Error()}))
+		}
 	}
 	call := iface.Call{To: iface.NodeID(cmd.GetSource()), Addr: cmd.GetSourceAddr(), Kind: wire.KindGetChunk, Body: wire.Marshal(&chunkdv1.GetChunkRequest{Id: id[:]})}
-	n.d.Async.Go(call, func(r iface.Result) {
-		if n.stopped {
-			return
+	// A node stopped while the fetch was in flight stores nothing; one stopped
+	// during the write may still store the copy, as a put racing a kill may.
+	n.d.Async.GoOff(call, func(r iface.Result) func() {
+		if n.stopped.Load() {
+			return nil
 		}
 		if r.Err != nil {
-			fail(r.Err)
-			return
+			return fail(r.Err)
 		}
 		var resp chunkdv1.GetChunkResponse
 		if err := wire.Decode(r.Body, &resp); err != nil {
-			fail(err)
-			return
+			return fail(err)
 		}
 		seq, err := n.write(id, func() error { return n.d.Store.Put(context.Background(), id, resp.GetData()) })
 		if err != nil {
-			fail(err)
-			return
+			return fail(err)
 		}
-		n.stats.RepairCopies++
 		n.report(seq, []iface.ChunkID{id}, nil, nil)
+		return func() { n.stats.RepairCopies++ }
 	})
 }
 
@@ -468,7 +472,7 @@ func (n *Node) heartbeatAck(m iface.Message) {
 }
 
 func (n *Node) heartbeat() {
-	if n.stopped {
+	if n.stopped.Load() {
 		return
 	}
 	u, err := n.d.Store.Usage(context.Background())
@@ -485,7 +489,7 @@ func (n *Node) heartbeat() {
 }
 
 func (n *Node) periodicReport() {
-	if n.stopped {
+	if n.stopped.Load() {
 		return
 	}
 	n.fullReport()

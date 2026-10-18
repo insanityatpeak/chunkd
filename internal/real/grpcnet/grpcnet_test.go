@@ -156,3 +156,39 @@ func TestRPCConformance(t *testing.T) {
 		return &realEnv{t: t, ctx: ctx, procs: map[iface.NodeID]*proc{}, caller: c}
 	})
 }
+
+// TestGoOffLeavesLoopFree: while an off callback blocks (a slow disk
+// write), the owner's loop keeps running; the continuation runs on the loop
+// once off returns.
+func TestGoOffLeavesLoopFree(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	t.Cleanup(cancel)
+	srv, owner := start(t, ctx, nil), start(t, ctx, nil)
+	srv.net.Serve("s1", "test.echo", func(m iface.Message, respond iface.Responder) { respond(m.Body, nil) }, iface.ServeOpts{})
+	c := NewCaller(nil, time.Second)
+	t.Cleanup(c.Close)
+	async := c.Async(owner.loop)
+	release, done := make(chan struct{}), make(chan bool, 1)
+	owner.loop.Do(func() {
+		async.GoOff(iface.Call{To: "s1", Addr: srv.addr, Kind: "test.echo", Body: []byte("x")}, func(r iface.Result) func() {
+			<-release
+			return func() { done <- r.Err == nil }
+		})
+	})
+	ran := make(chan struct{})
+	go func() { owner.loop.Do(func() {}); close(ran) }()
+	select {
+	case <-ran:
+	case <-time.After(5 * time.Second):
+		t.Fatal("the loop stalled while an off callback blocked")
+	}
+	close(release)
+	select {
+	case ok := <-done:
+		if !ok {
+			t.Fatal("the call failed")
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatal("the continuation never ran")
+	}
+}

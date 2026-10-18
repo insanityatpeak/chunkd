@@ -1,6 +1,6 @@
 # 0012. AsyncCaller for in-loop RPC, and Caller.Hedge
 
-Status: accepted
+Status: accepted (`AsyncCaller.GoOff` added 2026-10-18, so a repair copy's store write runs off the loop)
 Date: 2026-09-29
 
 ## Context
@@ -34,6 +34,8 @@ type Caller interface {
 
 type AsyncCaller interface {
     Go(c Call, cb func(Result)) // cb runs exactly once, on the owner's loop
+    // off runs exactly once, off the loop in real mode; the func it returns runs on the loop
+    GoOff(c Call, off func(Result) func())
 }
 ```
 
@@ -45,7 +47,7 @@ type AsyncCaller interface {
 ## Consequences
 
 - `TestSlowNodeHedgedRead`: with one replica slowed to 4–10 s, hedged p99 is 176–194 ms against 4–10 s unhedged (bound 750 ms). `TestGrayNodeStaysAlive`: the slow node stays alive to the detector, as it should.
-- Repair pulls run in the node's loop with no blocking and replay from the seed.
+- Repair pulls run in the node's loop with no blocking and replay from the seed. The store write of a pulled copy runs in `GoOff`'s off callback, on the call's goroutine in real mode, as client writes run on concurrent handlers; in the sim both halves run back to back where `Go`'s callback would, so seeds replay unchanged (`TestRepairCopyWritesOffLoop`, `TestGoOffLeavesLoopFree`).
 - A hedge costs at most one extra read per chunk and only past the p95, so about 5% extra read load in steady state.
 - `ifacetest.RPC` covers `Hedge` ordering, the fail-fast launch, and `AsyncCaller` callbacks on both implementations.
 
