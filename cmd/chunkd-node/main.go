@@ -31,9 +31,10 @@ func main() {
 	defScrub := scrub.DefaultConfig()
 	scrubPass := flag.Duration("scrub-pass", envDuration("CHUNKD_SCRUB_PASS", defScrub.Pass), "interval between scrub pass starts")
 	scrubRate := flag.Int64("scrub-rate", envInt("CHUNKD_SCRUB_RATE", defScrub.BytesPerSec>>20), "scrub read cap, MiB/s")
+	quarCap := flag.Int64("quarantine-cap", envInt("CHUNKD_QUARANTINE_CAP", blockstore.DefaultQuarantineCap>>20), "quarantine directory cap, MiB; the oldest files go first")
 	flag.Parse()
 
-	store, err := blockstore.Open(*dataDir)
+	store, err := blockstore.Open(*dataDir, blockstore.WithQuarantineCap(*quarCap<<20))
 	if err != nil {
 		fmt.Fprintln(os.Stderr, "chunkd-node:", err)
 		os.Exit(1)

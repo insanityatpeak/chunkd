@@ -6,6 +6,7 @@ import (
 	"crypto/sha256"
 	"os"
 	"path/filepath"
+	"slices"
 	"testing"
 
 	"github.com/insanityatpeak/chunkd/internal/iface"
@@ -99,6 +100,50 @@ func TestQuarantineKeepsBytesOutOfCounts(t *testing.T) {
 	s = open(t, root)
 	if u, _ := s.Usage(ctx); u != (iface.Usage{}) {
 		t.Fatalf("usage after reopen counts quarantine: %+v", u)
+	}
+}
+
+func TestQuarantineCapEvictsOldest(t *testing.T) {
+	root := t.TempDir()
+	ctx := context.Background()
+	s, err := Open(root, WithQuarantineCap(30))
+	if err != nil {
+		t.Fatal(err)
+	}
+	var ids []iface.ChunkID
+	for _, d := range []string{"0123456789", "abcdefghij", "ABCDEFGHIJ", "klmnopqrst", "KLMNOPQRST"} {
+		id := iface.ChunkID(sha256.Sum256([]byte(d)))
+		if err := s.Put(ctx, id, []byte(d)); err != nil {
+			t.Fatal(err)
+		}
+		if err := s.Quarantine(ctx, id); err != nil {
+			t.Fatal(err)
+		}
+		ids = append(ids, id)
+	}
+	held := func() []string {
+		entries, _ := os.ReadDir(filepath.Join(root, quarantineDir))
+		var names []string
+		for _, e := range entries {
+			names = append(names, e.Name())
+		}
+		return names
+	}
+	want := []string{ids[2].String(), ids[3].String(), ids[4].String()}
+	slices.Sort(want)
+	if got := held(); !slices.Equal(got, want) {
+		t.Fatalf("quarantine holds %v, want the 3 newest %v", got, want)
+	}
+	if u, _ := s.Usage(ctx); u != (iface.Usage{}) {
+		t.Fatalf("usage = %+v after quarantining everything", u)
+	}
+
+	// A smaller cap on reopen trims at once, oldest first.
+	if _, err := Open(root, WithQuarantineCap(10)); err != nil {
+		t.Fatal(err)
+	}
+	if got := held(); !slices.Equal(got, []string{ids[4].String()}) {
+		t.Fatalf("after reopen with a 10-byte cap quarantine holds %v, want only the newest", got)
 	}
 }
 

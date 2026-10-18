@@ -13,7 +13,9 @@ import (
 	"os"
 	"path/filepath"
 	"slices"
+	"strings"
 	"sync"
+	"time"
 
 	"github.com/insanityatpeak/chunkd/internal/iface"
 	"github.com/insanityatpeak/chunkd/internal/real/fsutil"
@@ -31,15 +33,35 @@ const (
 // block in a sidecar file so reads can verify partial ranges. Chunks are
 // read whole here, and at 4 MiB one SHA-256 is enough.
 type Store struct {
-	root  string
-	mu    sync.Mutex // serialises the final rename and usage counters
-	usage iface.Usage
+	root     string
+	mu       sync.Mutex // serialises the final rename and usage counters
+	usage    iface.Usage
+	qCap     int64     // bytes the quarantine directory may hold
+	lastQuar time.Time // mtime given to the newest quarantined file
 }
 
 var _ iface.BlockStore = (*Store)(nil)
 
-// Open prepares root, removes temp files left by a crash, and counts usage.
-func Open(root string) (*Store, error) {
+// DefaultQuarantineCap bounds quarantine/ when no option sets it: 256 chunks
+// of 4 MiB.
+const DefaultQuarantineCap = 1 << 30
+
+// Option configures Open.
+type Option func(*Store)
+
+// WithQuarantineCap bounds the bytes kept in quarantine/; the oldest files go
+// first. Values below 1 keep the default.
+func WithQuarantineCap(bytes int64) Option {
+	return func(s *Store) {
+		if bytes > 0 {
+			s.qCap = bytes
+		}
+	}
+}
+
+// Open prepares root, removes temp files left by a crash, counts usage and
+// trims quarantine/ to its cap.
+func Open(root string, opts ...Option) (*Store, error) {
 	// A crash between write and rename leaves a temp file; it was never
 	// acknowledged, so deleting it is safe.
 	if err := os.RemoveAll(filepath.Join(root, tmpDir)); err != nil {
@@ -50,7 +72,10 @@ func Open(root string) (*Store, error) {
 			return nil, err
 		}
 	}
-	s := &Store{root: filepath.Clean(root)}
+	s := &Store{root: filepath.Clean(root), qCap: DefaultQuarantineCap}
+	for _, o := range opts {
+		o(s)
+	}
 	err := s.walk(func(_ iface.ChunkID, path string) error {
 		fi, err := os.Stat(path)
 		if err != nil {
@@ -60,7 +85,14 @@ func Open(root string) (*Store, error) {
 		s.usage.Bytes += fi.Size()
 		return nil
 	})
-	return s, err
+	if err != nil {
+		return s, err
+	}
+	// Best effort: a file that will not go must not keep the node down.
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	_ = s.trimQuarantine()
+	return s, nil
 }
 
 func (s *Store) path(id iface.ChunkID) string {
@@ -151,10 +183,10 @@ func (s *Store) Get(_ context.Context, id iface.ChunkID) ([]byte, error) {
 }
 
 // Quarantine renames a chunk into quarantine/<hash>, replacing an older
-// quarantined copy of the same chunk.
-// SIMPLIFIED: quarantined files are never removed. HDFS deletes corrupt
-// replicas once the NameNode has a good copy elsewhere; GC (Phase 4) will
-// age them out here.
+// quarantined copy of the same chunk. The directory is capped: the oldest
+// files are removed once it holds more than the cap.
+// SIMPLIFIED: eviction does not wait for a good copy to exist elsewhere. HDFS
+// deletes a corrupt replica only after the NameNode has a good one.
 func (s *Store) Quarantine(_ context.Context, id iface.ChunkID) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -177,7 +209,64 @@ func (s *Store) Quarantine(_ context.Context, id iface.ChunkID) error {
 	}
 	s.usage.Chunks--
 	s.usage.Bytes -= fi.Size()
+	// Eviction order is quarantine order: the rename keeps the chunk's own
+	// mtime, so stamp a strictly increasing one. Both steps are best effort;
+	// the copy is already aside and the corrupt report must still go out.
+	// The next Quarantine or Open retries.
+	now := time.Now()
+	if !now.After(s.lastQuar) {
+		now = s.lastQuar.Add(time.Microsecond)
+	}
+	s.lastQuar = now
+	_ = os.Chtimes(filepath.Join(s.root, quarantineDir, id.String()), now, now)
+	_ = s.trimQuarantine()
 	return nil
+}
+
+// trimQuarantine removes the oldest quarantined files until the directory
+// holds at most qCap bytes. The caller holds s.mu.
+func (s *Store) trimQuarantine() error {
+	dir := filepath.Join(s.root, quarantineDir)
+	entries, err := os.ReadDir(dir)
+	if err != nil {
+		return err
+	}
+	type file struct {
+		name string
+		mod  time.Time
+		size int64
+	}
+	var files []file
+	var total int64
+	for _, e := range entries {
+		fi, err := e.Info()
+		if err != nil || !fi.Mode().IsRegular() {
+			continue
+		}
+		files = append(files, file{e.Name(), fi.ModTime(), fi.Size()})
+		total += fi.Size()
+	}
+	if total <= s.qCap {
+		return nil
+	}
+	slices.SortFunc(files, func(a, b file) int {
+		if c := a.mod.Compare(b.mod); c != 0 {
+			return c
+		}
+		return strings.Compare(a.name, b.name)
+	})
+	var errs []error
+	for _, f := range files {
+		if total <= s.qCap {
+			break
+		}
+		if err := os.Remove(filepath.Join(dir, f.name)); err != nil {
+			errs = append(errs, err)
+			continue
+		}
+		total -= f.size
+	}
+	return errors.Join(errs...)
 }
 
 // Term returns the recorded metadata term, or 0 if none was saved.

@@ -59,6 +59,7 @@ q scales with the window, so halving the scrub interval divides the risk by 8. R
 - `TestCorruptChunkDetectedOnRead`: RF 3 restored within 250 ms to 10.25 s of the read (bound 15.1 s; the 10 s case is one lost message and one copy timeout). `TestTwoReplicasCorrupt`: restored from the one good copy. `TestAllReplicasCorrupt`: loud `CodeCorrupt`, counted as lost, nothing copied. `TestScrubberFindsCorruption`: found within one pass interval with nobody reading. `TestSuspectHintMakesNodeRecheck`: an intact copy survives a hint.
 - Chaos: bit rot is a fault kind (at most 3 chunks per event, never the last 2 intact copies). After replication settles, the runner waits for two full scrub passes, then requires no rotten chunk on any running node's disk. 500 seeds per push rot about 540 copies. Every read, during a run and after, must return bytes that were written to that path.
 - Real mode: `corrupt-replicas` flips bytes in node-2's volume with `chunkd debug corrupt`; all 4 found, quarantined and replaced.
+- `quarantine/` is capped (1 GiB by default, `chunkd-node -quarantine-cap`). After each quarantine, and on open, the oldest files go until it fits. `TestQuarantineCapEvictsOldest`. Eviction does not wait for a good copy to exist elsewhere.
 - Each read costs one extra SHA-256 on the node: about 2 ms for 4 MiB with SHA extensions, 10 ms without.
 
 ## At 100× scale
