@@ -4,6 +4,10 @@
 //	go run ./tools/task bench                  every stage
 //	go run ./tools/task bench -stages=real     one stage: sim, meta, real, report
 //
+// compose is not in the default stages: it kills a node of a running compose
+// cluster (docker compose up -d --wait) and measures read latency while repair
+// runs, writing data/repair-read.csv.
+//
 // sim runs the TestBench* tests in internal/sim/cluster (simulated time,
 // exact on any machine). meta runs the quota Go benchmark. real starts a
 // cluster in this process, over loopback gRPC and real disks, and measures
@@ -37,6 +41,7 @@ import (
 func main() {
 	out := flag.String("out", "docs/benchmarks", "output directory")
 	stages := flag.String("stages", "sim,meta,real,report", "comma-separated stages")
+	gateway := flag.String("gateway", "http://127.0.0.1:8080", "compose stage: gateway URL")
 	scratch := flag.String("dir", "", "directory for the real cluster's disks (default: the system temp dir)")
 	flag.Parse()
 	data := filepath.Join(*out, "data")
@@ -49,6 +54,8 @@ func main() {
 			err = runMeta(data)
 		case "real":
 			err = runReal(data, *scratch)
+		case "compose":
+			err = runRepairRead(data, *gateway)
 		case "report":
 			err = report(*out)
 		default:

@@ -22,7 +22,7 @@ The sim tier answers questions about policy: how long repair takes, what hedging
 
 - **Real throughput is one client, sequential, on loopback.** There is no network between the client and the nodes, and five nodes share one CPU and one disk. It shows what the code costs, not what a cluster delivers. Put (about 59 MiB/s) writes every byte three times and hashes it on both ends, so it is far below get (about 160 to 190 MiB/s).
 - **The OS page cache serves most reads.** Get numbers do not include a cold disk.
-- **The sim shares no capacity between messages.** Every message gets its own transfer time, so repair traffic cannot slow a read. The foreground table in results.md therefore shows the rate cap holding and its cost in repair time, and nothing about reader impact. Measuring that needs a real network and real disks: `docker compose` on separate hosts, which this run did not do.
+- **The sim shares no capacity between messages.** Every message gets its own transfer time, so repair traffic cannot slow a read there. The effect on readers is measured on the compose cluster instead (`go run ./cmd/chunkd-bench -stages=compose,report` against a running 5-node cluster): one run, 4 readers, every container on one machine, so the readers and the nodes compete for the same CPU and disk. It shows that the effect is small there, not what it is on separate hosts.
 - **Small samples at the tail.** p99 of 90 puts is one sample. Tables give the sample count; do not read a p99 under about 300 samples as a rate.
 - **Single-shot sim runs of repair time** use seed 11. They show the shape, not a confidence interval.
 

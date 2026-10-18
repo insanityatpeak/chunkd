@@ -133,6 +133,15 @@ func report(out string) error {
 	}
 	_ = resWire
 
+	// Repair against foreground reads: only when the compose stage has run.
+	if _, err := read("repair-read.csv"); err == nil {
+		hwRR, _ := os.ReadFile(filepath.Join(data, "repair-read-hardware.txt"))
+		note := fmt.Sprintf("160 files of 4 MiB (one chunk each) preloaded through the gateway, 4 readers looping over random files, node-3 killed with the cluster's default repair settings. `detecting` is the 30 s floor (10 s detector, 20 s repair delay) in which nothing is copied; `copying` runs from the end of the floor until no chunk is under-replicated; `repaired` is the same four nodes with no repair traffic, the control. One run, real containers on one machine (%s), with readers and nodes sharing its CPU, disk and Docker network. `mib_s` is the readers' total.", strings.TrimSpace(string(hwRR)))
+		if _, err = section("Repair against foreground reads (compose, 5 nodes)", note, "repair-read.csv", ""); err != nil {
+			return err
+		}
+	}
+
 	// Quota.
 	t, err = section("Cost of a quota check (state machine)", "Microseconds for one Begin in the metadata state machine, by number of files in the namespace; ten other namespaces hold that many files between them. With a quota the state machine reads a per-namespace counter (ADR-0028); before it, a limited Begin scanned every file and cost 825 us at 10,000 files and 29,379 us at 100,000.", "quota.csv", "quota.svg")
 	if err != nil {

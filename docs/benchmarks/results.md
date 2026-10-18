@@ -122,6 +122,19 @@ A 32 MiB upload is cut off after N% (whole chunks) and finished. `resume_*`: con
 
 Raw: [data/resume.csv](data/resume.csv)
 
+## Repair against foreground reads (compose, 5 nodes)
+
+160 files of 4 MiB (one chunk each) preloaded through the gateway, 4 readers looping over random files, node-3 killed with the cluster's default repair settings. `detecting` is the 30 s floor (10 s detector, 20 s repair delay) in which nothing is copied; `copying` runs from the end of the floor until no chunk is under-replicated; `repaired` is the same four nodes with no repair traffic, the control. One run, real containers on one machine (AMD Ryzen 7 7840HS w/ Radeon 780M Graphics; 16 logical CPUs; 15 GiB RAM; go1.27.0 windows/amd64), with readers and nodes sharing its CPU, disk and Docker network. `mib_s` is the readers' total.
+
+| phase | seconds | reads | failed | p50_ms | p99_ms | mib_s |
+|---|---|---|---|---|---|---|
+| baseline | 30.002 | 823 | 0 | 144.180 | 218.029 | 109.726 |
+| detecting | 30.000 | 820 | 0 | 143.449 | 212.497 | 109.333 |
+| copying | 18.285 | 479 | 0 | 148.063 | 241.575 | 104.787 |
+| repaired | 30.000 | 820 | 0 | 145.023 | 212.625 | 109.332 |
+
+Raw: [data/repair-read.csv](data/repair-read.csv)
+
 ## Cost of a quota check (state machine)
 
 Microseconds for one Begin in the metadata state machine, by number of files in the namespace; ten other namespaces hold that many files between them. With a quota the state machine reads a per-namespace counter (ADR-0028); before it, a limited Begin scanned every file and cost 825 us at 10,000 files and 29,379 us at 100,000.

@@ -1,0 +1,1 @@
+AMD Ryzen 7 7840HS w/ Radeon 780M Graphics; 16 logical CPUs; 15 GiB RAM; go1.27.0 windows/amd64
