@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased (Phase 9)
+## v1.1.0 (2026-10-18)
 
 No change to the on-disk format of data directories. One additive log op (`NodeJoinOp`) and one additive snapshot field (`admitted`): a v1.0.0 log or snapshot replays unchanged and a node is admitted again on its next heartbeat. The scenario goldens, the dashboard links and the web e2e now use seed 1; seed 7 loses a claim during the demo load since Phase 9's extra messages shifted the sim's random drops.
 
