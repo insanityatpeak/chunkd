@@ -1,5 +1,16 @@
 # Changelog
 
+## Unreleased
+
+### Added
+- `go run ./tools/task resume-e2e`: kills the compose gateway during a 256 MiB `put -resume`, resumes, and compares hashes.
+- A compose profile `ec` (node-6 and a new node-7) and `chaos --mode=real --ec`: two erasure-coded scenarios on 7 containers.
+- A diff view on the dashboard's chunk grid: mark a placement, then see which cells were placed and which were lost since.
+- `chunkd-bench -stages=compose`: read latency while a node is repaired around, on the compose cluster; results.md has the table.
+
+### Fixed
+- An erasure-coded file downloaded through the gateway always failed verification (`chunk 0: data does not match its hash`): the HTTP client compared the chunk's SHA-256 with the stripe ID (bugs-found #34).
+
 ## v1.1.0 (2026-10-18)
 
 No change to the on-disk format of data directories. One additive log op (`NodeJoinOp`) and one additive snapshot field (`admitted`): a v1.0.0 log or snapshot replays unchanged and a node is admitted again on its next heartbeat. The scenario goldens, the dashboard links and the web e2e now use seed 1; seed 7 loses a claim during the demo load since Phase 9's extra messages shifted the sim's random drops.

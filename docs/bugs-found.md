@@ -333,3 +333,13 @@ Related: with 1% message loss a copy command or its completion report can be los
 | Root cause | The planner can queue two moves for one chunk (a plan made while an earlier plan's move was in flight, or two moves in one plan). `startMove` did not check the in-flight table, so the second launch replaced the first copy's entry. When it finished, only the second copy's target and source slots were released; the first copy's slots stayed counted forever. Before Phase 9 a full node was skipped and another took the copy, so the leak hid. With rack-aware targets (ADR-0011), a chunk with a copy to spare waits for a slot on the right rack, and a node whose slots never free blocks it for good. The leak is from Phase 6; the 3 s first metadata attempt changed the message timing of these seeds enough to reach it. |
 | Fix | `dispatch` drops any queued item whose chunk is already copying; `finish` re-queues the chunk if it still needs a copy. |
 | Regression test | `TestSecondMoveOfAChunkInFlightIsDropped` (two moves of one chunk queued together launch one copy and hold one slot); the seeds above now pass in the sweeps. |
+
+## 34. Every erasure-coded download through the gateway failed verification
+
+| | |
+|---|---|
+| Symptom | The first real-mode run of an erasure-coded workload (`chaos --mode=real --ec`, then `chunkd get` of a `-redundancy ec-4+2` file) failed on every read, with all seven nodes up: `chunk 0: data does not match its hash`. The same file read back verified through the direct client (`chunkd -meta ... get`). |
+| Repro | `TestGatewayRoundTripEC`: put an EC file through `httpclient`, get it back. |
+| Root cause | `httpclient.GetVersion` checked each chunk's SHA-256 against the manifest's chunk ID. An EC chunk's ID is its stripe ID, `sha256("chunkd-ec-4+2:" + sha256(chunk))` (ADR-0022), so the check could never pass. The sim and the real-disk round trip use the direct client, which verifies a stripe against its stripe ID, so no test went through HTTP with an EC file. |
+| Fix | For a chunk with shards, the HTTP client hashes the bytes and applies `ec.LogicalID` before comparing. The whole-file SHA-256 check was already right. |
+| Regression test | `TestGatewayRoundTripEC` (gateway, 7 sim nodes); the two erasure-coded scenarios in `chaos --mode=real --ec`. |

@@ -37,9 +37,9 @@ Gates: lint, lint-imports, wasm 11.11 MiB, `go test -race -p 1 ./...` (`internal
 
 Scenario goldens: regenerated three times (quorum puts; rack-aware targets; the metadata timeout and the join entries), each with the owner's OK. The golden tests, `ec.spec.ts` and the README dashboard links now use seed 1.
 
-Not done, for the owner: the real-mode chaos run against compose (`chaos --mode=real --short`), a compose scenario for `put -resume`, a 7-node EC compose profile, the dashboard diff view, and the repair-versus-foreground-read measurement (needs a real cluster). Content-defined chunking was out of scope. Merge and the `v1.1.0` tag wait for the owner's go. The Playwright replay on seed 1 was run after the merge: 8 of 8 pass (Edge). It found the goldens still labelled seed 7 (the page replayed seed 7 against timelines recorded from seed 1); relabelled, timelines unchanged.
+Added after the merge, on `main`: a compose scenario for `put -resume` (`go run ./tools/task resume-e2e`: the gateway is killed mid-upload, the put resumes, hashes match), a 7-node EC compose profile with two real-mode scenarios (`chaos --mode=real --ec`: a node down past the repair delay, then two nodes down at once; both pass, 33 s longest under-replication against a 90 s bound), the dashboard diff view (mark a placement, see what was placed and lost; `web/e2e/diff.spec.ts`), and the repair-against-reads measurement (`chunkd-bench -stages=compose`; results.md: read p99 241.6 ms while copying against 212.6 ms repaired, p50 148.1 against 145.0 ms, one run). The first real EC run found bug #34 (EC downloads through the gateway failed verification). Not done: the real-mode `--short` suite against compose, upgrading the local Go toolchain, and repeating the measurement on separate hosts. Content-defined chunking was out of scope.
 
-Bugs found: #31 (a repair copy could target a node that already held the chunk), #32 (a declared upload size could crash the metadata leader), #33 (a second balance move of a chunk in flight leaked a repair slot).
+Bugs found: #31 (a repair copy could target a node that already held the chunk), #32 (a declared upload size could crash the metadata leader), #33 (a second balance move of a chunk in flight leaked a repair slot), #34 (an erasure-coded download through the gateway failed verification).
 
 ## Phase 8 (complete)
 

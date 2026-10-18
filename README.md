@@ -68,6 +68,8 @@ go run ./tools/task chaos --seed=63 -v                 # replay one, with its sc
 go run ./tools/task chaos --seeds=500 --metas=3        # leader kills, freezes, partitions; histories checked
 go run ./tools/task chaos --seeds=500 --ec             # 7 nodes, about half the puts erasure-coded
 go run ./tools/task chaos --mode=real --short          # kill, blip, rot and freeze real containers, and the metadata leader
+go run ./tools/task chaos --mode=real --ec             # 7 containers, erasure-coded files, nodes killed (profile ec)
+go run ./tools/task resume-e2e                         # kill the gateway mid put -resume, resume, compare hashes
 docker compose exec node-2 chunkd debug corrupt -n 3   # rot 3 chunk files; the scrubber finds them
 ```
 
@@ -177,10 +179,8 @@ Charts and every table: [docs/benchmarks/results.md](docs/benchmarks/results.md)
 | A small file still takes 6 shards (a 1-byte file stores 6 × 34 bytes) | Negligible at 4 MiB chunks | Keep small objects replicated or inline, as S3 and MinIO do |
 | The balancer leaves shards where they are; a joining node gets shards only from rebuilds | A shard is a quarter of a chunk, and upload placement already spreads stripes | A planner that keeps a stripe on distinct nodes, as Ceph's balancer moves EC placement groups |
 | A put returns once two replicas hold each chunk (plus a 50 ms grace); the third copy is not retried if it is abandoned or lost, and repair fills it in. Placement still sends a third of the copies to a slow node, and erasure-coded puts still wait for every shard | Put p50 with one gray node is 214 ms against 4,111 ms waiting for all three (ADR-0029); commit needs 2 reported copies either way | Feed client latency into placement; quorum for EC puts (4 of 6 shards) |
-| The effect of repair on foreground reads is not measured | The sim shares no capacity between messages, so it is flat by construction; the repair cap itself is measured (peak rate against each limit) | A multi-host run with real disks and NICs |
+| Repair's cost to readers was measured once: during the copying window, read p99 was 241.6 ms against 212.6 ms with no repair (p50 148.1 against 145.0 ms) | One run, 4 readers, 5 containers sharing one machine's CPU, disk and Docker network ([results](docs/benchmarks/results.md)); the sim shares no capacity, so it is flat by construction | Repeated runs on separate hosts with real NICs |
 | Benchmarks use one client, sequential operations, and a 5-node cluster in one process on loopback | They show what the code costs on one machine, not what a cluster delivers ([docs/benchmarks](docs/benchmarks/README.md)) | Many clients across hosts, warp-style |
-| No real-mode (compose) run of `put -resume`; the dashboard shows version history and restore but no diff | The sim covers resume across a leader failover, and `TestPutResumeAfterCutOff` covers the CLI over real disks | A compose scenario for resume; a diff view on the chunk grid |
-| No real-mode chaos scenario uses erasure coding | Compose runs 5 nodes and a stripe needs 6; the sim runs 500 EC seeds per push, and `e2e.TestRoundTripEC` covers the real transport and disks | A compose profile with 7 nodes and an EC scenario in the short suite |
 | The client encodes stripes, and the cluster trusts the shard IDs it claims | A wrong claim fails its read-time check against the stripe ID, as a wrong chunk ID already does | Encode on a server, as Ceph's primary OSD does |
 | A decommissioned node stays in the metadata log; starting one again with the same ID needs an undrain | It takes nothing while decommissioned, which is the safe default; the compose add-node path undrains it | Remove a decommissioned node from the log once its last copy is trimmed |
 

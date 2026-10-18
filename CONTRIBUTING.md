@@ -36,9 +36,11 @@ Everything runs through `go run ./tools/task <command>` so it behaves the same o
 | `proto` | `buf generate` in Docker; nothing to install |
 | `wasm` | Builds `web/public/cluster.wasm`, copies `wasm_exec.js` from the same toolchain, fails above 20 MiB or if gRPC/`net/http` reach the WASM build |
 | `web` | `npm ci` and `npm run build` into `web/dist` |
+| `chaos --mode=real --ec` | The erasure-coded real-mode suite on the 7-node compose profile (`--profile full --profile ec`); not run by CI (`--down` removes the cluster) |
 | `up` / `down` | Compose cluster; `up --small` runs 1 meta + 3 nodes; `down -v` deletes the volumes |
 | `bench` | Benchmarks into `docs/benchmarks` (`-stages=sim,meta,real,report`); run it with the machine otherwise idle. See `docs/benchmarks/README.md` |
 | `e2e` | Builds the CLI, puts and gets 20 MiB through the compose gateway, compares hashes (`--up`, `--down`) |
+| `resume-e2e` | Kills the compose gateway during a 256 MiB `put -resume`, restarts it, resumes, and compares hashes (`--up`, `--down`) |
 | `trace-check` | Fails on attribution trailers in tracked files or unpushed commit messages; run before every push |
 | `ci` | build, lint, lint-imports, test, wasm, web in CI order |
 
