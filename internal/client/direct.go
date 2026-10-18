@@ -97,7 +97,8 @@ func New(caller iface.Caller, opts Options) *Direct {
 // A follower answers CodeNotLeader naming the leader: the client goes there
 // at once. With no hint (an election is running) or an unreachable peer it
 // tries the next one after a pause, for about 11 s with three peers, roughly
-// four election timeouts.
+// four election timeouts. A silent peer costs metaFirstTimeout, not the
+// caller's full timeout; the wait doubles on each attempt.
 func (c *Direct) meta(ctx context.Context, kind string, req, resp proto.Message) error {
 	body := wire.Marshal(req)
 	attempts := metaAttempts
@@ -106,9 +107,11 @@ func (c *Direct) meta(ctx context.Context, kind string, req, resp proto.Message)
 	}
 	backoff := 100 * time.Millisecond
 	hops := 0
+	wait := metaFirstTimeout
 	for attempt := 1; ; attempt++ {
 		i := int(c.leader.Load()) % len(c.peers)
-		r := c.caller.Do(ctx, []iface.Call{{To: c.peers[i].ID, Addr: c.peers[i].Addr, Kind: kind, Body: body}})
+		r := c.caller.Do(ctx, []iface.Call{{To: c.peers[i].ID, Addr: c.peers[i].Addr, Kind: kind, Body: body, Timeout: wait}})
+		wait *= 2 // a slow but live leader gets longer each time, up to the caller's timeout
 		err := r[0].Err
 		if err == nil {
 			return wire.Decode(r[0].Body, resp)
@@ -148,6 +151,11 @@ func (c *Direct) requestID() []byte {
 	b := binary.LittleEndian.AppendUint64(nil, c.opts.Rand.Uint64())
 	return binary.LittleEndian.AppendUint64(b, c.opts.Rand.Uint64())
 }
+
+// metaFirstTimeout bounds the first metadata attempt: about three election
+// timeouts, long enough for a commit, short of the caller's timeout so a
+// silent leader is left quickly.
+const metaFirstTimeout = 3 * time.Second
 
 const (
 	metaAttempts  = 6

@@ -105,6 +105,29 @@ func TestFollowerHintIsFollowed(t *testing.T) {
 	}
 }
 
+// A leader that is alive to the network but answers nothing (frozen, as in a
+// long pause) costs the client one short attempt, not the caller's 10 s
+// timeout, and the call completes on the new leader.
+func TestSilentLeaderCostsOneShortAttempt(t *testing.T) {
+	g := newGroup(t, 3)
+	old := g.leader(t)
+	order := []iface.NodeID{old}
+	for _, id := range g.peers {
+		if id != old {
+			order = append(order, id)
+		}
+	}
+	c, _ := g.client(order...)
+	g.net.Freeze(old)
+	start := g.clock.Now()
+	if _, err := c.List(context.Background(), "/"); err != nil {
+		t.Fatalf("List with the leader frozen: %v", err)
+	}
+	if took := g.clock.Now().Sub(start); took >= 6*time.Second {
+		t.Fatalf("List took %v with a silent leader, want well under the 10 s call timeout", took)
+	}
+}
+
 // The leader dies while an upload is in flight, at every millisecond for
 // the first 40 ms (the begin and first claims) and every 40 ms up to 380 ms
 // (chunk puts and the commit). The client retries against

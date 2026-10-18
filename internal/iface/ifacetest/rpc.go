@@ -125,6 +125,27 @@ func RPC(t *testing.T, newEnv func(t *testing.T) RPCEnv) {
 		}
 	})
 
+	t.Run("call timeout shortens one call", func(t *testing.T) {
+		env := newEnv(t)
+		srv := env.Server("s1")
+		srv.Serve("s1", "test.silent", func(iface.Message, iface.Responder) {}, iface.ServeOpts{})
+		srv.Serve("s1", "test.echo", echo, iface.ServeOpts{})
+		r := env.Caller().Do(ctx, []iface.Call{
+			{To: "s1", Addr: env.Addr("s1"), Kind: "test.silent", Timeout: 100 * time.Millisecond},
+			{To: "s1", Addr: env.Addr("s1"), Kind: "test.echo", Body: []byte("ok")},
+			{To: "s1", Addr: env.Addr("s1"), Kind: "test.silent", Timeout: time.Hour}, // above the caller's: its own limit applies
+		})
+		if iface.CodeOf(r[0].Err) != iface.CodeUnavailable || r[0].Latency < 90*time.Millisecond || r[0].Latency > 500*time.Millisecond {
+			t.Fatalf("short call = %v after %v, want unavailable near 100ms", r[0].Err, r[0].Latency)
+		}
+		if r[1].Err != nil || string(r[1].Body) != "ok" {
+			t.Fatalf("echo in the same batch = %q, %v", r[1].Body, r[1].Err)
+		}
+		if iface.CodeOf(r[2].Err) != iface.CodeUnavailable || r[2].Latency < 500*time.Millisecond {
+			t.Fatalf("long call = %v after %v, want the caller's timeout", r[2].Err, r[2].Latency)
+		}
+	})
+
 	t.Run("unreachable node is unavailable", func(t *testing.T) {
 		env := newEnv(t)
 		r := env.Caller().Do(ctx, []iface.Call{{To: "ghost", Addr: "127.0.0.1:1", Kind: "test.echo"}})

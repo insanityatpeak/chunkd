@@ -71,6 +71,17 @@ type Call struct {
 	Addr string // where To listens in real mode; ignored by the sim
 	Kind string
 	Body []byte
+	// Timeout shortens this call's deadline below the caller's; zero, or a
+	// value above the caller's, leaves the caller's.
+	Timeout time.Duration
+}
+
+// TimeoutOr returns the call's deadline given the caller's default.
+func (c Call) TimeoutOr(def time.Duration) time.Duration {
+	if c.Timeout > 0 && c.Timeout < def {
+		return c.Timeout
+	}
+	return def
 }
 
 // Result is the outcome of one Call. Err is an *Error; transport failures

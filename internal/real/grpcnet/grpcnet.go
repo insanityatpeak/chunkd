@@ -552,7 +552,7 @@ func (c *Caller) one(ctx context.Context, call iface.Call) iface.Result {
 	if addr == "" {
 		return iface.Result{Err: iface.Errorf(iface.CodeUnavailable, "no address for %s", call.To)}
 	}
-	ctx, cancel := context.WithTimeout(ctx, c.timeout)
+	ctx, cancel := context.WithTimeout(ctx, call.TimeoutOr(c.timeout))
 	defer cancel()
 	// A misrouted connection is dropped; one retry dials afresh and
 	// re-resolves addr. The wrong process ran nothing, so it is safe.

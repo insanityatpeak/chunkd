@@ -1,6 +1,6 @@
 # 0009. Request/response on top of the event-driven transport
 
-Status: accepted
+Status: accepted (`Call.Timeout` added 2026-10-18, so a metadata call can give up on a silent peer sooner than the caller's timeout)
 Date: 2026-09-29
 
 ## Context
@@ -32,6 +32,7 @@ Caller.Do(ctx, []Call) []Result                                  // concurrent w
 
 - One client library runs in tests, the CLI, the gateway and the browser, deterministically in the sim.
 - `ifacetest.RPC` runs the same suite against both implementations: round trip, error codes, unknown kinds, 4 MiB + 1 bodies in both directions, batch ordering, deferred responses, timeouts, unreachable nodes.
+- `Call.Timeout` shortens one call's deadline below the caller's (zero or a larger value keeps the caller's). The client's metadata calls start at 3 s and double per attempt up to the caller's timeout, so a silently dead leader costs 3 s instead of 10 s in the sim or 30 s in the CLI and gateway, and a slow live leader still gets a longer wait. Both callers honor it per call (`ifacetest.RPC` "call timeout shortens one call"; `TestSilentLeaderCostsOneShortAttempt`).
 - Every response can be lost or duplicated, which surfaced the ambiguous-commit bug (`docs/bugs-found.md` #2) and forced idempotent commit and delete.
 
 ## At 100× scale

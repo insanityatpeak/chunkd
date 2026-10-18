@@ -269,7 +269,7 @@ func (c *Caller) Sleep(d time.Duration) { c.net.clock.Advance(d) }
 func (c *Caller) send(ic iface.Call, res *iface.Result) uint64 {
 	c.nextReq++
 	now := c.net.clock.Now()
-	c.pending[c.nextReq] = &call{res: res, sent: now, deadline: now.Add(c.timeout)}
+	c.pending[c.nextReq] = &call{res: res, sent: now, deadline: now.Add(ic.TimeoutOr(c.timeout))}
 	c.net.Send(ic.To, iface.Message{From: c.id, Kind: ic.Kind, ReqID: c.nextReq, Body: ic.Body})
 	return c.nextReq
 }
@@ -282,8 +282,30 @@ func (c *Caller) expire(req uint64, ic iface.Call, ctx context.Context) {
 	if ctx.Err() != nil {
 		p.res.Err = iface.Errorf(iface.CodeUnavailable, "%s to %s: %v", ic.Kind, ic.To, ctx.Err())
 	} else {
-		p.res.Err = iface.Errorf(iface.CodeUnavailable, "%s to %s: timed out after %v", ic.Kind, ic.To, c.timeout)
+		p.res.Err = iface.Errorf(iface.CodeUnavailable, "%s to %s: timed out after %v", ic.Kind, ic.To, ic.TimeoutOr(c.timeout))
 	}
+}
+
+// earliest returns the soonest deadline among the open calls in ids, or -1.
+func (c *Caller) earliest(ids []uint64) iface.Instant {
+	wake := iface.Instant(-1)
+	for _, id := range ids {
+		if p, ok := c.pending[id]; ok && (wake < 0 || p.deadline < wake) {
+			wake = p.deadline
+		}
+	}
+	return wake
+}
+
+// latest returns the last deadline among the calls in ids.
+func (c *Caller) latest(ids []uint64) iface.Instant {
+	var last iface.Instant
+	for _, id := range ids {
+		if p, ok := c.pending[id]; ok && p.deadline > last {
+			last = p.deadline
+		}
+	}
+	return last
 }
 
 // Do sends every call, then steps the clock until all are answered, the
@@ -294,22 +316,22 @@ func (c *Caller) Do(ctx context.Context, calls []iface.Call) []iface.Result {
 	for i, ic := range calls {
 		ids[i] = c.send(ic, &results[i])
 	}
-	deadline := c.net.clock.Now().Add(c.timeout)
-	open := func() bool {
-		for _, id := range ids {
-			if _, ok := c.pending[id]; ok {
-				return true
-			}
-		}
-		return false
-	}
-	for open() && ctx.Err() == nil {
-		next, ok := c.net.clock.Next()
-		if !ok || next > deadline {
-			c.net.clock.Advance(deadline.Sub(c.net.clock.Now()))
+	// Each call expires at its own deadline; a batch ends when all have.
+	for ctx.Err() == nil {
+		deadline := c.earliest(ids)
+		if deadline < 0 {
 			break
 		}
-		c.net.clock.Step()
+		if next, ok := c.net.clock.Next(); ok && next <= deadline {
+			c.net.clock.Step()
+			continue
+		}
+		c.net.clock.Advance(deadline.Sub(c.net.clock.Now()))
+		for i, id := range ids {
+			if p, ok := c.pending[id]; ok && p.deadline <= deadline {
+				c.expire(id, calls[i], ctx)
+			}
+		}
 	}
 	for i, id := range ids {
 		if _, ok := c.pending[id]; ok {
@@ -567,7 +589,7 @@ func (c *Caller) Quorum(ctx context.Context, calls []iface.Call, need int, grace
 	for i, ic := range calls {
 		ids[i] = c.send(ic, &results[i])
 	}
-	deadline := c.net.clock.Now().Add(c.timeout)
+	deadline := c.latest(ids)
 	var quorumAt iface.Instant = -1
 	timedOut := false
 	for ctx.Err() == nil {

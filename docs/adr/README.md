@@ -12,7 +12,7 @@ Format: Context, Options considered, Decision, Consequences, At 100× scale ([te
 | [0006](0006-metadata-model-and-durability.md) | Metadata model and durability | accepted | [0017](0017-raft-library-and-log-storage.md) to [0019](0019-metadata-reads-fencing-and-failover.md) |
 | [0007](0007-write-path.md) | Write path: client fan-out, commit at 2 of 3 | accepted | [0029](0029-quorum-puts.md) (the client returns at the quorum) |
 | [0008](0008-placement.md) | Replica placement: rack spread, then least loaded | accepted |  |
-| [0009](0009-rpc-layer.md) | Request/response on top of the event-driven transport | accepted |  |
+| [0009](0009-rpc-layer.md) | Request/response on top of the event-driven transport | accepted, `Call.Timeout` added |  |
 | [0010](0010-failure-detector.md) | Failure detector: alive, suspect, dead | accepted |  |
 | [0011](0011-re-replication.md) | Re-replication: priority queue, delay, throttle, trim | accepted, rack-aware targets added |  |
 | [0012](0012-async-caller-and-hedged-reads.md) | AsyncCaller for in-loop RPC, and Caller.Hedge | accepted, `GoOff` added |  |
