@@ -99,9 +99,9 @@ func (c *Direct) Append(ctx context.Context, id uint64, offset int64, r io.Reade
 	switch {
 	case offset < 0 || offset%cs != 0 || offset > info.Claimed:
 		return info, iface.Errorf(iface.CodeConflict, "upload %d: offset %d, want a %d-byte chunk boundary no further than %d (stored up to %d)", id, offset, cs, info.Claimed, info.Offset)
-	case n < 0 || offset+n > info.Size:
+	case n < 0 || n > info.Size-offset: // not offset+n: it wraps for a length near the int64 limit
 		return info, iface.Errorf(iface.CodeInvalid, "upload %d: %d bytes at %d run past its %d bytes", id, n, offset, info.Size)
-	case n%cs != 0 && offset+n != info.Size:
+	case n%cs != 0 && n != info.Size-offset:
 		return info, iface.Errorf(iface.CodeInvalid, "upload %d: %d bytes is not whole %d-byte chunks and does not end the file", id, n, cs)
 	}
 	ids := make([][]byte, chunk.Count(info.Size, info.ChunkSize))
