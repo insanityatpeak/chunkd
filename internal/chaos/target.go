@@ -34,6 +34,12 @@ type Target interface {
 	Cluster() (client.Cluster, error)
 }
 
+// ECPutter is a Target that can store a Put as RS(4,2) stripes; a scenario
+// with EC ops needs one, and a plain Target stores them replicated.
+type ECPutter interface {
+	PutEC(path string, data []byte) (uint64, error)
+}
+
 // Data is the content a scenario writes to path: a pure function of the
 // seed, the path and the size, so a real run can be compared to its sim run.
 func Data(seed uint64, path string, size int64) []byte {
@@ -170,7 +176,11 @@ func RunTarget(s Scenario, t Target, bound time.Duration, logf func(string, ...a
 			sum := sha256.Sum256(data)
 			written[p] = append(written[p], sum)
 			var v uint64
-			v, err = t.Put(p, data)
+			if ep, ok := t.(ECPutter); ok && op.EC {
+				v, err = ep.PutEC(p, data)
+			} else {
+				v, err = t.Put(p, data)
+			}
 			rec.Put(1, p, sum, call, now(), v, err)
 			switch a := acked[p]; {
 			case err == nil:
@@ -410,4 +420,46 @@ func (d *leaderDeltas) add(leader string, h client.Health) {
 		d.found += h.CorruptReplicas - d.prev.CorruptReplicas
 	}
 	d.prev, d.leader = h, leader
+}
+
+// ECSuite is the real-mode suite for the 7-node erasure-coded profile
+// (docker compose --profile full --profile ec): every file is a RS(4,2)
+// stripe over six nodes, and the seventh gives a dead node's shards
+// somewhere to be rebuilt. Not run by CI: it needs 7 node containers.
+func ECSuite() []Scenario {
+	// n erasure-coded files of 0.5 to 4 MiB (+1 byte), 200 ms apart.
+	preload := func(n int) []Op {
+		var ops []Op
+		for i := range n {
+			ops = append(ops, Op{At: time.Duration(i) * 200 * time.Millisecond, Kind: Put, EC: true,
+				Path: fmt.Sprintf("/chaos/e%02d", i), Size: 1 + int64(i%8+1)*(512<<10)})
+		}
+		return ops
+	}
+	reads := func(from, to time.Duration, n int) []Op {
+		var ops []Op
+		for t := from; t < to; t += time.Second {
+			ops = append(ops, Op{At: t, Kind: Get, Path: fmt.Sprintf("/chaos/e%02d", int(t/time.Second)%n)})
+		}
+		return ops
+	}
+	return []Scenario{
+		{
+			// A node down past dead + delay: every shard it held is rebuilt
+			// from four others onto a node the stripe does not use, while
+			// reads of the same stripes keep verifying. On return the extra
+			// shards are trimmed.
+			Name: "ec-kill-node-rebuilds", Seed: 201, Nodes: 7, EC: true, Length: 100 * time.Second,
+			Ops:    append(preload(24), reads(15*time.Second, 95*time.Second, 24)...),
+			Faults: []Fault{{At: 15 * time.Second, Kind: Kill, Node: "node-3"}, {At: 85 * time.Second, Kind: Restart, Node: "node-3"}},
+		},
+		{
+			// Two nodes down at once leave 4 of 6 shards of the stripes that
+			// used both: still readable, with no rebuild target for the
+			// missing shards until one returns.
+			Name: "ec-two-nodes-down", Seed: 202, Nodes: 7, EC: true, Length: 70 * time.Second,
+			Ops:    append(preload(12), reads(8*time.Second, 65*time.Second, 12)...),
+			Faults: []Fault{{At: 8 * time.Second, Kind: Kill, Node: "node-2"}, {At: 8 * time.Second, Kind: Kill, Node: "node-5"}, {At: 40 * time.Second, Kind: Restart, Node: "node-2"}, {At: 40 * time.Second, Kind: Restart, Node: "node-5"}},
+		},
+	}
 }

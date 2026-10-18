@@ -27,7 +27,10 @@ type Target struct {
 	killed  string   // metadata peer KillLeader stopped, until ReviveLeader
 }
 
-var _ chaos.Target = (*Target)(nil)
+var (
+	_ chaos.Target   = (*Target)(nil)
+	_ chaos.ECPutter = (*Target)(nil)
+)
 
 // New returns a target for the compose project whose gateway is at gateway.
 func New(gateway, project string) *Target {
@@ -134,6 +137,14 @@ func (t *Target) Put(path string, data []byte) (uint64, error) {
 	return m.Version, err
 }
 
+// PutEC stores data as RS(4,2) stripes.
+func (t *Target) PutEC(path string, data []byte) (uint64, error) {
+	c, cancel := ctx()
+	defer cancel()
+	m, err := t.api.Put(c, path, bytes.NewReader(data), int64(len(data)), client.PutOptions{Overwrite: true, Redundancy: client.EC42})
+	return m.Version, err
+}
+
 func (t *Target) Get(path string) ([]byte, uint64, error) {
 	c, cancel := ctx()
 	defer cancel()
@@ -171,6 +182,23 @@ func (t *Target) addNode() error {
 		return nil
 	}
 	return t.admin(extra, "active", time.Minute)
+}
+
+// Activate returns each of nodes to service if the metadata log has it
+// drained or decommissioned, as a run of the add-node scenario leaves node-6.
+func (t *Target) Activate(nodes ...string) error {
+	cl, err := t.Cluster()
+	if err != nil {
+		return err
+	}
+	for _, id := range nodes {
+		if !slices.ContainsFunc(cl.Nodes, func(n client.NodeInfo) bool { return n.ID == id && n.Admin == "active" }) {
+			if err := t.admin(id, "active", time.Minute); err != nil {
+				return fmt.Errorf("activate %s: %w", id, err)
+			}
+		}
+	}
+	return nil
 }
 
 // admin sets node's admin state through the gateway, retrying for up to

@@ -76,9 +76,19 @@ services:
   # The real-mode add-node scenario starts it and removes it afterwards.
   node-6:
     <<: *node
-    profiles: [extra]
+    profiles: [extra, ec]
     environment: { CHUNKD_ID: node-6, CHUNKD_ADVERTISE: "node-6:7000", CHUNKD_METAS: *peers, CHUNKD_RACK: r3, CHUNKD_SCRUB_PASS: 30s }
     volumes: [node-6:/data]
+
+  # The erasure-coded profile adds node-6 (above) and node-7: 7 nodes, so a
+  # stripe of 6 shards has a spare node to rebuild onto:
+  #   docker compose --profile full --profile ec up -d --wait
+  # (go run ./tools/task chaos --mode=real --ec does this.)
+  node-7:
+    <<: *node
+    profiles: [ec]
+    environment: { CHUNKD_ID: node-7, CHUNKD_ADVERTISE: "node-7:7000", CHUNKD_METAS: *peers, CHUNKD_RACK: r1, CHUNKD_SCRUB_PASS: 30s }
+    volumes: [node-7:/data]
 
   gateway:
     build: { context: .., dockerfile: deploy/Dockerfile, target: gateway }
@@ -121,3 +131,4 @@ volumes:
   node-4:
   node-5:
   node-6:
+  node-7:

@@ -39,6 +39,7 @@ var commands = map[string]command{
 	"bench": {"run the benchmarks and write docs/benchmarks (-stages=sim,meta,real,report; -dir=D for the real cluster's disks)", func(args []string) error {
 		return goCmd(nil, append([]string{"run", "./cmd/chunkd-bench"}, args...)...)
 	}},
+	"resume-e2e":  {"kill the gateway mid put -resume against compose, resume, compare hashes (--up, --down)", resumeE2E},
 	"e2e":         {"put and get 20 MiB via the compose gateway (--up to start, --down to clean up)", e2e},
 	"trace-check": {"fail if tracked files or outgoing commits carry attribution text (--all: every commit in history)", func(args []string) error { return traceCheck(slices.Contains(args, "--all")) }},
 	"ci":          {"run every check CI runs, in CI order", ci},
@@ -131,10 +132,13 @@ func gif([]string) error {
 // chaosReal builds and starts the compose cluster, runs the real-mode
 // suite, and with --down removes the cluster afterwards.
 func chaosReal(args []string) error {
-	down := false
+	down, ec := false, false
 	fwd := []string{"run", "./cmd/chunkd-chaos", "-mode=real"}
 	for _, a := range args {
 		switch a {
+		case "--ec", "-ec":
+			ec = true
+			fwd = append(fwd, a)
 		case "--mode=real", "-mode=real":
 		case "--down":
 			down = true
@@ -142,11 +146,18 @@ func chaosReal(args []string) error {
 			fwd = append(fwd, a)
 		}
 	}
-	if err := run(nil, "", "docker", "compose", "up", "-d", "--build", "--wait", "--wait-timeout", "180"); err != nil {
+	// --profile replaces COMPOSE_PROFILES, so the erasure-coded run names full too.
+	profiles := []string{"compose"}
+	if ec {
+		profiles = append(profiles, "--profile", "full", "--profile", "ec")
+	}
+	if err := run(nil, "", "docker", append(append([]string{}, profiles...), "up", "-d", "--build", "--wait", "--wait-timeout", "240")...); err != nil {
 		return err
 	}
 	if down {
-		defer func() { _ = run(nil, "", "docker", "compose", "down", "-v", "--remove-orphans") }()
+		defer func() {
+			_ = run(nil, "", "docker", append(append([]string{}, profiles...), "down", "-v", "--remove-orphans")...)
+		}()
 	}
 	return goCmd(nil, fwd...)
 }
