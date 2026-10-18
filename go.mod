@@ -1,6 +1,6 @@
 module github.com/insanityatpeak/chunkd
 
-go 1.26
+go 1.26.0
 
 require (
 	github.com/anishathalye/porcupine v1.3.1
@@ -13,8 +13,8 @@ require (
 
 require (
 	github.com/klauspost/cpuid/v2 v2.3.0 // indirect
-	golang.org/x/net v0.57.0 // indirect
-	golang.org/x/sys v0.47.0 // indirect
-	golang.org/x/text v0.40.0 // indirect
+	golang.org/x/net v0.61.0 // indirect
+	golang.org/x/sys v0.49.0 // indirect
+	golang.org/x/text v0.43.0 // indirect
 	google.golang.org/genproto/googleapis/rpc v0.0.0-20260706201446-f0a921348800 // indirect
 )
