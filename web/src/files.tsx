@@ -335,6 +335,8 @@ function holding(c: ChunkRef, node: string): Held | null {
   return { id: c.id, has, served: c.servedBy === node, bad };
 }
 
+const placementKey = (chunk: number, node: string) => `${chunk}/${node}`;
+
 interface GridProps {
   manifest: Manifest;
   nodes: NodeView[];
@@ -348,6 +350,26 @@ interface GridProps {
 // to flip bytes in that copy.
 function ChunkGrid({ manifest, nodes, rotted, onCorrupt }: GridProps) {
   const chunks = manifest.chunkList ?? [];
+  // A marked placement: "chunk/node" -> what the node held ("copy" or "shard N").
+  const [mark, setMark] = useState<{ path: string; version: number; held: Map<string, string> } | null>(null);
+  const placement = () => {
+    const held = new Map<string, string>();
+    for (const c of chunks) {
+      for (const n of nodes) {
+        const h = holding(c, n.id);
+        if (h?.has) held.set(placementKey(c.index, n.id), h.shard === undefined ? 'copy' : 'shard ' + h.shard);
+      }
+    }
+    return held;
+  };
+  const base = mark && mark.path === manifest.path && mark.version === manifest.version ? mark.held : null;
+  let added = 0;
+  let gone = 0;
+  if (base) {
+    const now = placement();
+    for (const [k, what] of now) if (base.get(k) !== what) added++;
+    for (const [k, what] of base) if (now.get(k) !== what) gone++;
+  }
   if (chunks.length === 0) return <p class="muted">{manifest.path} is empty: no chunks.</p>;
   const cell = 22;
   const labelW = 64;
@@ -363,7 +385,25 @@ function ChunkGrid({ manifest, nodes, rotted, onCorrupt }: GridProps) {
           ' EC: a cell shows the shard the node holds, 0-3 data and 4-5 parity; any 4 rebuild the chunk.'}
         {chunks.some((c) => c.decoded) && ' * = decoded from parity on the last download.'}
         {onCorrupt && ' Click a filled cell to corrupt that copy.'}
+        {base && ' Diff against the mark: + = held now, not at the mark; dashed − = held at the mark, gone now.'}
       </figcaption>
+      <p class="grid-mark">
+        <button type="button" onClick={() => setMark({ path: manifest.path, version: manifest.version, held: placement() })}>
+          {base ? 'Move the mark here' : 'Mark this placement'}
+        </button>
+        {base && (
+          <>
+            {' '}
+            <button type="button" onClick={() => setMark(null)}>
+              Clear the mark
+            </button>{' '}
+            <span role="status">
+              since the mark: {added} placed, {gone} gone
+            </span>
+          </>
+        )}
+        {mark && !base && <span class="muted"> the mark was for {mark.path} v{mark.version}</span>}
+      </p>
       <svg viewBox={`0 0 ${w} ${h}`} style={{ maxWidth: `${w * 1.4}px` }} role={onCorrupt ? "group" : "img"} aria-label="Chunk placement grid">
         {nodes.map((n, j) => (
           <text key={n.id} class="grid-head" x={labelW + j * cell + cell / 2} y={headH - 8} text-anchor="middle">
@@ -384,6 +424,10 @@ function ChunkGrid({ manifest, nodes, rotted, onCorrupt }: GridProps) {
               const what = held?.shard === undefined ? 'copy' : `shard ${held.shard}`;
               const x = labelW + j * cell;
               const y = headH + i * cell;
+              const was = base?.get(placementKey(c.index, n.id));
+              const now = has ? (held?.shard === undefined ? 'copy' : 'shard ' + held.shard) : undefined;
+              const isNew = !!base && now !== undefined && was !== now;
+              const isGone = !!base && was !== undefined && was !== now;
               return (
                 <g
                   key={n.id}
@@ -395,7 +439,7 @@ function ChunkGrid({ manifest, nodes, rotted, onCorrupt }: GridProps) {
                   onKeyDown={click ? (e) => (e.key === 'Enter' || e.key === ' ') && click() : undefined}
                 >
                   <rect
-                    class={`grid-cell ${has ? 'has' : ''} ${has && held?.parity ? 'parity' : ''} ${rot ? 'rot' : ''}`}
+                    class={`grid-cell ${has ? 'has' : ''} ${has && held?.parity ? 'parity' : ''} ${rot ? 'rot' : ''} ${isNew ? 'placed' : ''} ${isGone ? 'lost' : ''}`}
                     x={x + 2}
                     y={y + 2}
                     width={cell - 4}
@@ -405,6 +449,16 @@ function ChunkGrid({ manifest, nodes, rotted, onCorrupt }: GridProps) {
                   {has && held?.shard !== undefined && (
                     <text class="grid-shard" x={x + cell / 2} y={y + cell / 2 + 4} text-anchor="middle">
                       {held.shard}
+                    </text>
+                  )}
+                  {isNew && (
+                    <text class="grid-diff" x={x + cell - 4} y={y + 9} text-anchor="end">
+                      +
+                    </text>
+                  )}
+                  {isGone && (
+                    <text class="grid-diff lost" x={x + cell / 2} y={y + cell / 2 + 5} text-anchor="middle">
+                      −
                     </text>
                   )}
                   {held?.served && <circle class="served" cx={x + cell / 2} cy={y + cell / 2} r={cell / 2 - 1} />}

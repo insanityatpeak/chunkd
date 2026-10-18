@@ -881,6 +881,37 @@ button.primary {
   stroke: var(--bad);
 }
 
+/* Diff against a marked placement: a new cell is ringed and carries a plus; a
+   vanished one is dashed and carries a minus, so colour is not the only cue. */
+.grid-cell.placed {
+  stroke: var(--fg);
+  stroke-width: 2.5;
+}
+
+.grid-cell.lost {
+  fill: none;
+  stroke: var(--warn);
+  stroke-width: 2;
+  stroke-dasharray: 3 2;
+}
+
+svg text.grid-diff {
+  font-size: 11px;
+  font-weight: 700;
+  fill: var(--panel);
+  pointer-events: none;
+}
+
+svg text.grid-diff.lost {
+  font-size: 14px;
+  fill: var(--warn);
+}
+
+.grid-mark {
+  margin: 4px 0 8px;
+  font-size: 13px;
+}
+
 .tour {
   position: fixed;
   right: 16px;
