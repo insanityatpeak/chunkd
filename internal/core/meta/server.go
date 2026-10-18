@@ -77,6 +77,10 @@ func DefaultConfig(id iface.NodeID) Config {
 		EpochEvery: 30 * time.Second, RetainEpochs: 3, LeaseEpochs: 6, GCGrace: time.Minute, HintRate: 1, HintBurst: 10}
 }
 
+// MaxFileChunks bounds a file's declared size, in chunks: 4 TiB at 4 MiB.
+// Begin allocates a placement entry per chunk before any quota applies.
+const MaxFileChunks = 1 << 20
+
 // Server is one metadata peer. Everything runs on its event loop. The
 // namespace (State) is the Raft FSM: every mutation is proposed, and takes
 // effect on every peer when the log applies it. Chunk locations, node
@@ -526,6 +530,12 @@ func (s *Server) begin(m iface.Message, respond iface.Responder) {
 	}
 	if req.GetSize() < 0 {
 		respond(nil, iface.Errorf(iface.CodeInvalid, "negative size"))
+		return
+	}
+	// The size sizes the placement table below; divide so a size near the
+	// int64 limit cannot overflow chunk.Count first.
+	if req.GetSize()/int64(s.cfg.ChunkSize) >= MaxFileChunks {
+		respond(nil, iface.Errorf(iface.CodeInvalid, "size %d exceeds the limit of %d chunks per file", req.GetSize(), MaxFileChunks))
 		return
 	}
 	// A client retrying a Begin (a lost response, a leader change) gets the

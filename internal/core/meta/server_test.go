@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"io"
 	"log/slog"
+	"math"
 	"testing"
 	"time"
 
@@ -566,5 +567,20 @@ func TestDrainBeforeFirstHeartbeatAfterRestart(t *testing.T) {
 	}
 	if !e.srv.State().Leaving("n1") {
 		t.Fatal("drain not logged")
+	}
+}
+
+// A declared size sizes the placement table, so the leader must refuse one
+// no real file has before it allocates (bugs-found #32).
+func TestBeginRefusesAbsurdSize(t *testing.T) {
+	e := newEnv(t, 3)
+	for _, size := range []int64{math.MaxInt64, 1 << 60, int64(meta.MaxFileChunks)*4 + 1} {
+		_, err := e.rpc(t, "meta", wire.KindBegin, wire.Marshal(&chunkdv1.BeginUploadRequest{Path: "/huge", Size: size, RequestId: []byte("r")}))
+		if iface.CodeOf(err) != iface.CodeInvalid {
+			t.Fatalf("begin of %d bytes: %v, want invalid", size, err)
+		}
+	}
+	if _, err := e.upload(t, "/fine", []byte("still works")); err != nil {
+		t.Fatalf("upload after the refusals: %v", err)
 	}
 }
