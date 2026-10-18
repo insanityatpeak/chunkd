@@ -5,446 +5,432 @@
   "events": [
     {
       "seq": 1,
-      "atMs": 402,
-      "kind": "node",
-      "node": "node-5",
-      "text": "joined as alive"
-    },
-    {
-      "seq": 2,
-      "atMs": 440,
-      "kind": "node",
-      "node": "node-3",
-      "text": "joined as alive"
-    },
-    {
-      "seq": 3,
-      "atMs": 581,
+      "atMs": 62,
       "kind": "node",
       "node": "node-4",
       "text": "joined as alive"
     },
     {
-      "seq": 4,
-      "atMs": 634,
-      "kind": "node",
-      "node": "node-6",
-      "text": "joined as alive"
-    },
-    {
-      "seq": 5,
-      "atMs": 743,
-      "kind": "node",
-      "node": "node-2",
-      "text": "joined as alive"
-    },
-    {
-      "seq": 6,
-      "atMs": 811,
-      "kind": "node",
-      "node": "node-1",
-      "text": "joined as alive"
-    },
-    {
-      "seq": 7,
-      "atMs": 921,
+      "seq": 2,
+      "atMs": 286,
       "kind": "node",
       "node": "node-7",
       "text": "joined as alive"
     },
     {
+      "seq": 3,
+      "atMs": 706,
+      "kind": "node",
+      "node": "node-3",
+      "text": "joined as alive"
+    },
+    {
+      "seq": 4,
+      "atMs": 926,
+      "kind": "node",
+      "node": "node-2",
+      "text": "joined as alive"
+    },
+    {
+      "seq": 5,
+      "atMs": 927,
+      "kind": "node",
+      "node": "node-1",
+      "text": "joined as alive"
+    },
+    {
+      "seq": 6,
+      "atMs": 1006,
+      "kind": "node",
+      "node": "node-6",
+      "text": "joined as alive"
+    },
+    {
+      "seq": 7,
+      "atMs": 1008,
+      "kind": "node",
+      "node": "node-5",
+      "text": "joined as alive"
+    },
+    {
       "seq": 8,
-      "atMs": 1342,
+      "atMs": 1130,
       "kind": "raft",
       "node": "",
       "text": "term 2: election, no leader yet"
     },
     {
       "seq": 9,
-      "atMs": 1392,
+      "atMs": 1161,
       "kind": "raft",
       "node": "meta-2",
       "text": "term 2: meta-2 leads"
     },
     {
       "seq": 10,
-      "atMs": 22500,
+      "atMs": 23000,
       "kind": "node",
       "node": "node-3",
       "text": "alive → suspect"
     },
     {
       "seq": 11,
-      "atMs": 22500,
-      "kind": "copy",
-      "node": "node-7",
-      "text": "rebuild 1 started: shard 0 of stripe dee7e940007c from 4 shards, 262177 bytes"
-    },
-    {
-      "seq": 12,
-      "atMs": 22636,
-      "kind": "copy",
-      "node": "node-7",
-      "text": "copy 1 completed after 137ms"
-    },
-    {
-      "seq": 13,
-      "atMs": 29500,
+      "atMs": 30000,
       "kind": "node",
       "node": "node-3",
       "text": "suspect → dead"
     },
     {
-      "seq": 14,
-      "atMs": 49500,
+      "seq": 12,
+      "atMs": 50000,
       "kind": "copy",
-      "node": "node-4",
-      "text": "rebuild 2 started: shard 4 of stripe 21437bc4a4ea from 4 shards, 1048609 bytes"
+      "node": "node-1",
+      "text": "rebuild 1 started: shard 3 of stripe 122e3fa5e210 from 4 shards, 262177 bytes"
+    },
+    {
+      "seq": 13,
+      "atMs": 50025,
+      "kind": "copy",
+      "node": "node-1",
+      "text": "rebuild 2 started: shard 1 of stripe 12f74b610bae from 4 shards, 1048609 bytes"
+    },
+    {
+      "seq": 14,
+      "atMs": 50119,
+      "kind": "copy",
+      "node": "node-1",
+      "text": "copy 1 completed after 119ms"
     },
     {
       "seq": 15,
-      "atMs": 49584,
+      "atMs": 50119,
       "kind": "copy",
       "node": "node-4",
-      "text": "copy 2 completed after 84ms"
+      "text": "rebuild 3 started: shard 5 of stripe 2e5fda8bf65d from 4 shards, 262177 bytes"
     },
     {
       "seq": 16,
-      "atMs": 49600,
+      "atMs": 50150,
       "kind": "copy",
-      "node": "node-4",
-      "text": "rebuild 3 started: shard 2 of stripe 3977b0ae19a8 from 4 shards, 1048609 bytes"
+      "node": "node-7",
+      "text": "rebuild 4 started: shard 3 of stripe 846e63c24502 from 4 shards, 1048609 bytes"
     },
     {
       "seq": 17,
-      "atMs": 49625,
+      "atMs": 50166,
       "kind": "copy",
       "node": "node-1",
-      "text": "rebuild 4 started: shard 4 of stripe 413d34045ee6 from 4 shards, 262177 bytes"
+      "text": "copy 2 completed after 142ms"
     },
     {
       "seq": 18,
-      "atMs": 49704,
+      "atMs": 50196,
       "kind": "copy",
       "node": "node-4",
-      "text": "copy 3 completed after 105ms"
+      "text": "copy 3 completed after 77ms"
     },
     {
       "seq": 19,
-      "atMs": 49721,
+      "atMs": 50250,
       "kind": "copy",
-      "node": "node-1",
-      "text": "copy 4 completed after 97ms"
+      "node": "node-4",
+      "text": "rebuild 5 started: shard 5 of stripe 7d597482ac34 from 4 shards, 1048609 bytes"
     },
     {
       "seq": 20,
-      "atMs": 49725,
+      "atMs": 50295,
       "kind": "copy",
       "node": "node-7",
-      "text": "rebuild 5 started: shard 5 of stripe ccfb944e7479 from 4 shards, 1048609 bytes"
+      "text": "copy 4 completed after 145ms"
     },
     {
       "seq": 21,
-      "atMs": 49750,
+      "atMs": 50382,
       "kind": "copy",
-      "node": "node-1",
-      "text": "rebuild 6 started: shard 2 of stripe dee7e940007c from 4 shards, 262177 bytes"
+      "node": "node-4",
+      "text": "copy 5 completed after 133ms"
     },
     {
       "seq": 22,
-      "atMs": 49823,
-      "kind": "copy",
-      "node": "node-7",
-      "text": "copy 5 completed after 98ms"
-    },
-    {
-      "seq": 23,
-      "atMs": 49869,
-      "kind": "copy",
-      "node": "node-1",
-      "text": "copy 6 completed after 119ms"
-    },
-    {
-      "seq": 24,
-      "atMs": 62500,
+      "atMs": 63000,
       "kind": "node",
       "node": "node-5",
       "text": "alive → suspect"
     },
     {
-      "seq": 25,
-      "atMs": 69500,
+      "seq": 23,
+      "atMs": 70000,
       "kind": "node",
       "node": "node-5",
       "text": "suspect → dead"
     },
     {
-      "seq": 26,
-      "atMs": 100200,
+      "seq": 24,
+      "atMs": 100460,
+      "kind": "node",
+      "node": "node-3",
+      "text": "dead → suspect (restarted)"
+    },
+    {
+      "seq": 25,
+      "atMs": 100945,
       "kind": "node",
       "node": "node-5",
       "text": "dead → suspect (restarted)"
+    },
+    {
+      "seq": 26,
+      "atMs": 102433,
+      "kind": "node",
+      "node": "node-3",
+      "text": "suspect → alive"
     },
     {
       "seq": 27,
-      "atMs": 100639,
-      "kind": "node",
+      "atMs": 102485,
+      "kind": "trim",
       "node": "node-3",
-      "text": "dead → suspect (restarted)"
+      "text": "trim 6 sent: chunk 50c28a4a1034"
     },
     {
       "seq": 28,
-      "atMs": 102221,
-      "kind": "node",
-      "node": "node-5",
-      "text": "suspect → alive"
+      "atMs": 102485,
+      "kind": "trim",
+      "node": "node-3",
+      "text": "trim 7 sent: chunk daa6cd024dab"
     },
     {
       "seq": 29,
-      "atMs": 104626,
-      "kind": "node",
+      "atMs": 102485,
+      "kind": "trim",
       "node": "node-3",
-      "text": "suspect → alive"
+      "text": "trim 8 sent: chunk 2e42ebd9c354"
     },
     {
       "seq": 30,
-      "atMs": 104665,
+      "atMs": 102485,
       "kind": "trim",
       "node": "node-3",
-      "text": "trim 7 sent: chunk 119b4ef60d0e"
+      "text": "trim 9 sent: chunk a3e800ae550d"
     },
     {
       "seq": 31,
-      "atMs": 104665,
+      "atMs": 102485,
       "kind": "trim",
       "node": "node-3",
-      "text": "trim 8 sent: chunk 05ce936f7339"
+      "text": "trim 10 sent: chunk 429d6ef95a5c"
     },
     {
       "seq": 32,
-      "atMs": 104665,
+      "atMs": 102505,
       "kind": "trim",
       "node": "node-3",
-      "text": "trim 9 sent: chunk ca29311d0e48"
+      "text": "trim 9 done: chunk a3e800ae550d removed"
     },
     {
       "seq": 33,
-      "atMs": 104665,
+      "atMs": 102531,
       "kind": "trim",
       "node": "node-3",
-      "text": "trim 10 sent: chunk d7057177fcb8"
+      "text": "trim 10 done: chunk 429d6ef95a5c removed"
     },
     {
       "seq": 34,
-      "atMs": 104665,
+      "atMs": 102532,
       "kind": "trim",
       "node": "node-3",
-      "text": "trim 11 sent: chunk 550128a6761c"
+      "text": "trim 7 done: chunk daa6cd024dab removed"
     },
     {
       "seq": 35,
-      "atMs": 104703,
+      "atMs": 102537,
       "kind": "trim",
       "node": "node-3",
-      "text": "trim 9 done: chunk ca29311d0e48 removed"
+      "text": "trim 8 done: chunk 2e42ebd9c354 removed"
     },
     {
       "seq": 36,
-      "atMs": 104711,
+      "atMs": 102537,
       "kind": "trim",
       "node": "node-3",
-      "text": "trim 7 done: chunk 119b4ef60d0e removed"
+      "text": "trim 6 done: chunk 50c28a4a1034 removed"
     },
     {
       "seq": 37,
-      "atMs": 104728,
-      "kind": "trim",
-      "node": "node-3",
-      "text": "trim 10 done: chunk d7057177fcb8 removed"
-    },
-    {
-      "seq": 38,
-      "atMs": 104730,
-      "kind": "trim",
-      "node": "node-3",
-      "text": "trim 8 done: chunk 05ce936f7339 removed"
-    },
-    {
-      "seq": 39,
-      "atMs": 104734,
-      "kind": "trim",
-      "node": "node-3",
-      "text": "trim 11 done: chunk 550128a6761c removed"
+      "atMs": 102968,
+      "kind": "node",
+      "node": "node-5",
+      "text": "suspect → alive"
     }
   ],
   "reads": [
     {
       "seq": 1,
-      "atMs": 3673,
+      "atMs": 3619,
       "kind": "write",
       "node": "client",
       "text": "put /ec/file-0.bin as ec-4+2: 3 stripes of 6 shards, 13 MiB stored for 9 MiB"
     },
     {
       "seq": 2,
-      "atMs": 4089,
+      "atMs": 4096,
       "kind": "write",
       "node": "client",
       "text": "put /ec/file-1.bin as ec-4+2: 2 stripes of 6 shards, 7 MiB stored for 5 MiB"
     },
     {
       "seq": 3,
-      "atMs": 10421,
+      "atMs": 10250,
       "kind": "read",
       "node": "client",
-      "text": "read /ec/file-0.bin (9216 KiB) in 422ms from node-1, node-2, node-3, node-4, node-5, node-6, node-7; hedged chunk 2; decoded chunk 2 from parity"
+      "text": "read /ec/file-0.bin (9216 KiB) in 251ms from node-1, node-2, node-3, node-5, node-6, node-7"
     },
     {
       "seq": 4,
-      "atMs": 15176,
+      "atMs": 15168,
       "kind": "read",
       "node": "client",
-      "text": "read /ec/file-1.bin (5120 KiB) in 177ms from node-1, node-2, node-3, node-4, node-5, node-7; decoded chunk 1 from parity"
+      "text": "read /ec/file-1.bin (5120 KiB) in 169ms from node-1, node-2, node-3, node-4, node-6, node-7"
     },
     {
       "seq": 5,
-      "atMs": 20537,
+      "atMs": 20560,
       "kind": "read",
       "node": "client",
-      "text": "read /ec/file-0.bin (9216 KiB) in 538ms from node-1, node-2, node-4, node-5, node-6, node-7; hedged chunk 0, 1; decoded chunk 0, 1 from parity"
+      "text": "read /ec/file-0.bin (9216 KiB) in 561ms from node-1, node-2, node-4, node-5, node-6, node-7; hedged chunk 0, 1; decoded chunk 0, 1 from parity"
     },
     {
       "seq": 6,
-      "atMs": 25166,
+      "atMs": 25192,
       "kind": "read",
       "node": "client",
-      "text": "read /ec/file-1.bin (5120 KiB) in 166ms from node-1, node-2, node-4, node-5, node-7; decoded chunk 0, 1 from parity"
+      "text": "read /ec/file-1.bin (5120 KiB) in 192ms from node-1, node-2, node-4, node-6, node-7; decoded chunk 1 from parity"
     },
     {
       "seq": 7,
-      "atMs": 30351,
+      "atMs": 30318,
       "kind": "read",
       "node": "client",
-      "text": "read /ec/file-0.bin (9216 KiB) in 352ms from node-1, node-2, node-4, node-5, node-6, node-7; hedged chunk 2; decoded chunk 2 from parity"
+      "text": "read /ec/file-0.bin (9216 KiB) in 319ms from node-1, node-2, node-4, node-5, node-6, node-7; decoded chunk 0, 1 from parity"
     },
     {
       "seq": 8,
-      "atMs": 35248,
+      "atMs": 35217,
       "kind": "read",
       "node": "client",
-      "text": "read /ec/file-1.bin (5120 KiB) in 249ms from node-1, node-2, node-4, node-5, node-7; decoded chunk 0, 1 from parity"
+      "text": "read /ec/file-1.bin (5120 KiB) in 217ms from node-1, node-2, node-4, node-6, node-7; decoded chunk 1 from parity"
     },
     {
       "seq": 9,
-      "atMs": 40300,
+      "atMs": 40256,
       "kind": "read",
       "node": "client",
-      "text": "read /ec/file-0.bin (9216 KiB) in 301ms from node-1, node-2, node-4, node-5, node-6, node-7"
+      "text": "read /ec/file-0.bin (9216 KiB) in 257ms from node-1, node-2, node-4, node-5, node-6, node-7; decoded chunk 0, 1 from parity"
     },
     {
       "seq": 10,
-      "atMs": 45197,
+      "atMs": 45216,
       "kind": "read",
       "node": "client",
-      "text": "read /ec/file-1.bin (5120 KiB) in 197ms from node-1, node-2, node-4, node-5, node-7; decoded chunk 0, 1 from parity"
+      "text": "read /ec/file-1.bin (5120 KiB) in 217ms from node-1, node-2, node-4, node-6, node-7; decoded chunk 1 from parity"
     },
     {
       "seq": 11,
-      "atMs": 50265,
+      "atMs": 50270,
       "kind": "read",
       "node": "client",
-      "text": "read /ec/file-0.bin (9216 KiB) in 266ms from node-1, node-2, node-4, node-5, node-6, node-7"
+      "text": "read /ec/file-0.bin (9216 KiB) in 270ms from node-1, node-2, node-4, node-5, node-6, node-7; decoded chunk 0, 1 from parity"
     },
     {
       "seq": 12,
-      "atMs": 55225,
+      "atMs": 55222,
       "kind": "read",
       "node": "client",
-      "text": "read /ec/file-1.bin (5120 KiB) in 226ms from node-1, node-2, node-4, node-7"
+      "text": "read /ec/file-1.bin (5120 KiB) in 222ms from node-1, node-2, node-4, node-6, node-7"
     },
     {
       "seq": 13,
-      "atMs": 60705,
+      "atMs": 60395,
       "kind": "read",
       "node": "client",
-      "text": "read /ec/file-0.bin (9216 KiB) in 706ms from node-1, node-2, node-4, node-6, node-7; hedged chunk 0, 1, 2; decoded chunk 0, 1, 2 from parity"
+      "text": "read /ec/file-0.bin (9216 KiB) in 395ms from node-1, node-2, node-6, node-7; hedged chunk 2; decoded chunk 2 from parity"
     },
     {
       "seq": 14,
-      "atMs": 65245,
+      "atMs": 65202,
       "kind": "read",
       "node": "client",
-      "text": "read /ec/file-1.bin (5120 KiB) in 245ms from node-1, node-2, node-4, node-7"
+      "text": "read /ec/file-1.bin (5120 KiB) in 202ms from node-1, node-2, node-4, node-6, node-7"
     },
     {
       "seq": 15,
-      "atMs": 70552,
+      "atMs": 70290,
       "kind": "read",
       "node": "client",
-      "text": "read /ec/file-0.bin (9216 KiB) in 553ms from node-1, node-2, node-4, node-6, node-7; hedged chunk 0, 1; decoded chunk 0, 1, 2 from parity"
+      "text": "read /ec/file-0.bin (9216 KiB) in 290ms from node-1, node-2, node-6, node-7; decoded chunk 2 from parity"
     },
     {
       "seq": 16,
-      "atMs": 75163,
+      "atMs": 75153,
       "kind": "read",
       "node": "client",
-      "text": "read /ec/file-1.bin (5120 KiB) in 163ms from node-1, node-2, node-4, node-7"
+      "text": "read /ec/file-1.bin (5120 KiB) in 153ms from node-1, node-2, node-4, node-6, node-7"
     },
     {
       "seq": 17,
-      "atMs": 80389,
+      "atMs": 80306,
       "kind": "read",
       "node": "client",
-      "text": "read /ec/file-0.bin (9216 KiB) in 389ms from node-1, node-2, node-4, node-6, node-7; hedged chunk 0; decoded chunk 0, 1, 2 from parity"
+      "text": "read /ec/file-0.bin (9216 KiB) in 306ms from node-1, node-2, node-6, node-7; decoded chunk 2 from parity"
     },
     {
       "seq": 18,
-      "atMs": 85241,
+      "atMs": 85180,
       "kind": "read",
       "node": "client",
-      "text": "read /ec/file-1.bin (5120 KiB) in 242ms from node-1, node-2, node-4, node-7"
+      "text": "read /ec/file-1.bin (5120 KiB) in 181ms from node-1, node-2, node-4, node-6, node-7"
     },
     {
       "seq": 19,
-      "atMs": 90218,
+      "atMs": 90286,
       "kind": "read",
       "node": "client",
-      "text": "read /ec/file-0.bin (9216 KiB) in 219ms from node-1, node-2, node-4, node-6, node-7; decoded chunk 0, 1, 2 from parity"
+      "text": "read /ec/file-0.bin (9216 KiB) in 286ms from node-1, node-2, node-6, node-7; decoded chunk 2 from parity"
     },
     {
       "seq": 20,
-      "atMs": 95228,
+      "atMs": 95213,
       "kind": "read",
       "node": "client",
-      "text": "read /ec/file-1.bin (5120 KiB) in 229ms from node-1, node-2, node-4, node-7"
+      "text": "read /ec/file-1.bin (5120 KiB) in 213ms from node-1, node-2, node-4, node-6, node-7"
     },
     {
       "seq": 21,
-      "atMs": 100304,
+      "atMs": 100277,
       "kind": "read",
       "node": "client",
-      "text": "read /ec/file-0.bin (9216 KiB) in 304ms from node-1, node-2, node-4, node-6, node-7; decoded chunk 0, 1, 2 from parity"
+      "text": "read /ec/file-0.bin (9216 KiB) in 278ms from node-1, node-2, node-6, node-7; decoded chunk 2 from parity"
     },
     {
       "seq": 22,
-      "atMs": 105214,
+      "atMs": 105231,
       "kind": "read",
       "node": "client",
-      "text": "read /ec/file-1.bin (5120 KiB) in 214ms from node-1, node-2, node-4, node-7"
+      "text": "read /ec/file-1.bin (5120 KiB) in 232ms from node-1, node-2, node-4, node-6, node-7"
     },
     {
       "seq": 23,
-      "atMs": 110274,
+      "atMs": 110251,
       "kind": "read",
       "node": "client",
-      "text": "read /ec/file-0.bin (9216 KiB) in 275ms from node-1, node-2, node-4, node-5, node-6, node-7"
+      "text": "read /ec/file-0.bin (9216 KiB) in 252ms from node-1, node-2, node-5, node-6, node-7"
     },
     {
       "seq": 24,
-      "atMs": 115185,
+      "atMs": 115207,
       "kind": "read",
       "node": "client",
-      "text": "read /ec/file-1.bin (5120 KiB) in 186ms from node-1, node-2, node-4, node-7"
+      "text": "read /ec/file-1.bin (5120 KiB) in 207ms from node-1, node-2, node-4, node-6, node-7"
     }
   ]
 }

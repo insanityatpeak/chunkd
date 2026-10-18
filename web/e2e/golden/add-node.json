@@ -5,275 +5,205 @@
   "events": [
     {
       "seq": 1,
-      "atMs": 391,
+      "atMs": 63,
       "kind": "node",
-      "node": "node-5",
+      "node": "node-4",
       "text": "joined as alive"
     },
     {
       "seq": 2,
-      "atMs": 446,
+      "atMs": 709,
       "kind": "node",
       "node": "node-3",
       "text": "joined as alive"
     },
     {
       "seq": 3,
-      "atMs": 587,
+      "atMs": 930,
       "kind": "node",
-      "node": "node-4",
+      "node": "node-1",
       "text": "joined as alive"
     },
     {
       "seq": 4,
-      "atMs": 748,
+      "atMs": 941,
       "kind": "node",
       "node": "node-2",
       "text": "joined as alive"
     },
     {
       "seq": 5,
-      "atMs": 840,
+      "atMs": 1006,
       "kind": "node",
-      "node": "node-1",
+      "node": "node-5",
       "text": "joined as alive"
     },
     {
       "seq": 6,
-      "atMs": 1335,
+      "atMs": 1129,
       "kind": "raft",
       "node": "",
       "text": "term 2: election, no leader yet"
     },
     {
       "seq": 7,
-      "atMs": 1394,
+      "atMs": 1164,
       "kind": "raft",
       "node": "meta-2",
       "text": "term 2: meta-2 leads"
     },
     {
       "seq": 8,
-      "atMs": 21279,
+      "atMs": 20331,
       "kind": "node",
       "node": "node-6",
       "text": "joined as alive"
     },
     {
       "seq": 9,
-      "atMs": 25102,
+      "atMs": 20331,
       "kind": "copy",
       "node": "node-5",
-      "text": "copy 1 started: chunk e4a24094e284 from node-3, 4194304 bytes"
+      "text": "copy 1 started: chunk b35ab79376a8 from node-3, 1048576 bytes"
     },
     {
       "seq": 10,
-      "atMs": 25248,
+      "atMs": 20356,
       "kind": "copy",
-      "node": "node-5",
-      "text": "copy 1 completed after 146ms"
+      "node": "node-2",
+      "text": "copy 2 started: chunk c489568f3e5c from node-1, 4194304 bytes"
     },
     {
       "seq": 11,
-      "atMs": 25590,
+      "atMs": 20421,
       "kind": "copy",
       "node": "node-5",
-      "text": "copy 2 started: chunk 617cdec2a7ab from node-3, 1048576 bytes"
+      "text": "copy 1 completed after 90ms"
     },
     {
       "seq": 12,
-      "atMs": 25664,
+      "atMs": 20487,
       "kind": "copy",
-      "node": "node-5",
-      "text": "copy 2 completed after 74ms"
+      "node": "node-2",
+      "text": "copy 2 completed after 131ms"
     },
     {
       "seq": 13,
-      "atMs": 30000,
+      "atMs": 24512,
       "kind": "copy",
-      "node": "node-6",
-      "text": "copy 3 started (rebalance): chunk 03097f628b88 from node-3, 4194304 bytes"
+      "node": "node-5",
+      "text": "copy 3 started: chunk 0859457e4903 from node-3, 4194304 bytes"
     },
     {
       "seq": 14,
-      "atMs": 30100,
+      "atMs": 24594,
       "kind": "copy",
-      "node": "node-1",
-      "text": "copy 4 started (rebalance): chunk 161b58380933 from node-4, 1048576 bytes"
+      "node": "node-5",
+      "text": "copy 3 completed after 82ms"
     },
     {
       "seq": 15,
-      "atMs": 30118,
+      "atMs": 30000,
       "kind": "copy",
       "node": "node-6",
-      "text": "copy 3 completed after 118ms"
+      "text": "copy 4 started (rebalance): chunk 05754963927a from node-3, 4194304 bytes"
     },
     {
       "seq": 16,
-      "atMs": 30125,
+      "atMs": 30081,
       "kind": "copy",
-      "node": "node-1",
-      "text": "copy 6 started (rebalance): chunk 161b58380933 from node-4, 1048576 bytes"
+      "node": "node-6",
+      "text": "copy 4 completed after 82ms"
     },
     {
       "seq": 17,
-      "atMs": 30125,
+      "atMs": 30100,
       "kind": "copy",
-      "node": "node-2",
-      "text": "copy 7 started (rebalance): chunk 161b58380933 from node-5, 1048576 bytes"
+      "node": "node-6",
+      "text": "copy 6 started (rebalance): chunk 0859457e4903 from node-3, 4194304 bytes"
     },
     {
       "seq": 18,
-      "atMs": 30145,
+      "atMs": 30132,
       "kind": "trim",
       "node": "node-3",
-      "text": "trim 5 sent: chunk 03097f628b88"
+      "text": "trim 5 sent: chunk 05754963927a"
     },
     {
       "seq": 19,
-      "atMs": 30175,
+      "atMs": 30154,
       "kind": "copy",
       "node": "node-6",
-      "text": "copy 8 started (rebalance): chunk 46467b005358 from node-3, 4194304 bytes"
+      "text": "copy 6 completed after 55ms"
     },
     {
       "seq": 20,
-      "atMs": 30177,
+      "atMs": 30198,
       "kind": "trim",
       "node": "node-3",
-      "text": "trim 5 done: chunk 03097f628b88 removed"
+      "text": "trim 7 sent: chunk 0859457e4903"
     },
     {
       "seq": 21,
-      "atMs": 30214,
+      "atMs": 30200,
       "kind": "copy",
-      "node": "node-2",
-      "text": "copy 7 completed after 90ms"
+      "node": "node-6",
+      "text": "copy 8 started (rebalance): chunk 10b199d8aa30 from node-3, 4194304 bytes"
     },
     {
       "seq": 22,
-      "atMs": 30261,
+      "atMs": 30206,
       "kind": "trim",
-      "node": "node-5",
-      "text": "trim 9 sent: chunk 161b58380933"
+      "node": "node-3",
+      "text": "trim 5 done: chunk 05754963927a removed"
     },
     {
       "seq": 23,
-      "atMs": 30275,
-      "kind": "copy",
-      "node": "node-6",
-      "text": "copy 10 started (rebalance): chunk 7c0b044463ce from node-3, 4194304 bytes"
+      "atMs": 30248,
+      "kind": "trim",
+      "node": "node-3",
+      "text": "trim 7 done: chunk 0859457e4903 removed"
     },
     {
       "seq": 24,
-      "atMs": 30331,
-      "kind": "trim",
-      "node": "node-5",
-      "text": "trim 9 done: chunk 161b58380933 removed"
+      "atMs": 30252,
+      "kind": "copy",
+      "node": "node-6",
+      "text": "copy 8 completed after 52ms"
     },
     {
       "seq": 25,
-      "atMs": 30334,
-      "kind": "copy",
-      "node": "node-6",
-      "text": "copy 8 completed after 160ms"
+      "atMs": 30278,
+      "kind": "trim",
+      "node": "node-3",
+      "text": "trim 9 sent: chunk 10b199d8aa30"
     },
     {
       "seq": 26,
-      "atMs": 30369,
+      "atMs": 30329,
       "kind": "trim",
       "node": "node-3",
-      "text": "trim 11 sent: chunk 46467b005358"
+      "text": "trim 9 done: chunk 10b199d8aa30 removed"
     },
     {
       "seq": 27,
-      "atMs": 30375,
-      "kind": "copy",
-      "node": "node-6",
-      "text": "copy 13 started (rebalance): chunk 86d04a75fc5b from node-3, 4194304 bytes"
+      "atMs": 30565,
+      "kind": "trim",
+      "node": "node-5",
+      "text": "trim 10 sent: chunk b35ab79376a8"
     },
     {
       "seq": 28,
-      "atMs": 30383,
-      "kind": "copy",
-      "node": "node-6",
-      "text": "copy 10 completed after 109ms"
-    },
-    {
-      "seq": 29,
-      "atMs": 30410,
-      "kind": "trim",
-      "node": "node-3",
-      "text": "trim 11 done: chunk 46467b005358 removed"
-    },
-    {
-      "seq": 30,
-      "atMs": 30420,
-      "kind": "trim",
-      "node": "node-4",
-      "text": "trim 12 sent: chunk 161b58380933"
-    },
-    {
-      "seq": 31,
-      "atMs": 30465,
-      "kind": "trim",
-      "node": "node-4",
-      "text": "trim 12 done: chunk 161b58380933 removed"
-    },
-    {
-      "seq": 32,
-      "atMs": 30470,
-      "kind": "trim",
-      "node": "node-3",
-      "text": "trim 14 sent: chunk 7c0b044463ce"
-    },
-    {
-      "seq": 33,
-      "atMs": 30495,
-      "kind": "copy",
-      "node": "node-6",
-      "text": "copy 13 completed after 121ms"
-    },
-    {
-      "seq": 34,
-      "atMs": 30517,
-      "kind": "trim",
-      "node": "node-3",
-      "text": "trim 14 done: chunk 7c0b044463ce removed"
-    },
-    {
-      "seq": 35,
-      "atMs": 30523,
-      "kind": "trim",
-      "node": "node-3",
-      "text": "trim 15 sent: chunk 86d04a75fc5b"
-    },
-    {
-      "seq": 36,
-      "atMs": 30544,
-      "kind": "trim",
-      "node": "node-3",
-      "text": "trim 15 done: chunk 86d04a75fc5b removed"
-    },
-    {
-      "seq": 37,
-      "atMs": 30660,
+      "atMs": 30626,
       "kind": "trim",
       "node": "node-5",
-      "text": "trim 16 sent: chunk e4a24094e284"
-    },
-    {
-      "seq": 38,
-      "atMs": 30696,
-      "kind": "trim",
-      "node": "node-5",
-      "text": "trim 16 done: chunk e4a24094e284 removed"
+      "text": "trim 10 done: chunk b35ab79376a8 removed"
     }
   ],
   "reads": [
     {
       "seq": 1,
-      "atMs": 21174,
+      "atMs": 20052,
       "kind": "admin",
       "node": "client",
       "text": "node-6 started, empty"

@@ -122,7 +122,7 @@ Bugs found: #10 (upload lease shorter than GC grace plus two sweeps), #11 (undel
 | Criterion | Evidence |
 |---|---|
 | Fresh clone, only Docker: `docker compose up` → dashboard at `localhost:8080` against the real cluster; `docker compose run --rm demo` passes | Cloned `714a67e` into a clean directory: all containers healthy, `/mode.json` is live, the demo verified the download and trimmed 5 copies in 35 s; the CI compose job runs the same demo |
-| Every scenario link replays identically | Playwright in the CI `web` job loads `kill-node` and `corrupt-chunk` (seed 7) and compares the page's timeline with `TestScenarioGolden`'s, event for event |
+| Every scenario link replays identically | Playwright in the CI `web` job loads `kill-node` and `corrupt-chunk` (seed 1) and compares the page's timeline with `TestScenarioGolden`'s, event for event |
 | README renders on GitHub and the GIF plays | Checked on github.com after the push |
 | Lighthouse on the Pages URL: performance ≥ 80, accessibility ≥ 90 | Performance 97, accessibility 100, best practices 96 (LCP 1.3 s, TBT 170 ms, CLS 0.048), run locally against the live URL |
 | `trace-check` passes; release `v0.1.0` published | `trace-check --all`: every file and commit clean; [v0.1.0](https://github.com/insanityatpeak/chunkd/releases/tag/v0.1.0) published |

@@ -93,6 +93,8 @@ type Server struct {
 	// soft state below belongs to its term.
 	leading bool
 	stopped bool
+	// joining: nodes with a NodeJoinOp proposed and not yet applied.
+	joining map[iface.NodeID]bool
 	// seenTerm and seenLeader dedupe the timeline's election events.
 	seenTerm, seenLeader uint64
 	events               events
@@ -128,7 +130,7 @@ func NewServer(ctx context.Context, d Deps, cfg Config) (*Server, error) {
 	if self == 0 {
 		return nil, fmt.Errorf("meta: %s is not among its peers %v", cfg.ID, peers)
 	}
-	s := &Server{d: d, cfg: cfg, state: New(), cluster: NewCluster(cfg.Detector), gc: newGCState(), trims: newTrimState(), hints: map[iface.NodeID]*repair.Bucket{}}
+	s := &Server{d: d, cfg: cfg, state: New(), cluster: NewCluster(cfg.Detector), gc: newGCState(), trims: newTrimState(), hints: map[iface.NodeID]*repair.Bucket{}, joining: map[iface.NodeID]bool{}}
 	rc := cfg.Repair
 	rc.Replicas = cfg.Replicas
 	s.repair = repair.New(rc, d.Clock, repairView{s}, repair.Sender{Copy: s.sendCopy, Trim: s.sendTrim, Done: s.copyDone})
@@ -324,6 +326,18 @@ func (s *Server) propose(op *chunkdv1.Op, done func(Result, error)) {
 	})
 }
 
+// admit logs a node's first heartbeat to this leader (ADR-0030). One
+// proposal per node at a time; a failed one is retried by the next heartbeat.
+func (s *Server) admit(id iface.NodeID) {
+	if !s.leading || s.state.Admitted(id) || s.joining[id] {
+		return
+	}
+	s.joining[id] = true
+	s.propose(&chunkdv1.Op{Op: &chunkdv1.Op_NodeJoin{NodeJoin: &chunkdv1.NodeJoinOp{Node: string(id)}}}, func(Result, error) {
+		delete(s.joining, id)
+	})
+}
+
 // requireLeader answers a request that only the leader may serve.
 func (s *Server) requireLeader(respond iface.Responder) bool {
 	if st := s.raft.Status(); !st.Ready {
@@ -420,6 +434,7 @@ func (s *Server) handle(m iface.Message) {
 			s.transition(tr)
 			s.repair.Scan()
 		}
+		s.admit(id)
 		// Every peer acks: each keeps its own view of the node. The leader's
 		// ack also announces the term, the fencing token for its commands.
 		st := s.raft.Status()

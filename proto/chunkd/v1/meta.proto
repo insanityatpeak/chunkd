@@ -165,6 +165,14 @@ message NodeAdminOp {
   NodeAdmin state = 2;
 }
 
+// NodeJoinOp records that the group has admitted a storage node. Logged by
+// the leader on the first heartbeat it hears from a node the log does not
+// know, so a later leader accepts drain and undrain for the node before it
+// has heard from it. A repeat applies nothing.
+message NodeJoinOp {
+  string node = 1;
+}
+
 message Op {
   oneof op {
     BeginUploadOp begin = 1;
@@ -180,6 +188,7 @@ message Op {
     TrimDoneOp trim_done = 11;
     NodeAdminOp node_admin = 12;
     SetRetentionOp set_retention = 13;
+    NodeJoinOp node_join = 14;
   }
 }
 
@@ -244,6 +253,9 @@ message MetaSnapshot {
   repeated TrimTarget trim_pending = 7;
   // Nodes not active, sorted by node.
   repeated NodeAdminOp node_admin = 8;
+  // Nodes the group has admitted, sorted. Absent in snapshots from before
+  // ADR-0030; such a group admits nodes again as they report.
+  repeated string admitted = 9;
 }
 
 // ---- Client RPCs to the metadata server.

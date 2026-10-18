@@ -5,49 +5,49 @@
   "events": [
     {
       "seq": 1,
-      "atMs": 391,
+      "atMs": 63,
       "kind": "node",
-      "node": "node-5",
+      "node": "node-4",
       "text": "joined as alive"
     },
     {
       "seq": 2,
-      "atMs": 446,
+      "atMs": 709,
       "kind": "node",
       "node": "node-3",
       "text": "joined as alive"
     },
     {
       "seq": 3,
-      "atMs": 587,
+      "atMs": 930,
       "kind": "node",
-      "node": "node-4",
+      "node": "node-1",
       "text": "joined as alive"
     },
     {
       "seq": 4,
-      "atMs": 748,
+      "atMs": 941,
       "kind": "node",
       "node": "node-2",
       "text": "joined as alive"
     },
     {
       "seq": 5,
-      "atMs": 840,
+      "atMs": 1006,
       "kind": "node",
-      "node": "node-1",
+      "node": "node-5",
       "text": "joined as alive"
     },
     {
       "seq": 6,
-      "atMs": 1335,
+      "atMs": 1129,
       "kind": "raft",
       "node": "",
       "text": "term 2: election, no leader yet"
     },
     {
       "seq": 7,
-      "atMs": 1394,
+      "atMs": 1164,
       "kind": "raft",
       "node": "meta-2",
       "text": "term 2: meta-2 leads"
@@ -56,54 +56,54 @@
       "seq": 8,
       "atMs": 30000,
       "kind": "copy",
-      "node": "node-5",
-      "text": "copy 1 started: chunk 617cdec2a7ab from node-3, 1048576 bytes"
+      "node": "node-2",
+      "text": "copy 1 started: chunk 0859457e4903 from node-3, 4194304 bytes"
     },
     {
       "seq": 9,
       "atMs": 30025,
       "kind": "copy",
-      "node": "node-5",
-      "text": "copy 2 started: chunk e4a24094e284 from node-4, 4194304 bytes"
+      "node": "node-2",
+      "text": "copy 2 started: chunk b35ab79376a8 from node-4, 1048576 bytes"
     },
     {
       "seq": 10,
-      "atMs": 30086,
+      "atMs": 30079,
       "kind": "copy",
-      "node": "node-5",
-      "text": "copy 1 completed after 86ms"
+      "node": "node-2",
+      "text": "copy 1 completed after 80ms"
     },
     {
       "seq": 11,
-      "atMs": 30138,
+      "atMs": 30107,
       "kind": "copy",
-      "node": "node-5",
-      "text": "copy 2 completed after 114ms"
+      "node": "node-2",
+      "text": "copy 2 completed after 82ms"
     },
     {
       "seq": 12,
-      "atMs": 30681,
-      "kind": "trim",
-      "node": "node-5",
-      "text": "trim 3 sent: chunk e4a24094e284"
+      "atMs": 30125,
+      "kind": "copy",
+      "node": "node-2",
+      "text": "copy 3 started: chunk c489568f3e5c from node-1, 4194304 bytes"
     },
     {
       "seq": 13,
-      "atMs": 30752,
-      "kind": "trim",
-      "node": "node-5",
-      "text": "trim 3 done: chunk e4a24094e284 removed"
+      "atMs": 30213,
+      "kind": "copy",
+      "node": "node-2",
+      "text": "copy 3 completed after 88ms"
     },
     {
       "seq": 14,
-      "atMs": 90055,
+      "atMs": 90027,
       "kind": "gc",
       "node": "",
       "text": "epoch 3: 2 versions past retention dropped"
     },
     {
       "seq": 15,
-      "atMs": 180069,
+      "atMs": 180048,
       "kind": "gc",
       "node": "",
       "text": "deleting 9 unreferenced copies"
@@ -112,14 +112,14 @@
   "reads": [
     {
       "seq": 1,
-      "atMs": 21704,
+      "atMs": 20699,
       "kind": "write",
       "node": "client",
       "text": "write /demo/file-0.bin v2, last byte changed: 1 of 2 chunks already stored, 1 sent"
     },
     {
       "seq": 2,
-      "atMs": 26326,
+      "atMs": 25196,
       "kind": "write",
       "node": "client",
       "text": "delete /demo/file-7.bin: a delete marker; the old version can be undeleted until it expires"

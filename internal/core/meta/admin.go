@@ -19,18 +19,25 @@ func (s *Server) nodeAdmin(m iface.Message, respond iface.Responder) {
 		return
 	}
 	n, to := iface.NodeID(req.GetNode()), req.GetState()
-	if _, known := s.cluster.Node(n); !known {
+	_, heard := s.cluster.Node(n)
+	if !heard && !s.state.Admitted(n) {
 		respond(nil, iface.Errorf(iface.CodeNotFound, "no storage node %q has reported", n))
 		return
 	}
 	if to == chunkdv1.NodeAdmin_NODE_ADMIN_DECOMMISSIONED && s.state.NodeAdmin(n) != to {
+		// Without a report the location map knows none of n's chunks, so the
+		// check below would count nothing short.
+		if !heard {
+			respond(nil, iface.Errorf(iface.CodeConflict, "%s cannot be decommissioned yet: this leader has not heard from it", n))
+			return
+		}
 		if short := s.shortElsewhere(n); short > 0 {
 			respond(nil, iface.Errorf(iface.CodeConflict, "%s cannot be decommissioned yet: %d of its chunks have fewer than %d confirmed copies on other nodes", n, short, s.cfg.Replicas))
 			return
 		}
 	}
 	resp := &chunkdv1.NodeAdminResponse{State: to}
-	if to == chunkdv1.NodeAdmin_NODE_ADMIN_DRAINING {
+	if to == chunkdv1.NodeAdmin_NODE_ADMIN_DRAINING && heard {
 		resp.Warning = s.drainWarning(n)
 	}
 	s.propose(&chunkdv1.Op{Op: &chunkdv1.Op_NodeAdmin{NodeAdmin: &chunkdv1.NodeAdminOp{Node: string(n), State: to}}}, func(_ Result, err error) {

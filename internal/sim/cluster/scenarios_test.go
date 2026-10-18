@@ -79,7 +79,7 @@ func TestScenarios(t *testing.T) {
 		}},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			c := play(t, 7, tc.name, tc.run)
+			c := play(t, 1, tc.name, tc.run)
 			if _, ok := c.Settle(time.Minute); !ok {
 				t.Fatalf("not settled: %d under, %d over", c.UnderReplicated(), c.OverReplicated())
 			}
@@ -104,7 +104,7 @@ func TestScenarios(t *testing.T) {
 // chunk, the deleted file is restorable until its version expires, and
 // then the sweep leaves exactly the referenced chunks on disk.
 func TestScenarioGC(t *testing.T) {
-	c := play(t, 7, "gc", 60*time.Second)
+	c := play(t, 1, "gc", 60*time.Second)
 	s := c.State()
 	if len(s.Deleted) != 1 || s.Deleted[0].Path != "/demo/file-7.bin" || s.Deleted[0].ExpiresEpoch != 3 {
 		t.Fatalf("deleted at 60 s = %+v, want /demo/file-7.bin expiring at epoch 3", s.Deleted)

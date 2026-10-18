@@ -3,7 +3,7 @@ import { expect, test } from '@playwright/test';
 // The ec scenario's files show as stripes: the Replicas column counts shards
 // of 6, and the chunk grid labels each node's cell with the shard it holds.
 test('erasure-coded files show their shards', async ({ page }) => {
-  await page.goto('?seed=7&scenario=ec&speed=50');
+  await page.goto('?seed=1&scenario=ec&speed=50');
   await expect(page.getByText('SIMULATION (in your browser)')).toBeVisible();
   await page.waitForFunction(() => (window.__chunkd?.nowMs ?? 0) >= 10_000, undefined, { timeout: 60_000 });
   const files = page.getByRole('region', { name: 'Files' });

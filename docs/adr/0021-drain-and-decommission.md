@@ -1,6 +1,6 @@
 # 0021. Drain and decommission: logged node states
 
-Status: accepted
+Status: accepted (a new leader accepts drain for a node it has not heard from: [0030](0030-log-node-admission.md))
 Date: 2026-10-02
 
 ## Context

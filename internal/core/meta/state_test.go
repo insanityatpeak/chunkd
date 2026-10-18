@@ -810,3 +810,45 @@ func TestNodeAdminTransitions(t *testing.T) {
 		t.Fatal("restore lost the admin table")
 	}
 }
+
+// A join is logged once per node; a snapshot keeps it, and one from before
+// ADR-0030 (no admitted list) still counts a node with an admin state.
+func TestNodeJoinIsLoggedAndSnapshotted(t *testing.T) {
+	s := New()
+	join := func(n iface.NodeID) *chunkdv1.Op {
+		return &chunkdv1.Op{Op: &chunkdv1.Op_NodeJoin{NodeJoin: &chunkdv1.NodeJoinOp{Node: string(n)}}}
+	}
+	if s.Admitted("n1") {
+		t.Fatal("unknown node admitted")
+	}
+	if _, err := s.Apply(&chunkdv1.Op{Op: &chunkdv1.Op_NodeJoin{NodeJoin: &chunkdv1.NodeJoinOp{}}}); iface.CodeOf(err) != iface.CodeInvalid {
+		t.Fatalf("join with no node: %v, want invalid", err)
+	}
+	for range 2 { // a repeat applies nothing
+		if _, err := s.Apply(join("n1")); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if !s.Admitted("n1") || s.Admitted("n2") || s.Leaving("n1") {
+		t.Fatal("join did not admit exactly n1, or made it leave")
+	}
+	r, err := Restore(s.Snapshot())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !r.Admitted("n1") || !bytes.Equal(r.Snapshot(), s.Snapshot()) {
+		t.Fatal("restore lost the admitted set")
+	}
+
+	old := New() // a log from before the join op: only an admin state names the node
+	if _, err := old.Apply(adminOp("n3", chunkdv1.NodeAdmin_NODE_ADMIN_DRAINING)); err != nil {
+		t.Fatal(err)
+	}
+	o, err := Restore(old.Snapshot())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !o.Admitted("n3") || o.Admitted("n1") {
+		t.Fatal("a node with a logged admin state must count as admitted")
+	}
+}

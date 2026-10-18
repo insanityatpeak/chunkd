@@ -523,3 +523,48 @@ func TestBeginRetryReturnsTheSameUpload(t *testing.T) {
 		t.Fatal("two anonymous begins answered identically")
 	}
 }
+
+// A restarted leader has heard from no node. Drain is accepted anyway, from
+// the logged join; decommission is refused until the node has reported,
+// because the location map knows none of its chunks (ADR-0030).
+func TestDrainBeforeFirstHeartbeatAfterRestart(t *testing.T) {
+	e := newEnv(t, 3)
+	if !e.srv.State().Admitted("n1") {
+		t.Fatal("a node that heartbeated to the leader was not logged")
+	}
+	e.startMeta(t)
+	admin := func(n, st string) error {
+		to := chunkdv1.NodeAdmin_NODE_ADMIN_DRAINING
+		if st == "decommissioned" {
+			to = chunkdv1.NodeAdmin_NODE_ADMIN_DECOMMISSIONED
+		}
+		_, err := e.rpc(t, "meta", wire.KindNodeAdmin, wire.Marshal(&chunkdv1.NodeAdminRequest{Node: n, State: to}))
+		return err
+	}
+	// Step until the restarted peer leads, stopping short of the first heartbeat.
+	for i := 0; ; i++ {
+		_, err := e.rpc(t, "meta", wire.KindCluster, wire.Marshal(&chunkdv1.ClusterRequest{}))
+		if err == nil {
+			break
+		}
+		if i > 100 {
+			t.Fatalf("restarted peer never led: %v", err)
+		}
+		e.clock.Advance(20 * time.Millisecond)
+	}
+	if got := len(e.srv.Cluster().Nodes()); got != 0 {
+		t.Skipf("%d nodes already heard from; the window this test needs has closed", got)
+	}
+	if err := admin("n1", "decommissioned"); iface.CodeOf(err) != iface.CodeConflict {
+		t.Fatalf("decommission of an unheard node: %v, want conflict", err)
+	}
+	if err := admin("n1", "draining"); err != nil {
+		t.Fatalf("drain of an unheard but logged node: %v", err)
+	}
+	if err := admin("ghost", "draining"); iface.CodeOf(err) != iface.CodeNotFound {
+		t.Fatalf("drain of a node never admitted: %v, want not found", err)
+	}
+	if !e.srv.State().Leaving("n1") {
+		t.Fatal("drain not logged")
+	}
+}

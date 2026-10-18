@@ -41,7 +41,7 @@ func TestScenarioGolden(t *testing.T) {
 	for _, gd := range goldens {
 		name := gd.name
 		t.Run(name, func(t *testing.T) {
-			c := play(t, 7, name, gd.until)
+			c := play(t, 1, name, gd.until)
 			s := c.State()
 			until := int64(gd.until / time.Millisecond)
 			keep := func(es []client.Event) []client.Event {
