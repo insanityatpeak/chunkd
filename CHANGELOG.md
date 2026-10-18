@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## v1.2.0 (2026-10-18)
 
 ### Added
 - `go run ./tools/task resume-e2e`: kills the compose gateway during a 256 MiB `put -resume`, resumes, and compares hashes.
