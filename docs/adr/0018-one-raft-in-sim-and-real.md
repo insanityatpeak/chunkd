@@ -28,7 +28,7 @@ ADR-0002 promised two run modes from one codebase: every core component runs aga
 
 A group of one draws nothing from the shared RNG and leads at once, so every pre-Phase-5 seed and golden timeline replays unchanged. Client request IDs, the only other new consumer of randomness, come from their own stream and are set only when the group has more than one peer.
 
-The multi-peer tests run the group in the sim (`TestKillLeaderMidUpload`, `TestMinorityLeaderRejectsAndStaleWriteNeverCommits`, `TestMetaGroupRestarts`, `TestMetaGroupRoundTripAndAgreement`) and over real gRPC with disk WALs (`TestKillLeaderMidUploadReal`). The sim's `AssertMetaAgree` compares every live peer's state byte for byte after each scenario.
+The multi-peer tests run the group in the sim (`TestKillLeaderMidUpload`, `TestMinorityPartitionRejectsWrites`, `TestMetaGroupRestarts`, `TestMetaGroupRoundTripAndAgreement`) and over real gRPC with disk WALs (`TestKillLeaderMidUploadReal`). The sim's `AssertMetaAgree` compares every live peer's state byte for byte after each scenario.
 
 ### What the sim models, and what it does not
 

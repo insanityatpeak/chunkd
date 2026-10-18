@@ -313,3 +313,23 @@ Related: with 1% message loss a copy command or its completion report can be los
 | Root cause | The scheduler excluded the chunk's holders from repair targets, but `Holders` drops a copy with a trim or GC delete pending, so that copy's node was a candidate. A copy to it never completes: the node already has the chunk, so no new location is reported, and the copy times out and is retried. Here node-4 was the only live node on the rack the chunk lacked, so the rack preference chose it every time; the load-only choice before could pick it too, less often. |
 | Fix | The metadata server's `Target` removes every node reported to hold the chunk, in any state, from the candidates. `repair.View.Target` takes the chunk ID for it. |
 | Regression test | `TestStaleTrimWaitsForRepair` (sim, seed 4); `TestRepairKeepsRackSpread`. |
+
+## 32. A declared upload size could crash the metadata leader
+
+| | |
+|---|---|
+| Symptom | A `Begin` with a size near the int64 limit panicked the leader (`makeslice: len out of range`); a merely huge one (say 2^60 bytes) asked for a placement table of terabytes. Found by reading `begin`, not by a harness. |
+| Repro | `TestBeginRefusesAbsurdSize` with the check disabled: the test binary dies with the panic. Over HTTP, `POST /files/x` with `Content-Length: 9223372036854775807` reaches `begin` on an open gateway, or on a key with no byte quota. |
+| Root cause | `begin` sized `placement.Place`'s input from the client's declared size (`chunk.Count`, then one slice entry per chunk) before the quota check, which runs later in `Validate`. `Count` adds `chunkSize-1` to the size, which overflows near the limit and returns a negative count. The request is not logged, so a client retrying after the crash would take down the next leader too. |
+| Fix | `begin` refuses a size of `MaxFileChunks` (2^20, 4 TiB at 4 MiB) chunks or more with `invalid`, checked by integer division so it cannot overflow. |
+| Regression test | `TestBeginRefusesAbsurdSize` (state-level server test): near-limit, 2^60 and one past the cap are refused, and an upload after them succeeds. |
+
+## 33. A second balance move of a chunk in flight leaked a repair slot, and with it every later repair onto that node
+
+| | |
+|---|---|
+| Symptom | `chaos --seeds=3000 --from=2001` after the client change in Phase 9: 5 of 3000 seeds ended with 1 or 2 chunks short of RF 55 s after the last fault (2136, 3320, 3662, 3808, 4636); `--metas=3` failed 2 of 1500 (658, 1356) and `--ec` 4 of 1500 (241, 943, 1280, 1284). v1.0.0 passes the same seeds. |
+| Repro | `go run ./tools/task chaos --seed=2136`. At the end the scheduler shows `InFlight 0`, `Queued 2` and one node with two destination slots held: the two short chunks both needed a copy on that node's rack, and it looked full. |
+| Root cause | The planner can queue two moves for one chunk (a plan made while an earlier plan's move was in flight, or two moves in one plan). `startMove` did not check the in-flight table, so the second launch replaced the first copy's entry. When it finished, only the second copy's target and source slots were released; the first copy's slots stayed counted forever. Before Phase 9 a full node was skipped and another took the copy, so the leak hid. With rack-aware targets (ADR-0011), a chunk with a copy to spare waits for a slot on the right rack, and a node whose slots never free blocks it for good. The leak is from Phase 6; the 3 s first metadata attempt changed the message timing of these seeds enough to reach it. |
+| Fix | `dispatch` drops any queued item whose chunk is already copying; `finish` re-queues the chunk if it still needs a copy. |
+| Regression test | `TestSecondMoveOfAChunkInFlightIsDropped` (two moves of one chunk queued together launch one copy and hold one slot); the seeds above now pass in the sweeps. |

@@ -1,5 +1,31 @@
 # Changelog
 
+## Unreleased (Phase 9)
+
+No change to the on-disk format of data directories. One additive log op (`NodeJoinOp`) and one additive snapshot field (`admitted`): a v1.0.0 log or snapshot replays unchanged and a node is admitted again on its next heartbeat. The scenario goldens, the dashboard links and the web e2e now use seed 1; seed 7 loses a claim during the demo load since Phase 9's extra messages shifted the sim's random drops.
+
+### Performance
+- A per-namespace usage counter replaces the scan a limited `Begin` made over every file: 825 us at 10,000 files and 29 ms at 100,000 before; reconciled each epoch, with drift alarmed on. ADR-0028.
+- A put returns once `min_replicas` have stored a chunk and a 50 ms grace has passed (`Caller.Quorum`), without cancelling the rest. With one gray node put p50 falls from 4,111 ms to 214 ms. A lost copy is left to repair. ADR-0029.
+- A client's first metadata attempt waits 3 s (doubling per attempt) instead of the call timeout, via `Call.Timeout`: a silently dead leader costs 3 s, not 10 s. ADR-0009 amended.
+
+### Correctness
+- A trim no longer removes a copy of a chunk a pending upload has claimed.
+- Repair targets are chosen against the racks of the copies that stay; a chunk with a copy to spare waits for a slot on the right rack. Targets exclude every node reported to hold the chunk (bugs-found #31). ADR-0011 amended.
+- A second balance move of a chunk already copying no longer replaces the first in the scheduler and leaks its destination and source slots (bugs-found #33; found by a chaos sweep, a Phase 6 bug).
+- `Begin` refuses a file of 2^20 chunks or more, where it used to size its placement table from the declared size and could panic the leader (bugs-found #32).
+- A new leader accepts drain and undrain for a node it has not heard from yet, from a logged join; decommission still needs a report. ADR-0030.
+- Client re-check hints are limited to 1 a second (burst 10) per node.
+- A repair copy's store write runs off the node's event loop (`AsyncCaller.GoOff`). ADR-0012 amended.
+- A node removes its oldest quarantined files past a byte cap (`-quarantine-cap`, 1 GiB).
+- `Append` bounds its length check without `offset+n`, which wraps near the int64 limit.
+
+### Dependencies
+- `golang.org/x/net` v0.57.0 to v0.61.0 (with `x/sys` and `x/text`), for five HTTP/2 advisories; `go.mod` now declares `go 1.26.0`, which x/net requires. `npm audit fix` in `web/` clears a high-severity `source-map-js` advisory in the dev build.
+
+### Documentation
+- ADRs 0028 to 0030; `docs/bugs-found.md` #31 to #33; three stale test names corrected in ADR-0002, 0018 and 0019; the RF restore bound in ADR-0011 and `docs/design.md` budgets two copy timeouts, not one.
+
 ## v1.0.0 (2026-10-03)
 
 No change to the protocol, the log format or the data on disk: a v0.4.0 cluster upgrades in place.

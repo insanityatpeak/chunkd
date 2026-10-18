@@ -214,7 +214,8 @@ Every command runs through `go run ./tools/task <name>`, the same on Windows, Li
 - [x] Resumable uploads, API keys with byte quotas, version diff and per-path retention, CLI polish
 - [x] Reproducible benchmarks, a design document, interview notes and a write-up
 - [ ] Moving cold data from copies to erasure coding in the background
-- [ ] A per-namespace usage counter for quotas, content-defined chunking, hedged writes
+- [x] A per-namespace usage counter for quotas, and puts that return at the replica quorum
+- [ ] Content-defined chunking
 
 ## License
 

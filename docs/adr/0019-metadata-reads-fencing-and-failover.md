@@ -45,7 +45,7 @@ With three metadata peers, four things must hold: a read must not return state o
 ## Consequences
 
 - A stale leader can neither commit metadata (no quorum), nor authorize a GC delete (its intent cannot commit), nor have a trim or copy carried out once any node has heard a later term; and it stops sending on its own within one election timeout of losing its quorum.
-- Tests: `TestStaleTermCommandsAreRefused` and `TestFenceSurvivesRestart` (node), `TestDeposedLeaderSendsNoGCDeletes` (three metas and three nodes), `TestGCIntents` and `TestBeginRequestIDIsIdempotent` (state), `TestPutSurvivesTheLeaderDying` (client, 49 kill points), `TestKillLeaderMidUpload`, `TestMinorityLeaderRejectsAndStaleWriteNeverCommits` (sim cluster), `TestKillLeaderMidUploadReal` (gRPC and disk).
+- Tests: `TestStaleTermCommandsAreRefused` and `TestFenceSurvivesRestart` (node), `TestDeposedLeaderSendsNoGCDeletes` (three metas and three nodes), `TestGCIntents` and `TestBeginRequestIDIsIdempotent` (state), `TestPutSurvivesTheLeaderDying` (client, 49 kill points), `TestKillLeaderMidUpload`, `TestMinorityPartitionRejectsWrites` (sim cluster), `TestKillLeaderMidUploadReal` (gRPC and disk).
 - Every request costs the client a leader lookup after a failover; a read costs one heartbeat round.
 - The fence lives on the node's disk: a wiped disk forgets it. It relearns from the next leader's ack within a heartbeat.
 - SIMPLIFIED: read-index per request, not batched. etcd batches concurrent reads into one round.

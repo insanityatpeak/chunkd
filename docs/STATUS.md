@@ -1,6 +1,45 @@
 # Status
 
-Current phase: **Phase 8 complete** (benchmarks, documentation, final hygiene). **v1.0.0 shipped** ([release](https://github.com/insanityatpeak/chunkd/releases/tag/v1.0.0)). Phase 7 was released as [v0.4.0](https://github.com/insanityatpeak/chunkd/releases/tag/v0.4.0), Phase 6 as [v0.3.0](https://github.com/insanityatpeak/chunkd/releases/tag/v0.3.0), Phase 5 as [v0.2.0](https://github.com/insanityatpeak/chunkd/releases/tag/v0.2.0).
+Current phase: **Phase 9 on branch `phase9`, not merged or tagged** (known limitations fixed, then a whole-codebase audit). **v1.0.0 shipped** ([release](https://github.com/insanityatpeak/chunkd/releases/tag/v1.0.0)). Phase 7 was released as [v0.4.0](https://github.com/insanityatpeak/chunkd/releases/tag/v0.4.0), Phase 6 as [v0.3.0](https://github.com/insanityatpeak/chunkd/releases/tag/v0.3.0), Phase 5 as [v0.2.0](https://github.com/insanityatpeak/chunkd/releases/tag/v0.2.0).
+
+## Phase 9 (on `phase9`; v1.1.0 not tagged)
+
+Fixes for the limitations Phase 8 listed, then an audit of the whole codebase. One additive log op and snapshot field (ADR-0030); data directories from v1.0.0 replay unchanged.
+
+| Item | Evidence |
+|---|---|
+| Quota check no longer scans every file | Per-namespace counter, reconciled each epoch; a limited Begin cost 825 us at 10,000 files and 29 ms at 100,000. ADR-0028 |
+| A put returns at the replica quorum | Put p50 with one gray node 4,111 ms to 214 ms (`docs/benchmarks/results.md`); `TestPutNotHeldBySlowReplica`. ADR-0029 |
+| No trim of a chunk a pending upload has claimed | `trimSafe` waits for the claim; `resendTrims` retries |
+| Hints rate-limited per node | `TestSuspectHintsAreRateLimited` (1 a second, burst 10) |
+| Repair copy's store write off the event loop | `AsyncCaller.GoOff`; `TestGoOffLeavesLoopFree`. ADR-0012 amended |
+| Repair targets use the surviving copies' racks | `placement.Extend`, `TestRepairKeepsRackSpread`; bugs-found #31. ADR-0011 amended |
+| Quarantine directory capped | `TestQuarantineCapEvictsOldest` (1 GiB, `-quarantine-cap`) |
+| A silently dead metadata leader costs 3 s, not 10 s | `Call.Timeout`, `TestSilentLeaderCostsOneShortAttempt`; the `kill-leader` golden's write goes from 10.5 s to 3.5 s. ADR-0009 amended |
+| A new leader accepts drain for a node it has not heard from | `NodeJoinOp`, `TestDrainBeforeFirstHeartbeatAfterRestart`, `TestNodeJoinIsLoggedAndSnapshotted`. ADR-0030 |
+
+Audit (Part 3):
+
+| Area | Finding | Severity | State |
+|---|---|---|---|
+| Chaos | `--seeds=3000 --from=2001` failed 5 seeds, `--metas=3` 2 of 1500, `--ec` 4 of 1500: a second balance move of a chunk in flight leaked a repair slot, and rack-aware repair then waited on that node forever (bugs-found #33; a Phase 6 bug) | High | Fixed, `TestSecondMoveOfAChunkInFlightIsDropped`, `TestChaosRepairSlotRegressions` |
+| Metadata | `Begin` sized a placement table from the declared size: a size near the int64 limit panicked the leader, a huge one asked for terabytes (bugs-found #32) | High | Fixed, `TestBeginRefusesAbsurdSize` |
+| Client | `Append` checked `offset+n`, which wraps near the int64 limit; the claim check and the length check refuse the request later, so nothing is stored | Low | Hardened, no test can tell it from the old code |
+| Tests | Four sim tests assumed the old retry timing (a surplus chunk before GC, a mid-drain view after a leader change, a balancer counter, a repair bound with one lost-copy timeout) | Test only | Fixed; the bound now budgets two copy timeouts (ADR-0011) |
+| Docs | Three test names in ADR-0002, 0018, 0019 no longer existed | Low | Fixed |
+| Static analysis | `go vet` (native and wasm), staticcheck, lint-imports, trace-check: clean. Flake runs `-count=3` of `grpcnet`, `gateway`, `e2e`, `cmd/chunkd` under `-race`: clean | | |
+| Read-through | Panics, ignored errors, wall-clock use outside core, growth of `requests`, `committed` and lease maps, gateway path handling (meta rejects any path that is not clean), `WithUI` route list: nothing else found | | |
+| Dependencies | `x/net` v0.57.0 had five HTTP/2 advisories (fixed in v0.60.0): bumped to v0.61.0, `go.mod` now says `go 1.26.0`. `npm audit` high severity in `source-map-js` (dev build): fixed with `npm audit fix`. The Go toolchain on this machine, 1.27.0, has 12 standard-library advisories fixed in 1.27.2 | | Modules fixed; toolchain upgrade is the owner's |
+
+Chaos after the fixes: `--seeds=3000 --from=2001`, `--metas=3 --seeds=1500`, `--ec --seeds=1500`, `--metas=3 --ec --seeds=1000`: 0 failed in all four (slowest RF restore 29 to 42 s).
+
+Gates: lint, lint-imports, wasm 11.11 MiB, `go test -race -p 1 ./...` (`internal/sim/cluster` about 610 s: use `-timeout=25m` as `tools/task` does), trace-check.
+
+Scenario goldens: regenerated three times (quorum puts; rack-aware targets; the metadata timeout and the join entries), each with the owner's OK. The golden tests, `ec.spec.ts` and the README dashboard links now use seed 1.
+
+Not done, for the owner: the real-mode chaos run against compose (`chaos --mode=real --short`), a compose scenario for `put -resume`, a 7-node EC compose profile, the dashboard diff view, the Playwright run on seed 1, and the repair-versus-foreground-read measurement (needs a real cluster). Content-defined chunking was out of scope. Merge and the `v1.1.0` tag wait for the owner's go.
+
+Bugs found: #31 (a repair copy could target a node that already held the chunk), #32 (a declared upload size could crash the metadata leader), #33 (a second balance move of a chunk in flight leaked a repair slot).
 
 ## Phase 8 (complete)
 
@@ -142,7 +181,7 @@ Chunked, replicated upload and download; see ADRs 0005–0009. `TestRoundTrip`, 
 ## Next
 
 - [x] Phase 6: rebalancing when nodes join or leave; ADRs start at 0020. The dashboard's "Add node" button becomes real.
-- [ ] A shorter per-attempt timeout (or a hedged call) for metadata RPCs, so a silently dead leader costs less than the 10 s call timeout
+- [x] A shorter first attempt for metadata RPCs (3 s, doubling); a hedged call to the next peer is still open
 - [ ] Membership change from the CLI (the consensus layer supports single-server changes), to replace a peer whose WAL is corrupt
 - [x] Skip trims of chunks a pending upload has claimed (`trimSafe`, `TestTrimSkipsChunkWithPendingClaim`)
 - [ ] Acknowledged incremental block reports (removes the up-to-30 s commit delay after a lost report)
@@ -152,7 +191,7 @@ Chunked, replicated upload and download; see ADRs 0005–0009. `TestRoundTrip`, 
 
 ## Open decisions
 
-- `go.mod` declares `go 1.26` (etcd raft v3.7.0 requires it; grpc-go 1.84 needs 1.25).
+- `go.mod` declares `go 1.26.0` (etcd raft v3.7.0 requires 1.26; `golang.org/x/net` v0.61.0 requires 1.26.0).
 - Compose racks are unbalanced (r1 ×2, r2 ×2, r3 ×1), so node-3 holds a replica of every chunk. Kept to show the rule; a sixth node would balance it.
 - Detector and repair timings (dead 10 s, delay 20 s) are demo-scale so a failure plays out in under a minute. HDFS waits 10.5 min and Ceph 10 min before re-replicating; the knobs are `detector.Config` and `repair.Config`.
 
