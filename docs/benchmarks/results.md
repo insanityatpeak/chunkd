@@ -57,12 +57,12 @@ Raw: [data/real-latency.csv](data/real-latency.csv)
 | gray-node | off | put | 90 | 4111.180 | 4209.087 | 4258.604 |
 | gray-node | off | get | 360 | 138.895 | 4123.965 | 4140.923 |
 | gray-node | off | stat | 360 | 40.012 | 67.555 | 73.592 |
-| loss-1pct | on | put | 90 | 184.477 | 10300.546 | 20334.537 |
-| loss-1pct | on | get | 360 | 93.128 | 138.336 | 10183.733 |
-| loss-1pct | on | stat | 360 | 41.537 | 71.187 | 10143.582 |
-| loss-1pct | off | put | 90 | 192.607 | 10300.456 | 20308.909 |
-| loss-1pct | off | get | 360 | 93.016 | 155.832 | 10195.352 |
-| loss-1pct | off | stat | 360 | 42.448 | 69.999 | 10140.975 |
+| loss-1pct | on | put | 90 | 190.414 | 10289.317 | 20334.537 |
+| loss-1pct | on | get | 360 | 92.325 | 138.336 | 10183.733 |
+| loss-1pct | on | stat | 360 | 41.784 | 70.313 | 10156.059 |
+| loss-1pct | off | put | 90 | 192.587 | 10290.803 | 20428.397 |
+| loss-1pct | off | get | 360 | 92.942 | 147.637 | 10195.352 |
+| loss-1pct | off | stat | 360 | 42.290 | 73.339 | 10140.975 |
 
 ![Latency under a gray node and loss (sim)](charts/latency-get-p99.svg)
 

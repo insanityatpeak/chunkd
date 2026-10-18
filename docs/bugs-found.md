@@ -303,3 +303,13 @@ Related: with 1% message loss a copy command or its completion report can be los
 | Root cause | For its first 3 s a killed node is still alive to the detector, so the metadata server lists its shards and the client asks for them. The stripe read sent its 4 reads as one `Caller.Do` batch, which returns only when every call has answered or timed out, so each chunk with a shard there waited the 10 s call timeout before parity was asked. A replicated read hedges to a second copy after the recent p95 instead. The code said so in a SIMPLIFIED note. |
 | Fix | `iface.Caller.Gather`, the k-of-n form of `Hedge` (sim and gRPC, both under the RPC conformance suite): it sends the first 4, replaces a failed or rejected call at once, and sends one more after the hedge delay without a new accepted answer. The stripe read uses it. In the scenario the slowest degraded read is now 706 ms. |
 | Regression test | `ifacetest.RPC` "gather" cases on both transports; the `ec` golden, replayed in the browser by Playwright, records the read times. |
+
+## 31. A repair copy could target a node that already held the chunk
+
+| | |
+|---|---|
+| Symptom | With rack-aware repair targets, `TestStaleTrimWaitsForRepair` failed: the trim of a surplus copy on node-4 never completed. The repair it waited for was dispatched to node-4 itself and timed out 8 times. |
+| Repro | `go test -run TestStaleTrimWaitsForRepair ./internal/sim/cluster/` with the target exclusion built from counted holders only. |
+| Root cause | The scheduler excluded the chunk's holders from repair targets, but `Holders` drops a copy with a trim or GC delete pending, so that copy's node was a candidate. A copy to it never completes: the node already has the chunk, so no new location is reported, and the copy times out and is retried. Here node-4 was the only live node on the rack the chunk lacked, so the rack preference chose it every time; the load-only choice before could pick it too, less often. |
+| Fix | The metadata server's `Target` removes every node reported to hold the chunk, in any state, from the candidates. `repair.View.Target` takes the chunk ID for it. |
+| Regression test | `TestStaleTrimWaitsForRepair` (sim, seed 4); `TestRepairKeepsRackSpread`. |

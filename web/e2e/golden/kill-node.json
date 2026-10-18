@@ -84,14 +84,14 @@
       "seq": 12,
       "atMs": 25500,
       "kind": "copy",
-      "node": "node-1",
+      "node": "node-5",
       "text": "copy 2 started: chunk 617cdec2a7ab from node-4, 1048576 bytes"
     },
     {
       "seq": 13,
       "atMs": 25555,
       "kind": "copy",
-      "node": "node-1",
+      "node": "node-5",
       "text": "copy 2 completed after 55ms"
     },
     {
@@ -145,402 +145,451 @@
     },
     {
       "seq": 21,
-      "atMs": 45736,
+      "atMs": 45700,
       "kind": "copy",
-      "node": "node-2",
-      "text": "copy 6 completed after 86ms"
+      "node": "node-1",
+      "text": "copy 8 started: chunk 617cdec2a7ab from node-4, 1048576 bytes"
     },
     {
       "seq": 22,
-      "atMs": 45775,
+      "atMs": 45774,
       "kind": "copy",
-      "node": "node-4",
-      "text": "copy 8 started: chunk 7c0b044463ce from node-2, 4194304 bytes"
+      "node": "node-1",
+      "text": "copy 8 completed after 74ms"
     },
     {
       "seq": 23,
-      "atMs": 45788,
+      "atMs": 45793,
       "kind": "copy",
       "node": "node-5",
-      "text": "copy 7 completed after 113ms"
+      "text": "copy 7 completed after 118ms"
     },
     {
       "seq": 24,
       "atMs": 45800,
       "kind": "copy",
-      "node": "node-4",
-      "text": "copy 9 started: chunk 7c0c00b9a472 from node-1, 1048576 bytes"
+      "node": "node-5",
+      "text": "copy 9 started: chunk 7c0b044463ce from node-1, 4194304 bytes"
     },
     {
       "seq": 25,
-      "atMs": 45877,
+      "atMs": 45825,
       "kind": "copy",
       "node": "node-4",
-      "text": "copy 8 completed after 103ms"
+      "text": "copy 10 started: chunk 7c0c00b9a472 from node-1, 1048576 bytes"
     },
     {
       "seq": 26,
-      "atMs": 45900,
+      "atMs": 45861,
       "kind": "copy",
-      "node": "node-4",
-      "text": "copy 10 started: chunk 86d04a75fc5b from node-2, 4194304 bytes"
+      "node": "node-5",
+      "text": "copy 9 completed after 61ms"
     },
     {
       "seq": 27,
       "atMs": 45925,
       "kind": "copy",
-      "node": "node-1",
-      "text": "copy 11 started: chunk 92189b931ea2 from node-2, 1048576 bytes"
+      "node": "node-4",
+      "text": "copy 11 started: chunk 86d04a75fc5b from node-2, 4194304 bytes"
     },
     {
       "seq": 28,
-      "atMs": 45936,
+      "atMs": 45927,
       "kind": "copy",
       "node": "node-4",
-      "text": "copy 9 completed after 136ms"
+      "text": "copy 10 completed after 103ms"
     },
     {
       "seq": 29,
       "atMs": 45950,
       "kind": "copy",
-      "node": "node-2",
-      "text": "copy 12 started: chunk 98ce7dc76a5f from node-5, 1048576 bytes"
+      "node": "node-5",
+      "text": "copy 12 started: chunk 92189b931ea2 from node-2, 1048576 bytes"
     },
     {
       "seq": 30,
-      "atMs": 45973,
+      "atMs": 45975,
       "kind": "copy",
       "node": "node-1",
-      "text": "copy 11 completed after 49ms"
+      "text": "copy 13 started: chunk 98ce7dc76a5f from node-4, 1048576 bytes"
     },
     {
       "seq": 31,
-      "atMs": 45987,
+      "atMs": 46011,
       "kind": "copy",
-      "node": "node-4",
-      "text": "copy 10 completed after 87ms"
+      "node": "node-1",
+      "text": "copy 13 completed after 37ms"
     },
     {
       "seq": 32,
-      "atMs": 46031,
+      "atMs": 46053,
       "kind": "copy",
-      "node": "node-2",
-      "text": "copy 12 completed after 82ms"
+      "node": "node-4",
+      "text": "copy 11 completed after 129ms"
     },
     {
       "seq": 33,
-      "atMs": 46050,
+      "atMs": 46075,
       "kind": "copy",
-      "node": "node-4",
-      "text": "copy 13 started: chunk b420ece69207 from node-1, 4194304 bytes"
+      "node": "node-5",
+      "text": "copy 14 started: chunk b420ece69207 from node-1, 4194304 bytes"
     },
     {
       "seq": 34,
-      "atMs": 46150,
+      "atMs": 46085,
       "kind": "copy",
       "node": "node-5",
-      "text": "copy 14 started: chunk c8ba8104bd26 from node-2, 4194304 bytes"
+      "text": "copy 12 completed after 136ms"
     },
     {
       "seq": 35,
-      "atMs": 46169,
+      "atMs": 46175,
       "kind": "copy",
-      "node": "node-4",
-      "text": "copy 13 completed after 120ms"
+      "node": "node-5",
+      "text": "copy 15 started: chunk c8ba8104bd26 from node-2, 4194304 bytes"
     },
     {
       "seq": 36,
-      "atMs": 46175,
+      "atMs": 46181,
       "kind": "copy",
-      "node": "node-4",
-      "text": "copy 15 started: chunk d5f8a129c8a5 from node-1, 1048576 bytes"
+      "node": "node-5",
+      "text": "copy 14 completed after 106ms"
     },
     {
       "seq": 37,
-      "atMs": 46230,
+      "atMs": 46200,
       "kind": "copy",
       "node": "node-4",
-      "text": "copy 15 completed after 56ms"
+      "text": "copy 16 started: chunk d5f8a129c8a5 from node-1, 1048576 bytes"
     },
     {
       "seq": 38,
-      "atMs": 46275,
+      "atMs": 46288,
       "kind": "copy",
-      "node": "node-1",
-      "text": "copy 16 started: chunk ed96f73ddf57 from node-5, 4194304 bytes"
+      "node": "node-5",
+      "text": "copy 15 completed after 113ms"
     },
     {
       "seq": 39,
-      "atMs": 46302,
+      "atMs": 46295,
       "kind": "copy",
-      "node": "node-5",
-      "text": "copy 14 completed after 152ms"
+      "node": "node-4",
+      "text": "copy 16 completed after 95ms"
     },
     {
       "seq": 40,
-      "atMs": 46387,
+      "atMs": 46300,
       "kind": "copy",
       "node": "node-1",
-      "text": "copy 16 completed after 112ms"
+      "text": "copy 17 started: chunk ed96f73ddf57 from node-4, 4194304 bytes"
     },
     {
       "seq": 41,
-      "atMs": 55525,
+      "atMs": 46406,
       "kind": "copy",
       "node": "node-1",
-      "text": "copy 4 timed out after 10s"
+      "text": "copy 17 completed after 106ms"
     },
     {
       "seq": 42,
       "atMs": 55525,
       "kind": "copy",
       "node": "node-1",
-      "text": "copy 17 started: chunk 161b58380933 from node-4, 1048576 bytes"
+      "text": "copy 4 timed out after 10s"
     },
     {
       "seq": 43,
-      "atMs": 55622,
+      "atMs": 55525,
       "kind": "copy",
       "node": "node-1",
-      "text": "copy 17 completed after 98ms"
+      "text": "copy 18 started: chunk 161b58380933 from node-4, 1048576 bytes"
     },
     {
       "seq": 44,
-      "atMs": 106759,
+      "atMs": 55643,
+      "kind": "copy",
+      "node": "node-1",
+      "text": "copy 18 completed after 119ms"
+    },
+    {
+      "seq": 45,
+      "atMs": 55650,
+      "kind": "copy",
+      "node": "node-2",
+      "text": "copy 6 timed out after 10s"
+    },
+    {
+      "seq": 46,
+      "atMs": 55650,
+      "kind": "copy",
+      "node": "node-1",
+      "text": "copy 19 started: chunk 46467b005358 from node-4, 4194304 bytes"
+    },
+    {
+      "seq": 47,
+      "atMs": 55781,
+      "kind": "copy",
+      "node": "node-1",
+      "text": "copy 19 completed after 132ms"
+    },
+    {
+      "seq": 48,
+      "atMs": 60691,
+      "kind": "trim",
+      "node": "node-5",
+      "text": "trim 20 sent: chunk 46467b005358"
+    },
+    {
+      "seq": 49,
+      "atMs": 60704,
+      "kind": "trim",
+      "node": "node-5",
+      "text": "trim 20 done: chunk 46467b005358 removed"
+    },
+    {
+      "seq": 50,
+      "atMs": 107018,
       "kind": "node",
       "node": "node-3",
       "text": "dead → suspect (restarted)"
     },
     {
-      "seq": 45,
-      "atMs": 108749,
+      "seq": 51,
+      "atMs": 109009,
       "kind": "node",
       "node": "node-3",
       "text": "suspect → alive"
     },
     {
-      "seq": 46,
-      "atMs": 108786,
-      "kind": "trim",
-      "node": "node-4",
-      "text": "trim 18 sent: chunk 03097f628b88"
-    },
-    {
-      "seq": 47,
-      "atMs": 108786,
-      "kind": "trim",
-      "node": "node-4",
-      "text": "trim 19 sent: chunk 161b58380933"
-    },
-    {
-      "seq": 48,
-      "atMs": 108786,
-      "kind": "trim",
-      "node": "node-4",
-      "text": "trim 20 sent: chunk 2715a35cacab"
-    },
-    {
-      "seq": 49,
-      "atMs": 108786,
-      "kind": "trim",
-      "node": "node-2",
-      "text": "trim 21 sent: chunk 46467b005358"
-    },
-    {
-      "seq": 50,
-      "atMs": 108786,
-      "kind": "trim",
-      "node": "node-2",
-      "text": "trim 22 sent: chunk 5ac0bbdc1c6f"
-    },
-    {
-      "seq": 51,
-      "atMs": 108786,
-      "kind": "trim",
-      "node": "node-4",
-      "text": "trim 23 sent: chunk 617cdec2a7ab"
-    },
-    {
       "seq": 52,
-      "atMs": 108786,
+      "atMs": 109047,
       "kind": "trim",
       "node": "node-4",
-      "text": "trim 24 sent: chunk 7c0b044463ce"
+      "text": "trim 21 sent: chunk 03097f628b88"
     },
     {
       "seq": 53,
-      "atMs": 108786,
+      "atMs": 109047,
       "kind": "trim",
       "node": "node-4",
-      "text": "trim 25 sent: chunk 7c0c00b9a472"
+      "text": "trim 22 sent: chunk 161b58380933"
     },
     {
       "seq": 54,
-      "atMs": 108786,
+      "atMs": 109047,
       "kind": "trim",
       "node": "node-4",
-      "text": "trim 26 sent: chunk 86d04a75fc5b"
+      "text": "trim 23 sent: chunk 2715a35cacab"
     },
     {
       "seq": 55,
-      "atMs": 108786,
+      "atMs": 109047,
       "kind": "trim",
       "node": "node-4",
-      "text": "trim 27 sent: chunk 92189b931ea2"
+      "text": "trim 24 sent: chunk 46467b005358"
     },
     {
       "seq": 56,
-      "atMs": 108786,
+      "atMs": 109047,
       "kind": "trim",
-      "node": "node-2",
-      "text": "trim 28 sent: chunk 98ce7dc76a5f"
+      "node": "node-5",
+      "text": "trim 25 sent: chunk 5ac0bbdc1c6f"
     },
     {
       "seq": 57,
-      "atMs": 108786,
+      "atMs": 109047,
       "kind": "trim",
       "node": "node-4",
-      "text": "trim 29 sent: chunk b420ece69207"
+      "text": "trim 26 sent: chunk 617cdec2a7ab"
     },
     {
       "seq": 58,
-      "atMs": 108786,
+      "atMs": 109047,
       "kind": "trim",
-      "node": "node-2",
-      "text": "trim 30 sent: chunk c8ba8104bd26"
+      "node": "node-5",
+      "text": "trim 27 sent: chunk 7c0b044463ce"
     },
     {
       "seq": 59,
-      "atMs": 108786,
+      "atMs": 109047,
       "kind": "trim",
       "node": "node-4",
-      "text": "trim 31 sent: chunk d5f8a129c8a5"
+      "text": "trim 28 sent: chunk 7c0c00b9a472"
     },
     {
       "seq": 60,
-      "atMs": 108786,
+      "atMs": 109047,
       "kind": "trim",
-      "node": "node-2",
-      "text": "trim 32 sent: chunk e4a24094e284"
+      "node": "node-4",
+      "text": "trim 29 sent: chunk 86d04a75fc5b"
     },
     {
       "seq": 61,
-      "atMs": 108786,
+      "atMs": 109047,
       "kind": "trim",
-      "node": "node-4",
-      "text": "trim 33 sent: chunk ed96f73ddf57"
+      "node": "node-5",
+      "text": "trim 30 sent: chunk 92189b931ea2"
     },
     {
       "seq": 62,
-      "atMs": 108803,
+      "atMs": 109047,
       "kind": "trim",
       "node": "node-4",
-      "text": "trim 27 done: chunk 92189b931ea2 removed"
+      "text": "trim 31 sent: chunk 98ce7dc76a5f"
     },
     {
       "seq": 63,
-      "atMs": 108805,
+      "atMs": 109047,
       "kind": "trim",
-      "node": "node-4",
-      "text": "trim 26 done: chunk 86d04a75fc5b removed"
+      "node": "node-5",
+      "text": "trim 32 sent: chunk b420ece69207"
     },
     {
       "seq": 64,
-      "atMs": 108811,
+      "atMs": 109047,
       "kind": "trim",
-      "node": "node-4",
-      "text": "trim 33 done: chunk ed96f73ddf57 removed"
+      "node": "node-5",
+      "text": "trim 33 sent: chunk c8ba8104bd26"
     },
     {
       "seq": 65,
-      "atMs": 108815,
+      "atMs": 109047,
       "kind": "trim",
       "node": "node-4",
-      "text": "trim 23 done: chunk 617cdec2a7ab removed"
+      "text": "trim 34 sent: chunk d5f8a129c8a5"
     },
     {
       "seq": 66,
-      "atMs": 108825,
+      "atMs": 109047,
       "kind": "trim",
-      "node": "node-4",
-      "text": "trim 20 done: chunk 2715a35cacab removed"
+      "node": "node-5",
+      "text": "trim 35 sent: chunk e4a24094e284"
     },
     {
       "seq": 67,
-      "atMs": 108827,
+      "atMs": 109047,
       "kind": "trim",
       "node": "node-4",
-      "text": "trim 31 done: chunk d5f8a129c8a5 removed"
+      "text": "trim 36 sent: chunk ed96f73ddf57"
     },
     {
       "seq": 68,
-      "atMs": 108831,
+      "atMs": 109057,
       "kind": "trim",
-      "node": "node-2",
-      "text": "trim 21 done: chunk 46467b005358 removed"
+      "node": "node-4",
+      "text": "trim 26 done: chunk 617cdec2a7ab removed"
     },
     {
       "seq": 69,
-      "atMs": 108834,
+      "atMs": 109068,
       "kind": "trim",
-      "node": "node-2",
-      "text": "trim 22 done: chunk 5ac0bbdc1c6f removed"
+      "node": "node-5",
+      "text": "trim 30 done: chunk 92189b931ea2 removed"
     },
     {
       "seq": 70,
-      "atMs": 108835,
+      "atMs": 109073,
       "kind": "trim",
-      "node": "node-2",
-      "text": "trim 30 done: chunk c8ba8104bd26 removed"
+      "node": "node-4",
+      "text": "trim 31 done: chunk 98ce7dc76a5f removed"
     },
     {
       "seq": 71,
-      "atMs": 108836,
+      "atMs": 109074,
       "kind": "trim",
       "node": "node-4",
-      "text": "trim 25 done: chunk 7c0c00b9a472 removed"
+      "text": "trim 28 done: chunk 7c0c00b9a472 removed"
     },
     {
       "seq": 72,
-      "atMs": 108838,
+      "atMs": 109077,
       "kind": "trim",
       "node": "node-4",
-      "text": "trim 18 done: chunk 03097f628b88 removed"
+      "text": "trim 29 done: chunk 86d04a75fc5b removed"
     },
     {
       "seq": 73,
-      "atMs": 108839,
+      "atMs": 109078,
       "kind": "trim",
       "node": "node-4",
-      "text": "trim 29 done: chunk b420ece69207 removed"
+      "text": "trim 22 done: chunk 161b58380933 removed"
     },
     {
       "seq": 74,
-      "atMs": 108841,
+      "atMs": 109080,
       "kind": "trim",
-      "node": "node-2",
-      "text": "trim 32 done: chunk e4a24094e284 removed"
+      "node": "node-4",
+      "text": "trim 34 done: chunk d5f8a129c8a5 removed"
     },
     {
       "seq": 75,
-      "atMs": 108841,
+      "atMs": 109082,
       "kind": "trim",
-      "node": "node-2",
-      "text": "trim 28 done: chunk 98ce7dc76a5f removed"
+      "node": "node-4",
+      "text": "trim 24 done: chunk 46467b005358 removed"
     },
     {
       "seq": 76,
-      "atMs": 108845,
+      "atMs": 109083,
       "kind": "trim",
-      "node": "node-4",
-      "text": "trim 19 done: chunk 161b58380933 removed"
+      "node": "node-5",
+      "text": "trim 35 done: chunk e4a24094e284 removed"
     },
     {
       "seq": 77,
-      "atMs": 108847,
+      "atMs": 109087,
+      "kind": "trim",
+      "node": "node-5",
+      "text": "trim 25 done: chunk 5ac0bbdc1c6f removed"
+    },
+    {
+      "seq": 78,
+      "atMs": 109088,
       "kind": "trim",
       "node": "node-4",
-      "text": "trim 24 done: chunk 7c0b044463ce removed"
+      "text": "trim 21 done: chunk 03097f628b88 removed"
+    },
+    {
+      "seq": 79,
+      "atMs": 109089,
+      "kind": "trim",
+      "node": "node-5",
+      "text": "trim 32 done: chunk b420ece69207 removed"
+    },
+    {
+      "seq": 80,
+      "atMs": 109092,
+      "kind": "trim",
+      "node": "node-5",
+      "text": "trim 27 done: chunk 7c0b044463ce removed"
+    },
+    {
+      "seq": 81,
+      "atMs": 109092,
+      "kind": "trim",
+      "node": "node-5",
+      "text": "trim 33 done: chunk c8ba8104bd26 removed"
+    },
+    {
+      "seq": 82,
+      "atMs": 109095,
+      "kind": "trim",
+      "node": "node-4",
+      "text": "trim 36 done: chunk ed96f73ddf57 removed"
+    },
+    {
+      "seq": 83,
+      "atMs": 109105,
+      "kind": "trim",
+      "node": "node-4",
+      "text": "trim 23 done: chunk 2715a35cacab removed"
+    },
+    {
+      "seq": 84,
+      "atMs": 120000,
+      "kind": "copy",
+      "node": "node-4",
+      "text": "copy 37 started (rebalance): chunk 03097f628b88 from node-1, 4194304 bytes"
     }
   ],
   "reads": []

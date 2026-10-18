@@ -82,18 +82,18 @@ func (v repairView) Holders(id iface.ChunkID) []repair.Holder {
 	return out
 }
 
-// Target uses the upload placement rules for one replica, with existing
-// holders and busy targets removed from the candidate set.
-// SIMPLIFIED: rack spread is not considered against the surviving replicas'
-// racks. HDFS's BlockPlacementPolicy chooses repair targets with the
-// existing replicas' racks as input.
-func (v repairView) Target(size int64, exclude []iface.NodeID) (iface.NodeID, bool) {
-	nodes := slices.DeleteFunc(v.s.cluster.PlacementView(v.s.state.Leaving), func(n placement.Node) bool { return slices.Contains(exclude, n.ID) })
-	pl, err := placement.Place(nodes, []int64{size}, 1, 1, v.s.d.Rand)
-	if err != nil {
-		return "", false
-	}
-	return pl[0][0], true
+// Target uses the upload placement rules for one more replica, with every
+// node reported to hold id removed from the candidate set (a copy with a
+// trim or GC delete pending is not a holder, but copying to its node would
+// never complete: the node already has the chunk) and the racks of
+// the copies that stay counted as used, as HDFS's BlockPlacementPolicy takes
+// the existing replicas as input.
+func (v repairView) Target(id iface.ChunkID, exclude, busy []iface.NodeID, held []string, wait bool) (iface.NodeID, bool) {
+	locs := v.s.cluster.Locations(id)
+	nodes := slices.DeleteFunc(v.s.cluster.PlacementView(v.s.state.Leaving), func(n placement.Node) bool {
+		return slices.Contains(exclude, n.ID) || slices.Contains(locs, n.ID)
+	})
+	return placement.Extend(nodes, held, busy, wait, v.s.d.Rand)
 }
 
 // sendCopy tells the target to pull the chunk from the source.

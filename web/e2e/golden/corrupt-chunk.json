@@ -147,14 +147,14 @@
       "seq": 21,
       "atMs": 33066,
       "kind": "copy",
-      "node": "node-1",
+      "node": "node-5",
       "text": "copy 6 started: chunk e4a24094e284 from node-3, 4194304 bytes"
     },
     {
       "seq": 22,
       "atMs": 33232,
       "kind": "copy",
-      "node": "node-1",
+      "node": "node-5",
       "text": "copy 6 completed after 166ms"
     }
   ],

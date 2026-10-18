@@ -1,11 +1,13 @@
 package cluster
 
 import (
+	"encoding/hex"
 	"fmt"
 	"io"
 	"testing"
 	"time"
 
+	"github.com/insanityatpeak/chunkd/internal/core/detector"
 	"github.com/insanityatpeak/chunkd/internal/iface"
 )
 
@@ -140,5 +142,49 @@ func TestWipedNodeReturnsEmpty(t *testing.T) {
 	}
 	if err := c.AssertInvariants(); err != nil {
 		t.Fatal(err)
+	}
+}
+
+// TestRepairKeepsRackSpread: 6 nodes on 3 racks, every chunk on 3 racks.
+// After a node dies, each repair copy goes to the rack its chunk lost, so
+// every chunk still spans 3 racks; a target chosen by load alone would put
+// two copies in one rack about two times in three.
+func TestRepairKeepsRackSpread(t *testing.T) {
+	for seed := uint64(1); seed <= 3; seed++ {
+		cfg := DefaultConfig()
+		cfg.Nodes = 6
+		c := New(seed, cfg, io.Discard)
+		c.Tick(3 * time.Second)
+		var chunks []iface.ChunkID
+		for i := range 8 {
+			m, _, err := c.UploadRandom(fmt.Sprintf("/f%d", i), 6<<20)
+			if err != nil {
+				t.Fatal(err)
+			}
+			for _, ch := range m.Chunk {
+				raw, _ := hex.DecodeString(ch.ID)
+				chunks = append(chunks, iface.ChunkID(raw))
+			}
+		}
+		if _, ok := c.Settle(time.Minute); !ok {
+			t.Fatalf("seed %d: not at RF before the fault", seed)
+		}
+		c.KillNode("node-1")
+		c.Tick(c.Config().Meta.Detector.SuspectAfter + time.Second)
+		if _, ok := c.Settle(5 * time.Minute); !ok {
+			t.Fatalf("seed %d: RF not restored", seed)
+		}
+		cl := c.Meta().Cluster()
+		for _, id := range chunks {
+			racks := map[string]bool{}
+			for _, n := range cl.Locations(id) {
+				if ns, _ := cl.Node(n); ns.State == detector.Alive {
+					racks[ns.Rack] = true
+				}
+			}
+			if len(racks) != 3 {
+				t.Fatalf("seed %d: chunk %s on racks %v after repair", seed, id.String()[:12], racks)
+			}
+		}
 	}
 }

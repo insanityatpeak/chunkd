@@ -66,6 +66,35 @@ func Place(nodes []Node, sizes []int64, n, min int, rng iface.Rand) ([][]iface.N
 	return out, nil
 }
 
+// Extend picks one more node for a block whose surviving copies are on the
+// racks in held (one entry per copy): the least-loaded eligible node on the
+// racks the block uses least, as Place's next replica would be. Nodes
+// already holding the block must not be in nodes, and nodes in busy are not
+// chosen. If every node on the least-used racks is busy, wait makes it
+// return false, so the caller retries rather than settle for a rack the
+// block already uses; without wait it takes the best node that is free.
+// With held and busy empty it is Place for one replica.
+func Extend(nodes []Node, held []string, busy []iface.NodeID, wait bool, rng iface.Rand) (iface.NodeID, bool) {
+	var eligible []Node
+	for _, nd := range nodes {
+		if nd.Alive && !nd.Draining {
+			eligible = append(eligible, nd)
+		}
+	}
+	slices.SortFunc(eligible, func(a, b Node) int { return cmp.Compare(a.ID, b.ID) })
+	racks := map[string]int{}
+	for _, r := range held {
+		racks[r]++
+	}
+	if wait && len(eligible) > 0 {
+		least := slices.MinFunc(eligible, func(a, b Node) int { return cmp.Compare(racks[a.Rack], racks[b.Rack]) })
+		eligible = slices.DeleteFunc(eligible, func(nd Node) bool { return racks[nd.Rack] > racks[least.Rack] })
+	}
+	eligible = slices.DeleteFunc(eligible, func(nd Node) bool { return slices.Contains(busy, nd.ID) })
+	nd, ok := pick(eligible, map[iface.NodeID]bool{}, racks, func(nd Node) int64 { return nd.Used }, rng)
+	return nd.ID, ok
+}
+
 // pick returns the least-loaded unchosen node on the least-used racks.
 func pick(nodes []Node, chosen map[iface.NodeID]bool, racks map[string]int, load func(Node) int64, rng iface.Rand) (Node, bool) {
 	var pool []Node

@@ -160,7 +160,7 @@ node-3 returns with its disk:  full block report → some chunks at 4 copies
 node-3 returns wiped:          its report is empty, so nothing excuses the missing copies
 ```
 
-`TestKillNodeRestoresRF` measures this: 196 MiB on the dead node, RF 3 restored in 42.8 to 44.8 s against a 49.9 s bound (ADR-0011). Real mode (`kill-node-restores-rf`, compose) holds the same bound with 90 s of allowance for wall-clock jitter.
+`TestKillNodeRestoresRF` measures this: 196 MiB on the dead node, RF 3 restored in 43.5 to 45.0 s against a 49.9 s bound (ADR-0011). Real mode (`kill-node-restores-rf`, compose) holds the same bound with 90 s of allowance for wall-clock jitter.
 
 ## Reads under slow replicas (ADR-0012)
 

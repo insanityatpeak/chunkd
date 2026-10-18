@@ -1,6 +1,6 @@
 # 0011. Re-replication: priority queue, delay, throttle, trim
 
-Status: accepted
+Status: accepted (2026-10-18: repair targets spread racks against the copies that stay)
 Date: 2026-09-29
 
 ## Context
@@ -31,7 +31,7 @@ When a node returns after repair has already run, its chunks are over-replicated
 - **Delay:** a chunk whose missing copies are on dead nodes waits 20 s from the death. A node returning inside the window cancels its repairs (re-checked at dispatch). A chunk with one live copy left skips the delay.
 - **Upload grace:** a chunk committed in the last 10 s may sit at 2 of 3, because the third replica's report is usually still in flight. A last copy is exempt (`docs/bugs-found.md` #9).
 - **Queue:** heap ordered by live copies, then arrival.
-- **Dispatch:** source prefers alive over suspect, then the least busy; target from the placement rules excluding current holders and busy targets. Bytes come from an integer token bucket (40 MiB/s, 4 MiB burst). Blocked items are skipped, not dropped, so one busy node does not stall the queue.
+- **Dispatch:** source prefers alive over suspect, then the least busy; target from the placement rules excluding current holders, on the racks the copies that stay use least (`placement.Extend`, as HDFS's `BlockPlacementPolicy` takes existing replicas as input). If every node on those racks is at its per-target limit, a chunk with a copy to spare waits for a slot rather than doubling up a rack; a chunk down to its last copy, or a stripe at 4 shards, takes any free node at once. Bytes come from an integer token bucket (40 MiB/s, 4 MiB burst). Blocked items are skipped, not dropped, so one busy node does not stall the queue.
 - **Completion:** the target's block report. A copy with no report after 10 s (lost command, lost report, dead target) times out, frees its slots, and the chunk is re-assessed.
 - **Trim:** only confirmed holders count: alive, with a full block report since returning. A trim needs more than RF confirmed copies, never runs while a copy of the chunk is in flight, and is triggered by block reports and trim timeouts, not only by scans. A timed-out trim is retried against the same node, which confirms absent chunks too (`docs/bugs-found.md` #6).
 
@@ -39,9 +39,10 @@ When a node returns after repair has already run, its chunks are over-replicated
 
 ## Consequences
 
-- `TestKillNodeRestoresRF`: 196 MiB on the dead node, RF 3 restored in 42.8–44.8 s against a 49.9 s bound (seeds 1–3, about 77 copies each). Real mode, 50 files (about 115 MiB): longest under-replication 32 s against 90 s, 97 copies.
+- `TestKillNodeRestoresRF`: 196 MiB on the dead node, RF 3 restored in 43.5–45.0 s against a 49.9 s bound (seeds 1–3, 79–81 copies). Real mode, 50 files (about 115 MiB): longest under-replication 32 s against 90 s, 97 copies.
 - `TestTransientBlipNoRepair` and `transient-blip-no-repair`: zero copies for 2, 15 and 25 s outages.
 - `TestRepairThrottle`: peaks of 4 in flight, 2 per source, 2 per target, never above the limits.
+- `TestRepairKeepsRackSpread`: 6 nodes on 3 racks, a node dies, every chunk spans 3 racks after repair (seeds 1–3); `placement.TestExtend` covers the busy and last-copy cases. Cost: a node lost from a 2-node rack sends all its copies to its rack-mate, 2 at a time.
 - `TestReturningNodeReconciled`, `TestWipedNodeReturnsEmpty`, `TestTrimSafety`, `TestTrimRetrySameVictim`.
 - 5000 chaos seeds check no acknowledged data is lost and RF is restored within the bound.
 - The repair delay is a floor on time at reduced redundancy: a second failure inside the 30 s window loses data only if it hits the last copy of a chunk, and that chunk skips the delay.

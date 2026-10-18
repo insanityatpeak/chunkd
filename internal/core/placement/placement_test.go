@@ -186,3 +186,47 @@ func TestPlacementFillsRacksRoundRobin(t *testing.T) {
 		}
 	}
 }
+
+// TestExtend: one more copy goes to a rack the surviving copies do not use;
+// a busy node there is skipped for its free rack-mate, and when the whole
+// rack is busy, wait refuses rather than reuse a rack.
+func TestExtend(t *testing.T) {
+	nodes := cluster(3, 2) // r1-n1 r1-n2 r2-n1 r2-n2 r3-n1 r3-n2
+	nodes[1].Used = 1 << 20 // r1-n2 is the more loaded of r1
+	tests := []struct {
+		name    string
+		holders []iface.NodeID // surviving copies: not candidates, racks held
+		busy    []iface.NodeID
+		wait    bool
+		want    []iface.NodeID // any of these; empty means none
+	}{
+		{"lost the r1 copy: back to r1", []iface.NodeID{"r2-n1", "r3-n1"}, nil, true, []iface.NodeID{"r1-n1"}},
+		{"least loaded on r1 busy: its rack-mate", []iface.NodeID{"r2-n1", "r3-n1"}, []iface.NodeID{"r1-n1"}, true, []iface.NodeID{"r1-n2"}},
+		{"r1 all busy, wait: none", []iface.NodeID{"r2-n1", "r3-n1"}, []iface.NodeID{"r1-n1", "r1-n2"}, true, nil},
+		{"r1 all busy, no wait: a free node elsewhere", []iface.NodeID{"r2-n1", "r3-n1"}, []iface.NodeID{"r1-n1", "r1-n2"}, false, []iface.NodeID{"r2-n2", "r3-n2"}},
+		{"last copy on r2: r1 or r3", []iface.NodeID{"r2-n1"}, nil, true, []iface.NodeID{"r1-n1", "r3-n1", "r3-n2"}},
+		{"stripe at 2+2+1: the rack with one", []iface.NodeID{"r1-n1", "r1-n2", "r2-n1", "r2-n2", "r3-n1"}, nil, true, []iface.NodeID{"r3-n2"}},
+	}
+	racks := rackOf(nodes)
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			var held []string
+			for _, h := range tt.holders {
+				held = append(held, racks[h])
+			}
+			cand := slices.DeleteFunc(slices.Clone(nodes), func(n Node) bool { return slices.Contains(tt.holders, n.ID) })
+			for seed := uint64(1); seed <= 20; seed++ {
+				got, ok := Extend(cand, held, tt.busy, tt.wait, sim.NewRand(seed))
+				if len(tt.want) == 0 {
+					if ok {
+						t.Fatalf("seed %d: got %s, want none", seed, got)
+					}
+					continue
+				}
+				if !ok || !slices.Contains(tt.want, got) {
+					t.Fatalf("seed %d: got %s (%v), want one of %v", seed, got, ok, tt.want)
+				}
+			}
+		})
+	}
+}

@@ -124,9 +124,12 @@ type View interface {
 	Chunks(fn func(id iface.ChunkID, b Block))
 	// Holders returns every node reported to hold id, dead ones included.
 	Holders(id iface.ChunkID) []Holder
-	// Target picks a node for a new replica by the placement rules, never
-	// one of exclude.
-	Target(size int64, exclude []iface.NodeID) (iface.NodeID, bool)
+	// Target picks a node for a new copy of id by the placement rules, never
+	// one of exclude or a node that holds id in any state, spreading racks against held: the racks of the copies
+	// (or a stripe's shards) that stay, one entry per copy. busy nodes are
+	// not chosen; with wait, false is returned when the best racks' nodes are
+	// all busy, rather than a node on a rack the block already uses.
+	Target(id iface.ChunkID, exclude, busy []iface.NodeID, held []string, wait bool) (iface.NodeID, bool)
 	// Nodes returns every known node that is not leaving, ordered by ID, a
 	// node holding nothing included: the candidates for balancing.
 	Nodes() []Member
@@ -355,6 +358,8 @@ type assessment struct {
 	// full report since they last returned. Only these may justify a trim.
 	sure []Holder
 	lost bool // missing, and nothing to copy or rebuild from
+	// spare: one more loss still leaves the block readable.
+	spare bool
 	// rebuild: a shard with no copy left, recomputed from siblings, the
 	// shards of its stripe with a usable holder.
 	rebuild  bool
@@ -405,6 +410,7 @@ func (s *Scheduler) assess(id iface.ChunkID, b Block, now iface.Instant) assessm
 		// chunk down to its last copy: rebuild at once.
 		a.rebuild, spare = true, len(a.siblings) > ec.DataShards
 	}
+	a.spare = spare
 	if copies >= b.Target {
 		a.class = Drain
 	}
@@ -683,24 +689,32 @@ func (s *Scheduler) dispatch() {
 			continue
 		}
 		exclude := make([]iface.NodeID, 0, len(a.holders)+len(s.dst))
+		held := staying(a.holders)
 		for _, h := range a.holders {
 			exclude = append(exclude, h.Node)
 		}
 		if b.Stripe != nil {
 			// Every shard of a stripe on its own node: two on one would turn
 			// one failure into two.
-			for _, sh := range b.Stripe.Shards {
-				for _, h := range s.view.Holders(sh) {
+			for i, sh := range b.Stripe.Shards {
+				hs := s.view.Holders(sh)
+				for _, h := range hs {
 					exclude = append(exclude, h.Node)
+				}
+				if i != b.Stripe.Index {
+					held = append(held, staying(hs)...)
 				}
 			}
 		}
+		var busy []iface.NodeID
 		for n, c := range s.dst {
 			if c >= s.cfg.PerTarget {
-				exclude = append(exclude, n)
+				busy = append(busy, n)
 			}
 		}
-		if c.Target, ok = s.view.Target(size, exclude); !ok {
+		// A block with a copy to spare waits for a slot on the right rack; one
+		// down to its last copy (or a stripe at k shards) takes any node now.
+		if c.Target, ok = s.view.Target(it.id, exclude, busy, held, a.spare); !ok {
 			blocked = append(blocked, it)
 			repairBlocked = repairBlocked || a.class == Repair
 			continue
@@ -715,6 +729,18 @@ func (s *Scheduler) dispatch() {
 			background++
 		}
 	}
+}
+
+// staying returns the racks of the holders counted toward RF: alive or
+// suspect and not leaving. A repair or drain copy spreads against these.
+func staying(hs []Holder) []string {
+	var racks []string
+	for _, h := range hs {
+		if (h.State == detector.Alive || h.State == detector.Suspect) && !h.Leaving {
+			racks = append(racks, h.Rack)
+		}
+	}
+	return racks
 }
 
 // pickSources chooses a holder for each sibling, preferring alive ones and

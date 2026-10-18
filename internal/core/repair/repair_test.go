@@ -95,7 +95,8 @@ func (w *world) Holders(id iface.ChunkID) []Holder {
 }
 
 // Target: least-loaded alive node not excluded, by node ID on ties.
-func (w *world) Target(_ int64, exclude []iface.NodeID) (iface.NodeID, bool) {
+func (w *world) Target(_ iface.ChunkID, exclude, busy []iface.NodeID, _ []string, _ bool) (iface.NodeID, bool) {
+	exclude = append(slices.Clone(exclude), busy...)
 	load := map[iface.NodeID]int{}
 	for _, hs := range w.holders {
 		for _, h := range hs {
