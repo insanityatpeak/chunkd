@@ -37,7 +37,7 @@ Gates: lint, lint-imports, wasm 11.11 MiB, `go test -race -p 1 ./...` (`internal
 
 Scenario goldens: regenerated three times (quorum puts; rack-aware targets; the metadata timeout and the join entries), each with the owner's OK. The golden tests, `ec.spec.ts` and the README dashboard links now use seed 1.
 
-Not done, for the owner: the real-mode chaos run against compose (`chaos --mode=real --short`), a compose scenario for `put -resume`, a 7-node EC compose profile, the dashboard diff view, the Playwright run on seed 1, and the repair-versus-foreground-read measurement (needs a real cluster). Content-defined chunking was out of scope. Merge and the `v1.1.0` tag wait for the owner's go.
+Not done, for the owner: the real-mode chaos run against compose (`chaos --mode=real --short`), a compose scenario for `put -resume`, a 7-node EC compose profile, the dashboard diff view, and the repair-versus-foreground-read measurement (needs a real cluster). Content-defined chunking was out of scope. Merge and the `v1.1.0` tag wait for the owner's go. The Playwright replay on seed 1 was run after the merge: 8 of 8 pass (Edge). It found the goldens still labelled seed 7 (the page replayed seed 7 against timelines recorded from seed 1); relabelled, timelines unchanged.
 
 Bugs found: #31 (a repair copy could target a node that already held the chunk), #32 (a declared upload size could crash the metadata leader), #33 (a second balance move of a chunk in flight leaked a repair slot).
 
