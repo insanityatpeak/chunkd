@@ -97,6 +97,7 @@ func RunOpts(s Scenario, w io.Writer, opts Options) Report {
 	cfg := Config(s.Nodes)
 	cfg.Metas = s.Metas
 	c := cluster.New(s.Seed, cfg, w)
+	c.WatchSafety(cluster.SafetyOpts{})
 	rec := c.RecordHistory()
 	base := c.Net().Faults()
 	wipes := map[iface.NodeID]bool{} // nodes this scenario wipes at some point

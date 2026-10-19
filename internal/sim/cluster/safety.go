@@ -129,7 +129,7 @@ func (c *Cluster) checkFloor(now iface.Instant) {
 					what = "shards with an intact copy on disk"
 				}
 				s.errs = append(s.errs, fmt.Errorf("at t=%v %s chunk %s has %d %s, floor %d (target %d, %d lost to wipes or rot)",
-					now, e.Path, id.String()[:12], have, what, floor, target, s.debt[id]))
+					time.Duration(now), e.Path, id.String()[:12], have, what, floor, target, s.debt[id]))
 			}
 		}
 	}
@@ -169,7 +169,7 @@ func (c *Cluster) checkPhantoms(now iface.Instant) {
 			if now.Sub(at) > s.opts.PhantomGrace && !s.flagged[key] {
 				s.flagged[key] = true
 				s.errs = append(s.errs, fmt.Errorf("at t=%v leader %s has counted %s's copy of chunk %s for %v, but its disk has none",
-					now, leader, id, ch.String()[:12], now.Sub(at)))
+					time.Duration(now), leader, id, ch.String()[:12], now.Sub(at)))
 			}
 		}
 	}
