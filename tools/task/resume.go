@@ -82,9 +82,10 @@ func resumeE2E(args []string) error {
 	if err := first.Start(); err != nil {
 		return err
 	}
-	progressed := make(chan struct{})
+	progressed, ended := make(chan struct{}), make(chan struct{})
 	var firstErr bytes.Buffer
 	go func() {
+		defer close(ended)
 		// Progress is written with \r, so split on it as well as on \n.
 		sc := bufio.NewScanner(io.TeeReader(stderrPipe, &firstErr))
 		sc.Split(splitCR)
@@ -97,11 +98,17 @@ func resumeE2E(args []string) error {
 			}
 		}
 	}()
+	// firstErr is read only after ended: the scanner goroutine is its only writer.
 	select {
 	case <-progressed:
+	case <-ended:
+		err := first.Wait()
+		return fmt.Errorf("the first put exited before any progress (%v):\n%s", err, firstErr.String())
 	case <-time.After(2 * time.Minute):
 		_ = first.Process.Kill()
-		return fmt.Errorf("the first put reported no progress in 2 minutes")
+		<-ended
+		_ = first.Wait()
+		return fmt.Errorf("the first put reported no progress in 2 minutes:\n%s", firstErr.String())
 	}
 	fmt.Println("upload under way: killing the gateway")
 	if err := run(nil, "", "docker", "compose", "kill", "gateway"); err != nil {

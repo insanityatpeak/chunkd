@@ -89,6 +89,8 @@ jobs:
           curl -fsS http://localhost:8080/healthz
       - name: e2e put and get 20 MiB through the gateway
         run: go run ./tools/task e2e
+      - name: put -resume survives a gateway kill mid-upload, hashes match
+        run: go run ./tools/task resume-e2e
       - name: real-mode chaos, short suite (kill, blip, rot, freeze, kill the metadata leader, drain and decommission, add a node), histories checked
         run: go run ./tools/task chaos --mode=real --short --artifacts=real-chaos-artifacts
       - name: demo container kills a node and verifies the repair (only Docker needed)
@@ -97,8 +99,6 @@ jobs:
         run: |
           curl -fsS http://localhost:8080/mode.json | grep -q live
           curl -fsS http://localhost:8080/ | grep -q '<title>chunkd</title>'
-      - name: put -resume survives a gateway kill mid-upload, hashes match
-        run: go run ./tools/task resume-e2e
       - name: real-mode chaos on 7 nodes with erasure-coded puts (one node down past the repair delay, then two at once), histories checked
         run: |
           docker compose --profile full --profile extra --profile ec down -v --remove-orphans
