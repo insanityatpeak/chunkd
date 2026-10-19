@@ -91,6 +91,26 @@ jobs:
         run: go run ./tools/task e2e
       - name: real-mode chaos, short suite (kill, blip, rot, freeze, kill the metadata leader, drain and decommission, add a node), histories checked
         run: go run ./tools/task chaos --mode=real --short --artifacts=real-chaos-artifacts
+      - name: demo container kills a node and verifies the repair (only Docker needed)
+        run: docker compose run --rm demo
+      - name: dashboard served by the gateway in live mode
+        run: |
+          curl -fsS http://localhost:8080/mode.json | grep -q live
+          curl -fsS http://localhost:8080/ | grep -q '<title>chunkd</title>'
+      - name: put -resume survives a gateway kill mid-upload, hashes match
+        run: go run ./tools/task resume-e2e
+      - name: real-mode chaos on 7 nodes with erasure-coded puts (one node down past the repair delay, then two at once), histories checked
+        run: |
+          docker compose --profile full --profile extra --profile ec down -v --remove-orphans
+          go run ./tools/task chaos --mode=real --ec --artifacts=real-chaos-artifacts/ec
+      - name: small profile selects 1 meta + 3 nodes + gateway
+        env:
+          META_PEERS: meta-1=meta-1:7000
+        run: |
+          docker compose --profile full --profile extra --profile ec down -v --remove-orphans
+          docker compose --profile small up -d --wait --wait-timeout 180
+          test "$(docker compose --profile small ps -q | wc -l)" -eq 5
+          go run ./tools/task e2e
       - name: upload non-linearizable real-mode histories
         if: failure()
         uses: actions/upload-artifact@v4
@@ -98,20 +118,6 @@ jobs:
           name: real-chaos-histories
           path: real-chaos-artifacts
           if-no-files-found: ignore
-      - name: demo container kills a node and verifies the repair (only Docker needed)
-        run: docker compose run --rm demo
-      - name: dashboard served by the gateway in live mode
-        run: |
-          curl -fsS http://localhost:8080/mode.json | grep -q live
-          curl -fsS http://localhost:8080/ | grep -q '<title>chunkd</title>'
-      - name: small profile selects 1 meta + 3 nodes + gateway
-        env:
-          META_PEERS: meta-1=meta-1:7000
-        run: |
-          docker compose down -v
-          docker compose --profile small up -d --wait --wait-timeout 180
-          test "$(docker compose --profile small ps -q | wc -l)" -eq 5
-          go run ./tools/task e2e
       - name: logs on failure
         if: failure()
         run: docker compose logs --no-color
