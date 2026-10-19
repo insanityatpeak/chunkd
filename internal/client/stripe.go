@@ -17,7 +17,9 @@ import (
 )
 
 // putStripe encodes one chunk and sends shard i to placement node i, all in
-// one batch, retrying failed puts once. It fails if fewer than min shards
+// one batch, retrying failed puts once. Like putChunk it returns once min
+// shards are stored and PutGrace has passed: a shard still in flight is left
+// to land late or to repair (ADR-0031). It fails if fewer than min shards
 // are stored (ADR-0022).
 // SIMPLIFIED: shards go in one parallel batch. HDFS-EC streams cells to the
 // shard writers in a pipeline as the client produces them.
@@ -43,15 +45,18 @@ func (c *Direct) putStripe(ctx context.Context, ch chunk.Chunk, shards []ec.Shar
 				Body: wire.Marshal(&chunkdv1.PutChunkRequest{Id: shards[i].ID[:], Data: shards[i].Block})}
 		}
 		var failed []int
-		for k, res := range c.caller.Do(ctx, calls) {
+		for k, res := range c.putRound(ctx, calls, min-stored) {
 			i := todo[k]
-			if res.Err != nil {
+			switch {
+			case res.Pending:
+				// Still in flight: not a failure, and not retried.
+			case res.Err != nil:
 				errs = append(errs, fmt.Errorf("shard %d on %s: %w", i, calls[k].To, res.Err))
 				failed = append(failed, i)
-				continue
+			default:
+				ref.Shards[i].Replicas = []string{string(calls[k].To)}
+				stored++
 			}
-			ref.Shards[i].Replicas = []string{string(calls[k].To)}
-			stored++
 		}
 		todo = failed
 	}

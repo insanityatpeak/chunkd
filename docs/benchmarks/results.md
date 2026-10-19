@@ -80,7 +80,7 @@ Raw: [data/latency.csv](data/latency.csv)
 | replicate:3 | gray-node | wait-all | 90 | 223.053 | 4242.449 | 4272.658 |
 | ec:4+2 | none | quorum | 90 | 194.893 | 247.752 | 278.430 |
 | ec:4+2 | none | wait-all | 90 | 194.893 | 247.752 | 278.430 |
-| ec:4+2 | gray-node | quorum | 90 | 4157.129 | 4219.410 | 4254.764 |
+| ec:4+2 | gray-node | quorum | 90 | 238.307 | 284.315 | 312.606 |
 | ec:4+2 | gray-node | wait-all | 90 | 4157.129 | 4219.410 | 4254.764 |
 
 Raw: [data/put-latency.csv](data/put-latency.csv)
