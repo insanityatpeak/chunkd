@@ -191,7 +191,7 @@ func TestPlacementFillsRacksRoundRobin(t *testing.T) {
 // a busy node there is skipped for its free rack-mate, and when the whole
 // rack is busy, wait refuses rather than reuse a rack.
 func TestExtend(t *testing.T) {
-	nodes := cluster(3, 2) // r1-n1 r1-n2 r2-n1 r2-n2 r3-n1 r3-n2
+	nodes := cluster(3, 2)  // r1-n1 r1-n2 r2-n1 r2-n2 r3-n1 r3-n2
 	nodes[1].Used = 1 << 20 // r1-n2 is the more loaded of r1
 	tests := []struct {
 		name    string
