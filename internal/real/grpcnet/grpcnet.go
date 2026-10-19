@@ -302,7 +302,12 @@ func (p *pool) get(addr string) (*grpc.ClientConn, error) {
 		return c, nil
 	}
 	// SIMPLIFIED: plaintext. Production clusters use mTLS between nodes.
-	c, err := grpc.NewClient(addr,
+	// passthrough: every dial resolves addr afresh. The dns resolver turns a
+	// stopped container's "no such host" into an empty address list, drops the
+	// connection and re-resolves on a backoff that grows to 120 s, so a node
+	// back from a long outage stayed unreachable for up to half a minute
+	// (bugs-found #35).
+	c, err := grpc.NewClient("passthrough:///"+addr,
 		grpc.WithTransportCredentials(insecure.NewCredentials()),
 		// Redial a lost peer at least every 2 s. gRPC's default backoff grows
 		// to 120 s, so a node back from a long outage stayed unreachable here
