@@ -34,9 +34,17 @@ type Deps struct {
 // Config sets replication and timing.
 type Config struct {
 	ID iface.NodeID
-	// Peers are the metadata group's members, this server included; Raft ID i
-	// is Peers[i-1]. Empty means a group of one.
-	Peers         []iface.NodeID
+	// Peers are the metadata group's members, this server included. Each
+	// holds a slot, its 1-based position here; Raft ID slot + len(Peers)·g is
+	// generation g of that slot (RaftSlot), so every peer names any ID from
+	// this list and a replaced peer never reuses an ID (ADR-0031). Empty
+	// means a group of one.
+	Peers []iface.NodeID
+	// RaftID is this peer's Raft ID; 0 means generation 0 of its slot.
+	RaftID uint64
+	// Join starts an empty store with no voters, to be added by a running
+	// group (ReplacePeer) instead of bootstrapping one.
+	Join          bool
 	Replicas      int
 	MinReplicas   int
 	ChunkSize     int
@@ -130,20 +138,29 @@ func NewServer(ctx context.Context, d Deps, cfg Config) (*Server, error) {
 	if len(peers) == 0 {
 		peers = []iface.NodeID{cfg.ID}
 	}
-	self := slices.Index(peers, cfg.ID) + 1
-	if self == 0 {
+	slot := slices.Index(peers, cfg.ID) + 1
+	if slot == 0 {
 		return nil, fmt.Errorf("meta: %s is not among its peers %v", cfg.ID, peers)
+	}
+	self := cfg.RaftID
+	if self == 0 {
+		self = uint64(slot)
+	}
+	if RaftSlot(self, len(peers)) != slot {
+		return nil, fmt.Errorf("meta: raft ID %d belongs to slot %d, not %s's slot %d", self, RaftSlot(self, len(peers)), cfg.ID, slot)
 	}
 	s := &Server{d: d, cfg: cfg, state: New(), cluster: NewCluster(cfg.Detector), gc: newGCState(), trims: newTrimState(), hints: map[iface.NodeID]*repair.Bucket{}, joining: map[iface.NodeID]bool{}}
 	rc := cfg.Repair
 	rc.Replicas = cfg.Replicas
 	s.repair = repair.New(rc, d.Clock, repairView{s}, repair.Sender{Copy: s.sendCopy, Trim: s.sendTrim, Done: s.copyDone})
 	s.repair.SetActive(false)
-	ids := make([]uint64, len(peers))
-	for i := range ids {
-		ids[i] = uint64(i + 1)
+	var ids []uint64
+	if !cfg.Join {
+		for i := range peers {
+			ids = append(ids, uint64(i+1))
+		}
 	}
-	cc := consensus.DefaultConfig(uint64(self), func(id uint64) iface.NodeID { return peers[id-1] }, ids)
+	cc := consensus.DefaultConfig(self, func(id uint64) iface.NodeID { return peers[RaftSlot(id, len(peers))-1] }, ids)
 	cc.TickEvery, cc.ElectionTimeout, cc.RequestTimeout = cfg.TickEvery, cfg.ElectionTimeout, cfg.RequestTimeout
 	cc.SnapshotEvery, cc.Trailing = cfg.SnapshotEvery, cfg.Trailing
 	// Recovery: the snapshot restores the state, then every committed entry
@@ -161,6 +178,9 @@ func NewServer(ctx context.Context, d Deps, cfg Config) (*Server, error) {
 	d.Log.Info("metadata recovered", "applied", st.Applied, "term", st.Term, "files", len(s.state.List("/")))
 	return s, nil
 }
+
+// RaftSlot is the 1-based slot of Raft ID id in a group of n peers.
+func RaftSlot(id uint64, n int) int { return int((id-1)%uint64(n)) + 1 }
 
 // applied is what the FSM returns for one entry: the op's result, or the
 // error that rejected it, identically on every peer.
