@@ -280,6 +280,16 @@ func TestGatewayServesUI(t *testing.T) {
 	if resp.StatusCode != http.StatusNotFound || !strings.Contains(string(b), `"code"`) {
 		t.Errorf("POST /undelete/none = %d %q, want the API's not_found", resp.StatusCode, b)
 	}
+	// Every admin route too: a replace with no raft_id is the API's 400.
+	resp, err = http.Post(srv.URL+"/meta/peers/meta-1/replace", "", nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	b, _ = io.ReadAll(resp.Body)
+	resp.Body.Close()
+	if resp.StatusCode != http.StatusBadRequest || !strings.Contains(string(b), `"code"`) {
+		t.Errorf("POST /meta/peers/meta-1/replace = %d %q, want the API's invalid", resp.StatusCode, b)
+	}
 }
 
 // Drain, decommission and undrain go through the gateway with the status

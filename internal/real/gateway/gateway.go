@@ -329,7 +329,7 @@ func WithUI(api http.Handler, dir string) http.Handler {
 	mux := http.NewServeMux()
 	// Every API route from Handler; a missing one falls through to the
 	// file server and answers a plain 404.
-	for _, p := range []string{"/files", "/files/", "/undelete/", "/cluster", "/nodes/", "/uploads/", "/retention/"} {
+	for _, p := range []string{"/files", "/files/", "/undelete/", "/cluster", "/nodes/", "/meta/", "/uploads/", "/retention/"} {
 		mux.Handle(p, api)
 	}
 	mux.HandleFunc("GET /mode.json", func(w http.ResponseWriter, _ *http.Request) {
