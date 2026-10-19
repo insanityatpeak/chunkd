@@ -10,6 +10,7 @@ import (
 	"log/slog"
 	"net"
 	"path/filepath"
+	"sync"
 	"time"
 
 	"google.golang.org/grpc"
@@ -22,6 +23,7 @@ import (
 	"github.com/insanityatpeak/chunkd/internal/real/grpcnet"
 	"github.com/insanityatpeak/chunkd/internal/real/metastore"
 	"github.com/insanityatpeak/chunkd/internal/real/runtime"
+	"github.com/insanityatpeak/chunkd/internal/real/server"
 )
 
 // MetaProc is one metadata server process.
@@ -30,6 +32,8 @@ type MetaProc struct {
 	Addr string
 	Loop *runtime.Loop
 	Srv  *meta.Server
+	// Dir holds its WAL and snapshots.
+	Dir  string
 	stop func()
 }
 
@@ -45,6 +49,12 @@ type Cluster struct {
 	MetaAddr string
 	caller   *grpcnet.Caller
 	Client   *client.Direct
+
+	ctx   context.Context
+	log   *slog.Logger
+	cfg   meta.Config
+	ids   []iface.NodeID
+	addrs map[iface.NodeID]string
 }
 
 type proc struct {
@@ -65,8 +75,8 @@ func Start(dir string, n int, cfg meta.Config) (*Cluster, error) {
 // under dir. The nodes heartbeat and report to every metadata server.
 func StartGroup(dir string, metas, n int, cfg meta.Config) (*Cluster, error) {
 	ctx, cancel := context.WithCancel(context.Background())
-	c := &Cluster{cancel: cancel}
 	log := slog.New(slog.NewTextHandler(io.Discard, nil))
+	c := &Cluster{cancel: cancel, ctx: ctx, log: log, cfg: cfg}
 
 	// Listeners first: every process needs every metadata address.
 	lis := make([]net.Listener, metas)
@@ -81,53 +91,20 @@ func StartGroup(dir string, metas, n int, cfg meta.Config) (*Cluster, error) {
 		lis[i], ids[i] = l, iface.NodeID(fmt.Sprintf("meta-%d", i+1))
 		addrs[ids[i]] = l.Addr().String()
 	}
-
-	serve := func(l net.Listener, peers map[iface.NodeID]string) *proc {
-		loop := runtime.NewLoop()
-		p := &proc{addr: l.Addr().String(), loop: loop, clock: runtime.NewClock(loop)}
-		p.net = grpcnet.New(p.addr, peers, loop, log)
-		s := grpc.NewServer(grpc.MaxRecvMsgSize(grpcnet.MaxUnary), grpc.MaxSendMsgSize(grpcnet.MaxUnary))
-		p.net.Register(s)
-		go func() { _ = s.Serve(l) }()
-		go loop.Run(ctx)
-		p.stop = func() { s.Stop(); p.net.Close() }
-		c.closers = append(c.closers, p.stop)
-		return p
-	}
+	c.ids, c.addrs = ids, addrs
+	serve := func(l net.Listener, peers map[iface.NodeID]string) *proc { return c.serve(l, peers) }
 
 	for i := range lis {
-		mp := serve(lis[i], addrs)
 		dirName := "meta"
 		if metas > 1 {
 			dirName = string(ids[i])
 		}
-		ms, err := metastore.Open(filepath.Join(dir, dirName))
-		if err != nil {
+		m := &MetaProc{ID: ids[i], Dir: filepath.Join(dir, dirName)}
+		if err := c.startMeta(m, lis[i], false); err != nil {
 			c.Close()
 			return nil, err
 		}
-		c.closers = append(c.closers, func() { ms.Close() })
-		mc := cfg
-		mc.ID = ids[i]
-		if metas > 1 {
-			mc.Peers = ids
-		}
-		var srv *meta.Server
-		var srvErr error
-		mp.loop.Do(func() {
-			srv, srvErr = meta.NewServer(ctx, meta.Deps{Clock: mp.clock, Net: mp.net, Store: ms, Rand: runtime.NewRand(), Log: log}, mc)
-			if srvErr == nil {
-				srv.Start()
-			}
-		})
-		if srvErr != nil {
-			c.Close()
-			return nil, srvErr
-		}
-		c.Metas = append(c.Metas, &MetaProc{ID: ids[i], Addr: mp.addr, Loop: mp.loop, Srv: srv, stop: func() {
-			mp.loop.Do(srv.Stop)
-			mp.stop()
-		}})
+		c.Metas = append(c.Metas, m)
 	}
 	c.Meta, c.MetaLoop, c.MetaAddr = c.Metas[0].Srv, c.Metas[0].Loop, c.Metas[0].Addr
 
@@ -181,6 +158,77 @@ func StartGroup(dir string, metas, n int, cfg meta.Config) (*Cluster, error) {
 	}
 }
 
+// serve runs a process's event loop and gRPC server on l.
+func (c *Cluster) serve(l net.Listener, peers map[iface.NodeID]string) *proc {
+	loop := runtime.NewLoop()
+	p := &proc{addr: l.Addr().String(), loop: loop, clock: runtime.NewClock(loop)}
+	p.net = grpcnet.New(p.addr, peers, loop, c.log)
+	s := grpc.NewServer(grpc.MaxRecvMsgSize(grpcnet.MaxUnary), grpc.MaxSendMsgSize(grpcnet.MaxUnary))
+	p.net.Register(s)
+	go func() { _ = s.Serve(l) }()
+	go loop.Run(c.ctx)
+	var once sync.Once
+	p.stop = func() { once.Do(func() { s.Stop(); p.net.Close() }) }
+	c.closers = append(c.closers, p.stop)
+	return p
+}
+
+// startMeta runs metadata process m on l over its directory, which must not
+// be open elsewhere. With join, an empty directory joins the running group
+// as chunkd-meta -join does (server.MetaIdentity).
+func (c *Cluster) startMeta(m *MetaProc, l net.Listener, join bool) error {
+	ms, err := metastore.Open(m.Dir)
+	if err != nil {
+		l.Close()
+		return err
+	}
+	var closeStore sync.Once
+	storeClose := func() { closeStore.Do(func() { ms.Close() }) }
+	c.closers = append(c.closers, storeClose)
+	mc := c.cfg
+	mc.ID = m.ID
+	if len(c.ids) > 1 {
+		mc.Peers = c.ids
+	}
+	if err := server.MetaIdentity(c.ctx, ms, &mc, c.addrs, join, c.log); err != nil {
+		storeClose()
+		l.Close()
+		return err
+	}
+	mp := c.serve(l, c.addrs)
+	var srv *meta.Server
+	mp.loop.Do(func() {
+		srv, err = meta.NewServer(c.ctx, meta.Deps{Clock: mp.clock, Net: mp.net, Store: ms, Rand: runtime.NewRand(), Log: c.log}, mc)
+		if err == nil {
+			srv.Start()
+		}
+	})
+	if err != nil {
+		mp.stop()
+		storeClose()
+		return err
+	}
+	m.Addr, m.Loop, m.Srv = mp.addr, mp.loop, srv
+	m.stop = func() {
+		mp.loop.Do(srv.Stop)
+		mp.stop()
+		storeClose()
+	}
+	return nil
+}
+
+// RestartMeta starts a killed metadata server again on its address over its
+// directory; with join, over an emptied directory, it joins as the member a
+// replace added (ADR-0031). It fails as chunkd-meta would, e.g. with
+// metastore.ErrCorrupt.
+func (c *Cluster) RestartMeta(m *MetaProc, join bool) error {
+	l, err := net.Listen("tcp", m.Addr)
+	if err != nil {
+		return err
+	}
+	return c.startMeta(m, l, join)
+}
+
 func mustListen(c *Cluster) net.Listener {
 	l, err := net.Listen("tcp", "127.0.0.1:0")
 	if err != nil {
@@ -202,7 +250,7 @@ func (c *Cluster) Leader() *MetaProc {
 }
 
 // KillMeta stops a metadata server the way a crash would: its port closes and
-// it sends nothing more. Its log stays on disk.
+// it sends nothing more. Its log stays on disk, closed.
 func (c *Cluster) KillMeta(m *MetaProc) { m.stop() }
 
 // Close stops every process.
