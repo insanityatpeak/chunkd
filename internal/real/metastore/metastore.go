@@ -43,6 +43,8 @@ var (
 	bucket     = []byte("snapshot")
 	keyIndex   = []byte("index")
 	keyData    = []byte("data")
+	identity   = []byte("identity")
+	keyRaftID  = []byte("raft-id")
 
 	// ErrCorrupt means a record before the tail failed its checksum or
 	// breaks the log's order. A torn tail is expected after a crash and
@@ -449,6 +451,44 @@ func (s *Store) loadSnapshot() (iface.Index, []byte, error) {
 		return nil
 	})
 	return at, data, err
+}
+
+// RaftID returns the Raft ID SetRaftID recorded, or 0 if none: a peer that
+// never joined runs as generation 0 of its slot (ADR-0031).
+func (s *Store) RaftID() (uint64, error) {
+	var id uint64
+	err := s.db.View(func(tx *bolt.Tx) error {
+		if b := tx.Bucket(identity); b != nil {
+			if v := b.Get(keyRaftID); len(v) == 8 {
+				id = binary.LittleEndian.Uint64(v)
+			}
+		}
+		return nil
+	})
+	return id, err
+}
+
+// SetRaftID durably records the Raft ID a joining peer was given, before it
+// starts consensus. It lives with the log: wiping the directory forgets both.
+func (s *Store) SetRaftID(id uint64) error {
+	return s.db.Update(func(tx *bolt.Tx) error {
+		b, err := tx.CreateBucketIfNotExists(identity)
+		if err != nil {
+			return err
+		}
+		return b.Put(keyRaftID, binary.LittleEndian.AppendUint64(nil, id))
+	})
+}
+
+// Empty reports whether the store holds no entry, hard state or snapshot.
+func (s *Store) Empty() (bool, error) {
+	at, _, err := s.loadSnapshot()
+	if err != nil {
+		return false, err
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return at == 0 && s.last() == 0 && s.state == nil, nil
 }
 
 // LastIndex returns the index of the last entry (or the snapshot base).

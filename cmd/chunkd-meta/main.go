@@ -7,12 +7,14 @@ import (
 	"encoding/json"
 	"flag"
 	"fmt"
+	"log/slog"
 	"net/http"
 	"os"
 	"time"
 
 	"github.com/insanityatpeak/chunkd/internal/core/meta"
 	"github.com/insanityatpeak/chunkd/internal/iface"
+	"github.com/insanityatpeak/chunkd/internal/obs"
 	"github.com/insanityatpeak/chunkd/internal/real/metastore"
 	"github.com/insanityatpeak/chunkd/internal/real/server"
 )
@@ -24,6 +26,7 @@ func main() {
 	adminAddr := flag.String("admin", server.Env("CHUNKD_ADMIN", ":9000"), "HTTP address for /metrics, /healthz, /nodes")
 	dataDir := flag.String("data", server.Env("CHUNKD_DATA", "data/meta"), "directory for the WAL and snapshots")
 	group := flag.String("peers", server.Env("CHUNKD_PEERS", ""), "the metadata group as id=host:port,... (this server included); empty runs a group of one")
+	join := flag.Bool("join", server.Env("CHUNKD_JOIN", "") != "", "over an empty data directory, join the running group as the member `chunkd meta replace` added for this peer")
 	cfg := meta.DefaultConfig("")
 	flag.IntVar(&cfg.Replicas, "replicas", cfg.Replicas, "replicas per chunk")
 	flag.IntVar(&cfg.MinReplicas, "min-replicas", cfg.MinReplicas, "reported replicas required to commit")
@@ -49,6 +52,10 @@ func main() {
 		os.Exit(1)
 	}
 	defer store.Close()
+	if err := server.MetaIdentity(context.Background(), store, &cfg, sc.Peers, *join, obs.NewLogger(os.Stdout, "meta", slog.LevelInfo).With("self", cfg.ID)); err != nil {
+		fmt.Fprintln(os.Stderr, "chunkd-meta:", err)
+		os.Exit(1)
+	}
 
 	err = server.Run("meta", sc, func(p *server.Process) error {
 		srv, err := meta.NewServer(context.Background(), meta.Deps{Clock: p.Clock, Net: p.Net, Store: store, Rand: p.Rand, Log: p.Log}, cfg)

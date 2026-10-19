@@ -217,3 +217,33 @@ func TestOldFormatIsRefused(t *testing.T) {
 		t.Fatalf("Open err = %v, want the older-format error", err)
 	}
 }
+
+func TestRaftIDSurvivesReopen(t *testing.T) {
+	dir := t.TempDir()
+	s := open(t, dir)
+	if id, err := s.RaftID(); err != nil || id != 0 {
+		t.Fatalf("fresh store: raft ID %d, %v", id, err)
+	}
+	if empty, err := s.Empty(); err != nil || !empty {
+		t.Fatalf("fresh store: empty %v, %v", empty, err)
+	}
+	if err := s.SetRaftID(5); err != nil {
+		t.Fatal(err)
+	}
+	if empty, _ := s.Empty(); !empty {
+		t.Fatal("recording a raft ID made the store non-empty")
+	}
+	if err := s.Save(ctx, 1, [][]byte{[]byte("e1")}, nil); err != nil {
+		t.Fatal(err)
+	}
+	if empty, _ := s.Empty(); empty {
+		t.Fatal("a store with an entry is empty")
+	}
+	if err := s.Close(); err != nil {
+		t.Fatal(err)
+	}
+	s = open(t, dir)
+	if id, err := s.RaftID(); err != nil || id != 5 {
+		t.Fatalf("after reopen: raft ID %d, %v", id, err)
+	}
+}
