@@ -35,12 +35,15 @@ type Heartbeat struct {
 	Incarnation uint64 `protobuf:"varint,8,opt,name=incarnation,proto3" json:"incarnation,omitempty"`
 	// Integrity, for the cluster view: chunks quarantined by this process,
 	// and the current scrub pass's progress in chunks.
-	Corrupt       uint64 `protobuf:"varint,9,opt,name=corrupt,proto3" json:"corrupt,omitempty"`
-	ScrubDone     int64  `protobuf:"varint,10,opt,name=scrub_done,json=scrubDone,proto3" json:"scrub_done,omitempty"`
-	ScrubTotal    int64  `protobuf:"varint,11,opt,name=scrub_total,json=scrubTotal,proto3" json:"scrub_total,omitempty"`
-	ScrubPasses   uint64 `protobuf:"varint,12,opt,name=scrub_passes,json=scrubPasses,proto3" json:"scrub_passes,omitempty"`
-	unknownFields protoimpl.UnknownFields
-	sizeCache     protoimpl.SizeCache
+	Corrupt     uint64 `protobuf:"varint,9,opt,name=corrupt,proto3" json:"corrupt,omitempty"`
+	ScrubDone   int64  `protobuf:"varint,10,opt,name=scrub_done,json=scrubDone,proto3" json:"scrub_done,omitempty"`
+	ScrubTotal  int64  `protobuf:"varint,11,opt,name=scrub_total,json=scrubTotal,proto3" json:"scrub_total,omitempty"`
+	ScrubPasses uint64 `protobuf:"varint,12,opt,name=scrub_passes,json=scrubPasses,proto3" json:"scrub_passes,omitempty"`
+	// Seqs of incremental block reports sent to this metadata peer at least a
+	// heartbeat ago that it has not confirmed (ADR-0033), at most 64.
+	UnconfirmedReports []uint64 `protobuf:"varint,13,rep,packed,name=unconfirmed_reports,json=unconfirmedReports,proto3" json:"unconfirmed_reports,omitempty"`
+	unknownFields      protoimpl.UnknownFields
+	sizeCache          protoimpl.SizeCache
 }
 
 func (x *Heartbeat) Reset() {
@@ -150,6 +153,13 @@ func (x *Heartbeat) GetScrubPasses() uint64 {
 	return 0
 }
 
+func (x *Heartbeat) GetUnconfirmedReports() []uint64 {
+	if x != nil {
+		return x.UnconfirmedReports
+	}
+	return nil
+}
+
 type HeartbeatAck struct {
 	state protoimpl.MessageState `protogen:"open.v1"`
 	Seq   uint64                 `protobuf:"varint,1,opt,name=seq,proto3" json:"seq,omitempty"`
@@ -159,10 +169,15 @@ type HeartbeatAck struct {
 	// The acking peer's Raft term, meaningful only when leader is set: a node
 	// learns the current fencing token from the leader's acks, so it refuses
 	// a deposed leader's commands even before any command of the new term.
-	Term          uint64 `protobuf:"varint,3,opt,name=term,proto3" json:"term,omitempty"`
-	Leader        bool   `protobuf:"varint,4,opt,name=leader,proto3" json:"leader,omitempty"`
-	unknownFields protoimpl.UnknownFields
-	sizeCache     protoimpl.SizeCache
+	Term   uint64 `protobuf:"varint,3,opt,name=term,proto3" json:"term,omitempty"`
+	Leader bool   `protobuf:"varint,4,opt,name=leader,proto3" json:"leader,omitempty"`
+	// Of the heartbeat's unconfirmed_reports: those this peer has applied or
+	// covered with a full report, and those it never got, which the node
+	// sends again (ADR-0033).
+	ReportsReceived []uint64 `protobuf:"varint,5,rep,packed,name=reports_received,json=reportsReceived,proto3" json:"reports_received,omitempty"`
+	ReportsMissing  []uint64 `protobuf:"varint,6,rep,packed,name=reports_missing,json=reportsMissing,proto3" json:"reports_missing,omitempty"`
+	unknownFields   protoimpl.UnknownFields
+	sizeCache       protoimpl.SizeCache
 }
 
 func (x *HeartbeatAck) Reset() {
@@ -221,6 +236,20 @@ func (x *HeartbeatAck) GetLeader() bool {
 		return x.Leader
 	}
 	return false
+}
+
+func (x *HeartbeatAck) GetReportsReceived() []uint64 {
+	if x != nil {
+		return x.ReportsReceived
+	}
+	return nil
+}
+
+func (x *HeartbeatAck) GetReportsMissing() []uint64 {
+	if x != nil {
+		return x.ReportsMissing
+	}
+	return nil
 }
 
 // BlockReport lists chunks a node holds. A full report replaces everything
@@ -978,7 +1007,7 @@ var File_chunkd_v1_node_proto protoreflect.FileDescriptor
 
 const file_chunkd_v1_node_proto_rawDesc = "" +
 	"\n" +
-	"\x14chunkd/v1/node.proto\x12\tchunkd.v1\"\xc8\x02\n" +
+	"\x14chunkd/v1/node.proto\x12\tchunkd.v1\"\xf9\x02\n" +
 	"\tHeartbeat\x12\x12\n" +
 	"\x04node\x18\x01 \x01(\tR\x04node\x12\x12\n" +
 	"\x04rack\x18\x02 \x01(\tR\x04rack\x12\x12\n" +
@@ -995,12 +1024,15 @@ const file_chunkd_v1_node_proto_rawDesc = "" +
 	" \x01(\x03R\tscrubDone\x12\x1f\n" +
 	"\vscrub_total\x18\v \x01(\x03R\n" +
 	"scrubTotal\x12!\n" +
-	"\fscrub_passes\x18\f \x01(\x04R\vscrubPassesJ\x04\b\x06\x10\aR\bdraining\"v\n" +
+	"\fscrub_passes\x18\f \x01(\x04R\vscrubPasses\x12/\n" +
+	"\x13unconfirmed_reports\x18\r \x03(\x04R\x12unconfirmedReportsJ\x04\b\x06\x10\aR\bdraining\"\xca\x01\n" +
 	"\fHeartbeatAck\x12\x10\n" +
 	"\x03seq\x18\x01 \x01(\x04R\x03seq\x12(\n" +
 	"\x10need_full_report\x18\x02 \x01(\bR\x0eneedFullReport\x12\x12\n" +
 	"\x04term\x18\x03 \x01(\x04R\x04term\x12\x16\n" +
-	"\x06leader\x18\x04 \x01(\bR\x06leader\"\xe3\x01\n" +
+	"\x06leader\x18\x04 \x01(\bR\x06leader\x12)\n" +
+	"\x10reports_received\x18\x05 \x03(\x04R\x0freportsReceived\x12'\n" +
+	"\x0freports_missing\x18\x06 \x03(\x04R\x0ereportsMissing\"\xe3\x01\n" +
 	"\vBlockReport\x12\x12\n" +
 	"\x04node\x18\x01 \x01(\tR\x04node\x12\x12\n" +
 	"\x04full\x18\x02 \x01(\bR\x04full\x12\x1b\n" +

@@ -9,6 +9,7 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"slices"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -68,6 +69,22 @@ type Stats struct {
 	// Fenced counts commands refused because their term was below the highest
 	// this node has seen: a deposed leader still talking.
 	Fenced uint64 `json:"fenced"`
+	// ReportsResent counts incremental reports sent again because a
+	// metadata peer said it never got them (ADR-0033).
+	ReportsResent uint64 `json:"reportsResent"`
+}
+
+// maxUnconfirmed bounds the incremental reports kept per metadata peer.
+// SIMPLIFIED: past it the oldest are forgotten and the next full report
+// covers them, as every report was before ADR-0033. HDFS keeps a DataNode's
+// pending incremental reports until the NameNode acknowledges the RPC.
+const maxUnconfirmed = 4096
+
+// sentReport is an incremental report a metadata peer has not confirmed,
+// with the heartbeat count when it was last sent.
+type sentReport struct {
+	body []byte
+	beat uint64
 }
 
 // Node is one storage node.
@@ -106,6 +123,14 @@ type Node struct {
 	// incarnation. SIMPLIFIED: never pruned; 40 bytes per chunk written.
 	lastWriteMu sync.Mutex
 	lastWrite   map[iface.ChunkID]uint64
+
+	// unconfirmed holds, per metadata peer, the incremental reports it has
+	// not confirmed; heartbeats list them and resend the ones it lacks, so a
+	// lost report costs a heartbeat or two, not a full-report interval
+	// (ADR-0033). beat counts heartbeats; reports are sent off the loop.
+	unconfirmedMu sync.Mutex
+	unconfirmed   map[iface.NodeID]map[uint64]sentReport
+	beat          atomic.Uint64
 }
 
 // write stores a chunk through f and records the change's seq as the
@@ -145,7 +170,43 @@ func (n *Node) report(seq uint64, added, deleted, corrupt []iface.ChunkID) {
 	for _, id := range corrupt {
 		r.CorruptIds = append(r.CorruptIds, id[:])
 	}
-	n.toMetas(wire.KindBlockReport, wire.Marshal(r))
+	n.sendReport(seq, wire.Marshal(r))
+}
+
+// sendReport sends incremental report seq to every metadata peer and keeps
+// it until each confirms it.
+func (n *Node) sendReport(seq uint64, body []byte) {
+	beat := n.beat.Load()
+	n.unconfirmedMu.Lock()
+	for _, m := range n.cfg.Metas {
+		u := n.unconfirmed[m]
+		if u == nil {
+			u = map[uint64]sentReport{}
+			n.unconfirmed[m] = u
+		}
+		if len(u) >= maxUnconfirmed {
+			clear(u)
+		}
+		u[seq] = sentReport{body: body, beat: beat}
+	}
+	n.unconfirmedMu.Unlock()
+	n.toMetas(wire.KindBlockReport, body)
+}
+
+// overdue lists, ascending and at most 64, the reports peer m has not
+// confirmed that were sent before the previous heartbeat, so ones still in
+// flight are not asked about.
+func (n *Node) overdue(m iface.NodeID, beat uint64) []uint64 {
+	n.unconfirmedMu.Lock()
+	defer n.unconfirmedMu.Unlock()
+	var seqs []uint64
+	for seq, r := range n.unconfirmed[m] {
+		if r.beat+1 < beat {
+			seqs = append(seqs, seq)
+		}
+	}
+	slices.Sort(seqs)
+	return seqs[:min(len(seqs), 64)]
 }
 
 // toMetas sends one message to every metadata peer.
@@ -197,7 +258,8 @@ func New(d Deps, cfg Config) (*Node, error) {
 	if err != nil {
 		return nil, fmt.Errorf("node %s: read term: %w", cfg.ID, err)
 	}
-	n := &Node{d: d, cfg: cfg, incarnation: d.Rand.Uint64(), lastWrite: map[iface.ChunkID]uint64{}, maxTerm: term}
+	n := &Node{d: d, cfg: cfg, incarnation: d.Rand.Uint64(), lastWrite: map[iface.ChunkID]uint64{}, maxTerm: term,
+		unconfirmed: map[iface.NodeID]map[uint64]sentReport{}}
 	n.scrub = scrub.New(cfg.Scrub, d.Clock, d.Store, n.quarantine)
 	return n, nil
 }
@@ -396,7 +458,7 @@ func (n *Node) gcDelete(id iface.ChunkID, fenceInc, fenceSeq uint64) {
 		n.stats.GCDeleted++
 		r.DeletedIds = [][]byte{id[:]}
 	}
-	n.toMetas(wire.KindBlockReport, wire.Marshal(r))
+	n.sendReport(seq, wire.Marshal(r))
 }
 
 // replicate pulls one chunk from a peer and stores it. Put verifies the
@@ -465,6 +527,23 @@ func (n *Node) heartbeatAck(m iface.Message) {
 	if ack.GetLeader() && ack.GetTerm() > n.maxTerm {
 		n.raiseTerm(ack.GetTerm())
 	}
+	n.unconfirmedMu.Lock()
+	u := n.unconfirmed[m.From]
+	for _, seq := range ack.GetReportsReceived() {
+		delete(u, seq)
+	}
+	var resend [][]byte
+	for _, seq := range ack.GetReportsMissing() {
+		if r, ok := u[seq]; ok {
+			resend = append(resend, r.body)
+			u[seq] = sentReport{body: r.body, beat: n.beat.Load()}
+		}
+	}
+	n.unconfirmedMu.Unlock()
+	for _, body := range resend {
+		n.stats.ReportsResent++
+		n.d.Net.Send(m.From, iface.Message{From: n.cfg.ID, Kind: wire.KindBlockReport, Body: body})
+	}
 	if ack.GetNeedFullReport() {
 		// Only the peer that asked: the others already have this node's state.
 		n.fullReport(m.From)
@@ -480,11 +559,15 @@ func (n *Node) heartbeat() {
 		n.d.Log.Error("usage", "err", err)
 	}
 	n.stats.Heartbeats++
+	beat := n.beat.Add(1)
 	sc := n.scrub.Stats()
-	hb := &chunkdv1.Heartbeat{Node: string(n.cfg.ID), Rack: n.cfg.Rack, Addr: n.cfg.Addr,
-		UsedBytes: u.Bytes, ChunkCount: u.Chunks, Seq: n.stats.Heartbeats, Incarnation: n.incarnation,
-		Corrupt: n.corrupt.Load(), ScrubDone: int64(sc.Done), ScrubTotal: int64(sc.Total), ScrubPasses: sc.Passes}
-	n.toMetas(wire.KindHeartbeat, wire.Marshal(hb))
+	for _, m := range n.cfg.Metas {
+		hb := &chunkdv1.Heartbeat{Node: string(n.cfg.ID), Rack: n.cfg.Rack, Addr: n.cfg.Addr,
+			UsedBytes: u.Bytes, ChunkCount: u.Chunks, Seq: n.stats.Heartbeats, Incarnation: n.incarnation,
+			Corrupt: n.corrupt.Load(), ScrubDone: int64(sc.Done), ScrubTotal: int64(sc.Total), ScrubPasses: sc.Passes,
+			UnconfirmedReports: n.overdue(m, beat)}
+		n.d.Net.Send(m, iface.Message{From: n.cfg.ID, Kind: wire.KindHeartbeat, Body: wire.Marshal(hb)})
+	}
 	n.d.Clock.AfterFunc(n.cfg.Heartbeat, n.heartbeat)
 }
 
@@ -522,6 +605,16 @@ func (n *Node) fullReport(to ...iface.NodeID) {
 	if len(to) == 0 {
 		to = n.cfg.Metas
 	}
+	n.unconfirmedMu.Lock()
+	for _, m := range to {
+		// The full report covers every change numbered below it.
+		for s := range n.unconfirmed[m] {
+			if s < seq {
+				delete(n.unconfirmed[m], s)
+			}
+		}
+	}
+	n.unconfirmedMu.Unlock()
 	for _, m := range to {
 		n.d.Net.Send(m, iface.Message{From: n.cfg.ID, Kind: wire.KindBlockReport, Body: body})
 	}

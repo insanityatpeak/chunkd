@@ -52,6 +52,9 @@ type ledger struct {
 	// store change numbered at or below it happened before the server's
 	// current view was formed.
 	seen uint64
+	// got holds the seqs of incremental reports received above full, so a
+	// node can learn which of its reports were lost (Confirm).
+	got map[uint64]struct{}
 }
 
 // Report is one block report: Full lists every chunk the node holds in
@@ -156,6 +159,12 @@ func (c *Cluster) Report(id iface.NodeID, r Report) (added, removed []iface.Chun
 	if r.Seq <= l.full {
 		return nil, nil, true
 	}
+	if !r.Full {
+		if l.got == nil {
+			l.got = map[uint64]struct{}{}
+		}
+		l.got[r.Seq] = struct{}{}
+	}
 	if c.byNode[id] == nil {
 		c.byNode[id] = map[iface.ChunkID]struct{}{}
 	}
@@ -212,8 +221,33 @@ func (c *Cluster) Report(id iface.NodeID, r Report) (added, removed []iface.Chun
 			delete(l.last, ch)
 		}
 	}
+	for seq := range l.got {
+		if seq <= r.Seq {
+			delete(l.got, seq)
+		}
+	}
 	n.reported = true
 	return added, removed, true
+}
+
+// Confirm sorts seqs, incremental reports node incarnation inc says it sent,
+// into those this server applied or covered with a full report and those it
+// never got (ADR-0033). A report from an incarnation the server has not
+// applied any report of counts as missing: Report refused it or never saw it.
+func (c *Cluster) Confirm(id iface.NodeID, inc uint64, seqs []uint64) (received, missing []uint64) {
+	n := c.nodes[id]
+	for _, s := range seqs {
+		if n == nil || n.ledger.inc != inc {
+			missing = append(missing, s)
+			continue
+		}
+		if _, ok := n.ledger.got[s]; ok || s <= n.ledger.full {
+			received = append(received, s)
+		} else {
+			missing = append(missing, s)
+		}
+	}
+	return received, missing
 }
 
 // Reported reports whether the node's locations are confirmed by a full

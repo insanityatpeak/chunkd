@@ -23,6 +23,9 @@ message Heartbeat {
   int64 scrub_done = 10;
   int64 scrub_total = 11;
   uint64 scrub_passes = 12;
+  // Seqs of incremental block reports sent to this metadata peer at least a
+  // heartbeat ago that it has not confirmed (ADR-0033), at most 64.
+  repeated uint64 unconfirmed_reports = 13;
 }
 
 message HeartbeatAck {
@@ -35,6 +38,11 @@ message HeartbeatAck {
   // a deposed leader's commands even before any command of the new term.
   uint64 term = 3;
   bool leader = 4;
+  // Of the heartbeat's unconfirmed_reports: those this peer has applied or
+  // covered with a full report, and those it never got, which the node
+  // sends again (ADR-0033).
+  repeated uint64 reports_received = 5;
+  repeated uint64 reports_missing = 6;
 }
 
 // BlockReport lists chunks a node holds. A full report replaces everything

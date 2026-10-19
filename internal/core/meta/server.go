@@ -464,8 +464,10 @@ func (s *Server) handle(m iface.Message) {
 		// Every peer acks: each keeps its own view of the node. The leader's
 		// ack also announces the term, the fencing token for its commands.
 		st := s.raft.Status()
+		got, lost := s.cluster.Confirm(id, hb.GetIncarnation(), hb.GetUnconfirmedReports())
 		s.d.Net.Send(m.From, iface.Message{From: s.cfg.ID, Kind: wire.KindHeartbeatAck,
-			Body: wire.Marshal(&chunkdv1.HeartbeatAck{Seq: hb.GetSeq(), NeedFullReport: need, Leader: st.Ready, Term: st.Term})})
+			Body: wire.Marshal(&chunkdv1.HeartbeatAck{Seq: hb.GetSeq(), NeedFullReport: need, Leader: st.Ready, Term: st.Term,
+				ReportsReceived: got, ReportsMissing: lost})})
 	case wire.KindBlockReport:
 		var r chunkdv1.BlockReport
 		if err := wire.Decode(m.Body, &r); err != nil {

@@ -57,105 +57,77 @@
       "atMs": 30000,
       "kind": "copy",
       "node": "node-5",
-      "text": "copy 1 started: chunk 0859457e4903 from node-3, 4194304 bytes"
+      "text": "copy 1 started: chunk c489568f3e5c from node-1, 4194304 bytes"
     },
     {
       "seq": 9,
-      "atMs": 30025,
+      "atMs": 30141,
       "kind": "copy",
-      "node": "node-2",
-      "text": "copy 2 started: chunk b35ab79376a8 from node-4, 1048576 bytes"
+      "node": "node-5",
+      "text": "copy 1 completed after 142ms"
     },
     {
       "seq": 10,
-      "atMs": 30113,
-      "kind": "copy",
-      "node": "node-5",
-      "text": "copy 1 completed after 113ms"
+      "atMs": 30561,
+      "kind": "corrupt",
+      "node": "node-2",
+      "text": "chunk 07d9ea3c5a24 failed verification: copy quarantined"
     },
     {
       "seq": 11,
-      "atMs": 30125,
+      "atMs": 30561,
       "kind": "copy",
-      "node": "node-2",
-      "text": "copy 3 started: chunk c489568f3e5c from node-1, 4194304 bytes"
+      "node": "node-5",
+      "text": "copy 2 started: chunk 07d9ea3c5a24 from node-3, 1048576 bytes"
     },
     {
       "seq": 12,
-      "atMs": 30127,
+      "atMs": 30659,
       "kind": "copy",
-      "node": "node-2",
-      "text": "copy 2 completed after 102ms"
+      "node": "node-5",
+      "text": "copy 2 completed after 98ms"
     },
     {
       "seq": 13,
-      "atMs": 30241,
-      "kind": "copy",
+      "atMs": 30693,
+      "kind": "corrupt",
       "node": "node-2",
-      "text": "copy 3 completed after 116ms"
+      "text": "chunk 10b199d8aa30 failed verification: copy quarantined"
     },
     {
       "seq": 14,
-      "atMs": 31181,
-      "kind": "corrupt",
-      "node": "node-2",
-      "text": "chunk 28c3d02f00b9 failed verification: copy quarantined"
+      "atMs": 30693,
+      "kind": "copy",
+      "node": "node-5",
+      "text": "copy 3 started: chunk 10b199d8aa30 from node-1, 4194304 bytes"
     },
     {
       "seq": 15,
-      "atMs": 31181,
+      "atMs": 30850,
       "kind": "copy",
-      "node": "node-2",
-      "text": "copy 4 started: chunk 28c3d02f00b9 from node-3, 4194304 bytes"
+      "node": "node-5",
+      "text": "copy 3 completed after 157ms"
     },
     {
       "seq": 16,
-      "atMs": 31285,
-      "kind": "copy",
+      "atMs": 32303,
+      "kind": "corrupt",
       "node": "node-2",
-      "text": "copy 4 completed after 104ms"
+      "text": "chunk d2fddd6ead07 failed verification: copy quarantined"
     },
     {
       "seq": 17,
-      "atMs": 31688,
-      "kind": "corrupt",
+      "atMs": 32303,
+      "kind": "copy",
       "node": "node-2",
-      "text": "chunk 5d99756c928f failed verification: copy quarantined"
+      "text": "copy 4 started: chunk d2fddd6ead07 from node-3, 4194304 bytes"
     },
     {
       "seq": 18,
-      "atMs": 31688,
+      "atMs": 32438,
       "kind": "copy",
       "node": "node-2",
-      "text": "copy 5 started: chunk 5d99756c928f from node-1, 1048576 bytes"
-    },
-    {
-      "seq": 19,
-      "atMs": 31768,
-      "kind": "copy",
-      "node": "node-2",
-      "text": "copy 5 completed after 80ms"
-    },
-    {
-      "seq": 20,
-      "atMs": 31815,
-      "kind": "corrupt",
-      "node": "node-2",
-      "text": "chunk 953aceb03a11 failed verification: copy quarantined"
-    },
-    {
-      "seq": 21,
-      "atMs": 31815,
-      "kind": "copy",
-      "node": "node-5",
-      "text": "copy 6 started: chunk 953aceb03a11 from node-1, 1048576 bytes"
-    },
-    {
-      "seq": 22,
-      "atMs": 31883,
-      "kind": "copy",
-      "node": "node-5",
-      "text": "copy 6 completed after 68ms"
+      "text": "copy 4 completed after 135ms"
     }
   ],
   "reads": []
