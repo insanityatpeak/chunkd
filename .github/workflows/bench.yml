@@ -21,7 +21,7 @@ jobs:
           cache-dependency-path: go.sum
       - name: bench
         run: go run ./tools/task bench
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v7
         with:
           name: benchmarks
           path: docs/benchmarks

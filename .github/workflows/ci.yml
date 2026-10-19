@@ -37,7 +37,7 @@ jobs:
         run: go run ./tools/task chaos --seeds=500 --ec --artifacts=chaos-artifacts/ec
       - name: upload non-linearizable histories
         if: failure()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: chaos-histories
           path: chaos-artifacts
@@ -113,7 +113,7 @@ jobs:
           go run ./tools/task e2e
       - name: upload non-linearizable real-mode histories
         if: failure()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: real-chaos-histories
           path: real-chaos-artifacts
