@@ -56,7 +56,13 @@ func resumeE2E(args []string) error {
 	// the temp directory so a run never finds another run's upload.
 	// 127.0.0.1, not localhost: after a container restart Docker Desktop can leave
 	// the [::1] forward stale while IPv4 works.
-	env := append(os.Environ(), "CHUNKD_GATEWAY=http://127.0.0.1:8080", "XDG_CACHE_HOME="+dir, "LocalAppData="+dir, "HOME="+dir)
+	// A cache subdirectory, not dir itself: the CLI binary is dir/chunkd on Linux,
+	// and the CLI's cache directory is <cache>/chunkd.
+	cache := filepath.Join(dir, "cache")
+	if err := os.Mkdir(cache, 0o755); err != nil {
+		return err
+	}
+	env := append(os.Environ(), "CHUNKD_GATEWAY=http://127.0.0.1:8080", "XDG_CACHE_HOME="+cache, "LocalAppData="+cache, "HOME="+cache)
 	cli := filepath.Join(dir, "chunkd")
 	if runtime.GOOS == "windows" {
 		cli += ".exe"
