@@ -166,7 +166,7 @@ node-3 returns wiped:          its report is empty, so nothing excuses the missi
 
 The client orders replicas alive first, then suspect, each by its own latency score (EWMA, failures penalised), and reads with `Caller.Hedge`: if no verified answer arrives within the p95 of recent reads (clamped to 20 to 500 ms), the next replica is asked too. The first answer whose SHA-256 matches the chunk ID wins, so a fast corrupt replica cannot beat a slow correct one.
 
-Measured ([results.md](benchmarks/results.md), sim, new client per read): with one node adding 2 s to every message, get p99 is 4141 ms unhedged and 235 ms hedged; with no fault the two are identical. Puts return once min_replicas have stored each chunk and a 50 ms grace has passed (ADR-0029): the same gray node moves put p50 from 4111 ms when a put waits for every replica to 214 ms, against 188 ms with no fault.
+Measured ([results.md](benchmarks/results.md), sim, new client per read): with one node adding 2 s to every message, get p99 is 4141 ms unhedged and 235 ms hedged; with no fault the two are identical. Puts return once min_replicas have stored each chunk and a 50 ms grace has passed (ADR-0029): the same gray node moves put p50 from 4111 ms when a put waits for every replica to 214 ms, against 188 ms with no fault. Erasure-coded puts return at 5 of 6 shards the same way (ADR-0031): on 7 nodes with one gray node, p50 4157 ms waiting for all six, 238 ms at the quorum.
 
 ## Integrity (ADR-0013)
 

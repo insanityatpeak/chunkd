@@ -27,7 +27,9 @@ Nothing changes on the metadata server. Commit still needs 5 shards reported by 
 
 ## Consequences
 
-- With one gray node an EC put no longer waits for its slowest shard; the benchmark rows give the numbers before and after.
+- With one gray node on 7 nodes, EC put p50 is 238 ms and p99 313 ms, against 4,157 ms and 4,255 ms waiting for all six; healthy rows are identical (`TestBenchPutRedundancy`, `docs/benchmarks/results.md`).
+- `TestECPutNotHeldBySlowShard` holds the slowest EC put under 750 ms with a 2 s node, checks the slow shards land with no rebuild, and runs `AssertInvariants`. `TestECPutShardNeverLands` silences a node: puts still return, and repair rebuilds its shards.
+- Repair already waits `UploadGrace` before rebuilding a just-committed stripe's sixth shard, so a slow shard that lands is not rebuilt.
 - Healthy puts still store six shards: the 50 ms grace covers the spread between healthy nodes on the LAN model.
 - A sixth shard that never lands leaves the stripe at 5 until repair rebuilds it on its next scan, at 4× the read cost of a replica copy. This happens only when the shard is lost, not when it is slow.
 - A client that dies right after a put leaves stripes at 5 shards until repair; the window already existed for any shard in flight.
