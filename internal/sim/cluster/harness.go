@@ -233,8 +233,13 @@ func (c *Cluster) checkRead(path string, data []byte) {
 //     were not written to that path.
 //  6. No trim, when it ran, left a chunk below RF intact copies on running
 //     nodes, unless a holder had just failed (checkTrim).
+//  7. With WatchSafety on, no probe saw a block below its copy floor or a
+//     lasting phantom copy.
 func (c *Cluster) AssertInvariants() error {
 	errs := append(slices.Clone(c.badReads), c.badTrims...)
+	if c.safety != nil {
+		errs = append(errs, c.safety.errs...)
+	}
 	// Sorted: each download advances the clock, so map order would make the
 	// run nondeterministic.
 	for _, path := range slices.Sorted(maps.Keys(c.acked)) {

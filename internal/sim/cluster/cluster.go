@@ -84,8 +84,10 @@ type Cluster struct {
 	// killedAt and wipedAt are each node's latest kill and wipe.
 	killedAt map[iface.NodeID]iface.Instant
 	// trimSent is when each trim delete was last sent (metaNet).
-	trimSent map[trimKey]iface.Instant
+	trimSent map[copyKey]iface.Instant
 	wipedAt  map[iface.NodeID]iface.Instant
+	// safety is the per-step watcher, nil unless WatchSafety ran.
+	safety *safety
 	// admin sends AdminAsync commands; adminQ holds each node's, in order.
 	admin    iface.AsyncCaller
 	adminQ   map[iface.NodeID][]func()
@@ -107,7 +109,7 @@ type Node struct {
 // go to w; pass io.Discard to silence them.
 func New(seed uint64, cfg Config, w io.Writer) *Cluster {
 	c := &Cluster{seed: seed, cfg: cfg, clock: sim.NewClock(), rng: sim.NewRand(seed), log: w, acked: map[string]*acked{},
-		written: map[string][][32]byte{}, killedAt: map[iface.NodeID]iface.Instant{}, trimSent: map[trimKey]iface.Instant{}, wipedAt: map[iface.NodeID]iface.Instant{}}
+		written: map[string][][32]byte{}, killedAt: map[iface.NodeID]iface.Instant{}, trimSent: map[copyKey]iface.Instant{}, wipedAt: map[iface.NodeID]iface.Instant{}}
 	c.net = sim.NewNet(c.clock, c.rng, cfg.Faults)
 	for i := range max(cfg.Metas, 1) { // all of them exist before any starts: each needs the full peer list
 		c.metas = append(c.metas, &metaPeer{id: metaName(i), store: sim.NewMetaStore()})
@@ -306,8 +308,12 @@ func (c *Cluster) RotNode(id iface.NodeID, n int, pick uint64, ok func(iface.Chu
 			break
 		}
 		ch := ids[(pick+uint64(i))%uint64(len(ids))]
+		_, was := store.Holds(ch)
 		if ok(ch) && store.Corrupt(ch) {
 			rotted = append(rotted, ch)
+			if _, is := store.Holds(ch); was && !is {
+				c.lost(ch)
+			}
 		}
 	}
 	return rotted
@@ -324,6 +330,7 @@ func (c *Cluster) Intact(node iface.NodeID, chunk iface.ChunkID) bool {
 // failure; RestartNode brings it back empty.
 func (c *Cluster) WipeNode(id iface.NodeID) {
 	c.wipedAt[id] = c.clock.Now()
+	c.wiped(c.node(id).Store)
 	c.node(id).Store = sim.NewBlockStore()
 }
 

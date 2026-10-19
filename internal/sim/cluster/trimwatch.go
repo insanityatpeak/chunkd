@@ -36,7 +36,7 @@ func (t nodeNet) Listen(id iface.NodeID, h iface.Handler) {
 		_, before := store.Get(context.Background(), ch)
 		h(m)
 		if _, after := store.Get(context.Background(), ch); before == nil && after != nil {
-			decided, ok := t.c.trimSent[trimKey{id, ch}]
+			decided, ok := t.c.trimSent[copyKey{id, ch}]
 			if !ok {
 				decided = t.c.clock.Now()
 			}
@@ -90,8 +90,8 @@ func (c *Cluster) checkTrim(node iface.NodeID, ch iface.ChunkID, decided iface.I
 	}
 }
 
-// trimKey names a trim delete by its victim and chunk.
-type trimKey struct {
+// copyKey names one node's copy of a chunk.
+type copyKey struct {
 	node  iface.NodeID
 	chunk iface.ChunkID
 }
@@ -107,7 +107,7 @@ func (t metaNet) Send(to iface.NodeID, m iface.Message) {
 	var cmd chunkdv1.DeleteReplica
 	if m.Kind == wire.KindDeleteReplica && wire.Decode(m.Body, &cmd) == nil && !cmd.GetGc() {
 		if ch, err := wire.ChunkID(cmd.GetChunkId()); err == nil {
-			t.c.trimSent[trimKey{to, ch}] = t.c.clock.Now()
+			t.c.trimSent[copyKey{to, ch}] = t.c.clock.Now()
 		}
 	}
 	t.Net.Send(to, m)
