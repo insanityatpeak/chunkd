@@ -15,7 +15,7 @@ import (
 	"strings"
 )
 
-const staticcheck = "honnef.co/go/tools/cmd/staticcheck@v0.8.1"
+const staticcheck = "honnef.co/go/tools/cmd/staticcheck@v0.8.2"
 
 type command struct {
 	help string
