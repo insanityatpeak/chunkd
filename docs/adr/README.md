@@ -32,5 +32,6 @@ Format: Context, Options considered, Decision, Consequences, At 100× scale ([te
 | [0026](0026-version-retention-and-diff.md) | Per-path retention and chunk-level version diff | accepted |  |
 | [0027](0027-benchmark-method.md) | Benchmark method: a sim tier and a real tier | accepted |  |
 | [0028](0028-quota-counter.md) | A per-namespace usage counter for quotas | accepted |  |
-| [0029](0029-quorum-puts.md) | Puts return at the replica quorum | accepted |  |
+| [0029](0029-quorum-puts.md) | Puts return at the replica quorum | accepted | [0031](0031-ec-quorum-puts.md) (the same for erasure-coded puts) |
 | [0030](0030-log-node-admission.md) | Log node admission | accepted |  |
+| [0031](0031-ec-quorum-puts.md) | Erasure-coded puts return at the commit quorum | accepted |  |

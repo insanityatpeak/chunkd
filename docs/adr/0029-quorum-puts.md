@@ -24,7 +24,7 @@ ADR-0007 sends each chunk to all three replicas and commits at two reported copi
 
 A call that fails (an error, or its own 10 s timeout inside the quorum window) is retried once, as before. A call left `Pending` is not retried: whatever it was going to deliver arrives late or never. A copy that never arrives leaves the chunk at two reported copies, which is above `min_replicas`, and repair (ADR-0011) restores the third on its next scan. Commit is unchanged: it needs `min_replicas` copies reported by nodes believed alive, so no put is acknowledged on fewer.
 
-Erasure-coded puts (`putStripe`) are unchanged and still wait for every shard; the same change applies with `need = 4` of 6 and is left for later.
+Erasure-coded puts (`putStripe`) are unchanged and still wait for every shard. ADR-0031 applies the same change at `need = 5` of 6, the shards commit needs.
 
 ## Consequences
 
