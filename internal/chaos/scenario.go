@@ -39,6 +39,11 @@ const (
 	ThawLeader   Kind = "thaw-leader"
 	CutLeader    Kind = "cut-leader"  // partition {leader} from the other peers
 	HealLeader   Kind = "heal-leader" // rejoin it
+	// LosePeerLog kills a follower and corrupts its log, so it cannot
+	// restart; ReplacePeer replaces it as an operator would (ADR-0031): the
+	// leader swaps its Raft ID and it joins over an empty store.
+	LosePeerLog Kind = "lose-peer-log"
+	ReplacePeer Kind = "replace-peer"
 
 	// Membership faults (ADR-0020, ADR-0021), drawn from a stream of their
 	// own (Shape.Admin) so the faults above keep their schedule.
@@ -57,7 +62,7 @@ const (
 // metaKind reports whether k acts on the metadata group.
 func metaKind(k Kind) bool {
 	switch k {
-	case KillLeader, ReviveLeader, FreezeLeader, ThawLeader, CutLeader, HealLeader, KillLeaderMidMove:
+	case KillLeader, ReviveLeader, FreezeLeader, ThawLeader, CutLeader, HealLeader, KillLeaderMidMove, LosePeerLog, ReplacePeer:
 		return true
 	}
 	return false
@@ -82,7 +87,7 @@ func (f Fault) String() string {
 		s += fmt.Sprintf(" %s +%v", f.Node, f.Delay)
 	case Lossy:
 		s += fmt.Sprintf(" drop %.1f%% dup %.1f%%", f.Drop*100, f.Dup*100)
-	case Clean, KillLeader, ReviveLeader, FreezeLeader, ThawLeader, CutLeader, HealLeader, AddNode, KillLeaderMidMove:
+	case Clean, KillLeader, ReviveLeader, FreezeLeader, ThawLeader, CutLeader, HealLeader, AddNode, KillLeaderMidMove, LosePeerLog, ReplacePeer:
 	case Corrupt:
 		s += fmt.Sprintf(" %s ×%d from #%d", f.Node, f.Count, f.Pick%1000)
 	default:
@@ -165,6 +170,9 @@ type Shape struct {
 	// Admin is the most membership episodes (add a node, drain, drain and
 	// kill, add and kill the leader mid-rebalance); 0 draws none.
 	Admin int
+	// Replace has a follower lose its log and be replaced in some seeds
+	// (ADR-0031); it needs Metas >= 3.
+	Replace bool
 	// EC draws about half the puts as erasure-coded, from a stream of their
 	// own.
 	EC bool
@@ -181,7 +189,7 @@ func DefaultShape() Shape {
 // leader faults.
 func MetaShape() Shape {
 	sh := DefaultShape()
-	sh.Metas, sh.Episodes = 3, 8
+	sh.Metas, sh.Episodes, sh.Replace = 3, 8, true
 	return sh
 }
 
@@ -331,6 +339,7 @@ func Generate(seed uint64, sh Shape) Scenario {
 		}
 	}
 	s.Faults = append(s.Faults, admin(seed, sh, &eps, overlapping, down)...)
+	s.Faults = append(s.Faults, replace(seed, sh, &eps, overlapping)...)
 	// Stable: a wipe must stay before the restart scheduled at the same time.
 	slices.SortStableFunc(s.Faults, func(a, b Fault) int { return cmp.Compare(a.At, b.At) })
 
@@ -435,6 +444,32 @@ func admin(seed uint64, sh Shape, eps *[]episode, overlapping func(time.Duration
 		}
 	}
 	return out
+}
+
+// replace, in about a third of the seeds of a shape with Replace, has a
+// follower lose its log and the operator replace it 3 to 15 s later, drawn
+// from a stream of its own so the other faults keep their schedule. The
+// episode lasts 15 s past the replace, for the join and catch-up: no other
+// metadata fault overlaps it, so at most one peer is ever down.
+func replace(seed uint64, sh Shape, eps *[]episode, overlapping func(time.Duration, time.Duration, func(episode) bool) int) []Fault {
+	if !sh.Replace || sh.Metas < 3 {
+		return nil
+	}
+	rng := sim.NewRand(seed ^ 0x7e91_ace0_d1e5_10ad)
+	if rng.IntN(3) != 0 {
+		return nil
+	}
+	span := func(lo, hi time.Duration) time.Duration { return lo + time.Duration(rng.IntN(int(hi-lo)+1)) }
+	last := sh.Length - 10*time.Second
+	start := span(5*time.Second, last-40*time.Second)
+	at := start + span(3*time.Second, 15*time.Second)
+	end := at + 15*time.Second
+	isMeta := func(o episode) bool { return metaKind(o.kind) || o.kind == elections }
+	if end > last || overlapping(start, end, isMeta) > 0 {
+		return nil
+	}
+	*eps = append(*eps, episode{kind: LosePeerLog, start: start, end: end})
+	return []Fault{{At: start, Kind: LosePeerLog}, {At: at, Kind: ReplacePeer}}
 }
 
 func (s Scenario) ecPuts() int {

@@ -47,9 +47,11 @@ type Report struct {
 	// Admin counts membership faults applied (nodes added, drains and
 	// undrains accepted); MidMove, leader kills that found a balance copy
 	// in flight.
-	Admin   int          `json:"admin"`
-	MidMove int          `json:"midMove"`
-	GC      meta.GCStats `json:"gc"`
+	Admin   int `json:"admin"`
+	MidMove int `json:"midMove"`
+	// Replaced counts metadata peers that lost their log and were replaced.
+	Replaced int          `json:"replaced"`
+	GC       meta.GCStats `json:"gc"`
 	// History is how many recorded client operations the linearizability
 	// check covered.
 	History int   `json:"history"`
@@ -116,6 +118,9 @@ func RunOpts(s Scenario, w io.Writer, opts Options) Report {
 	// held is the peer the running leader fault hit; cut is set while it is
 	// partitioned off. Leader faults never overlap, so one slot is enough.
 	var held, cut iface.NodeID
+	// lost is the follower whose log a LosePeerLog destroyed, until replaced;
+	// replacing is set while its replace runs.
+	var lost, replacing iface.NodeID
 	// hit picks the current leader as the victim; "" during an election.
 	hit := func() iface.NodeID {
 		if held == "" {
@@ -176,6 +181,31 @@ func RunOpts(s Scenario, w io.Writer, opts Options) Report {
 				}
 			}
 			wait(150)
+		case LosePeerLog:
+			if leader := c.MetaLeader(); leader != "" {
+				for _, id := range c.MetaIDs() {
+					if id != leader && !c.Net().Crashed(id) {
+						lost = id
+						break
+					}
+				}
+			}
+			if lost != "" {
+				c.KillMeta(lost)
+				c.CorruptMetaLog(lost)
+			}
+		case ReplacePeer:
+			if lost != "" {
+				replacing, lost = lost, ""
+				c.ReplaceMetaAsync(replacing, func(err error) {
+					if err != nil {
+						errs = append(errs, fmt.Errorf("%v: %w", f, err))
+					} else {
+						r.Replaced++
+					}
+					replacing = ""
+				})
+			}
 		case AddNode:
 			if _, err := c.AddNode(); err != nil {
 				errs = append(errs, fmt.Errorf("%v: %w", f, err))
@@ -336,6 +366,9 @@ func RunOpts(s Scenario, w io.Writer, opts Options) Report {
 		if err := c.AssertInvariants(); err != nil {
 			errs = append(errs, fmt.Errorf("after GC: %w", err))
 		}
+	}
+	if replacing != "" {
+		errs = append(errs, fmt.Errorf("the replace of %s never finished", replacing))
 	}
 	// Quiet for 10 s, every peer must hold byte-identical state.
 	if s.Metas >= 3 {

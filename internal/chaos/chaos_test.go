@@ -4,6 +4,7 @@ import (
 	"flag"
 	"fmt"
 	"io"
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -407,4 +408,25 @@ func TestSameSeedSameTraceEC(t *testing.T) {
 	if !strings.Contains(Replay(Generate(7, ECShape())), "--ec") {
 		t.Fatal("the replay command drops --ec")
 	}
+}
+
+// A follower loses its log and is replaced mid-run in some MetaShape seeds:
+// the first such seed must replace it, and the run passes every invariant,
+// the group's agreement included (ADR-0031).
+func TestChaosReplacesPeerThatLostItsLog(t *testing.T) {
+	for seed := uint64(1); seed <= 50; seed++ {
+		s := Generate(seed, MetaShape())
+		if !slices.ContainsFunc(s.Faults, func(f Fault) bool { return f.Kind == ReplacePeer }) {
+			continue
+		}
+		r := Run(s, io.Discard)
+		if r.Err != nil {
+			t.Fatal(r.Err)
+		}
+		if r.Replaced != 1 {
+			t.Fatalf("seed %d: %d peers replaced, want 1\n%s", seed, r.Replaced, s)
+		}
+		return
+	}
+	t.Fatal("no seed in 1..50 replaces a peer")
 }

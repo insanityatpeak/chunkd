@@ -416,10 +416,29 @@ func (c *Cluster) ReviveMeta(id iface.NodeID) error {
 func (c *Cluster) CorruptMetaLog(id iface.NodeID) { c.metaPeer(id).store.Corrupt() }
 
 // ReplaceMeta replaces metadata peer id, which lost its log, as an operator
-// would (ADR-0031): kill it if running, have the leader swap its Raft ID for
-// the slot's next generation, then start a process over an empty store that
-// joins as that ID. Client calls advance the clock; call it between Ticks.
+// would (ReplaceMetaAsync), ticking until it is done. Call it between Ticks.
 func (c *Cluster) ReplaceMeta(id iface.NodeID) error {
+	var err error
+	done := false
+	c.ReplaceMetaAsync(id, func(e error) { err, done = e, true })
+	for !done {
+		c.Tick(100 * time.Millisecond)
+	}
+	return err
+}
+
+// ReplaceMetaAsync replaces metadata peer id, which lost its log, as an
+// operator would (ADR-0031), without blocking, so chaos faults can run it on
+// the clock: kill it if running, have the leader swap its Raft ID for the
+// slot's next generation, then start a process over an empty store that
+// joins as that ID. While there is no leader or the leader answers that it
+// cannot act yet, each step retries every second for up to two minutes.
+// done gets the outcome.
+func (c *Cluster) ReplaceMetaAsync(id iface.NodeID, done func(error)) {
+	if c.admin == nil {
+		c.admin = c.net.AsyncCaller("admin-1", c.cfg.CallTimeout)
+		c.adminQ = map[iface.NodeID][]func(){}
+	}
 	p := c.metaPeer(id)
 	if !c.net.Crashed(id) {
 		c.KillMeta(id)
@@ -428,27 +447,48 @@ func (c *Cluster) ReplaceMeta(id iface.NodeID) error {
 	if old == 0 {
 		old = uint64(slices.Index(c.MetaIDs(), id) + 1)
 	}
-	var err error
-	for range 10 { // the leader may be electing, or the change still in flight
-		if _, err = c.Client().ReplacePeer(context.Background(), string(id), old, true); err == nil {
-			break
+	start := c.clock.Now()
+	// call sends body to the leader and hands a final answer to then;
+	// transient ones are retried.
+	var call func(kind string, body []byte, then func(iface.Result))
+	call = func(kind string, body []byte, then func(iface.Result)) {
+		retry := func(err error) {
+			if c.clock.Now().Sub(start) >= 2*time.Minute {
+				done(fmt.Errorf("%s %s: %w", kind, id, err))
+				return
+			}
+			c.clock.AfterFunc(time.Second, func() { call(kind, body, then) })
 		}
-		c.Tick(time.Second)
-	}
-	if err != nil {
-		return fmt.Errorf("replace %s: %w", id, err)
-	}
-	p.store, p.raftID = sim.NewMetaStore(), 0
-	c.net.Restart(id)
-	caller := c.net.NewCaller(id, c.cfg.CallTimeout)
-	for range 10 {
-		if p.raftID, err = meta.AskJoin(context.Background(), caller, id, c.MetaIDs()); err == nil {
-			return c.startMeta(p)
+		leader := c.MetaLeader()
+		if leader == "" {
+			retry(iface.Errorf(iface.CodeUnavailable, "no metadata leader"))
+			return
 		}
-		c.Tick(time.Second)
+		c.admin.Go(iface.Call{To: leader, Kind: kind, Body: body}, func(r iface.Result) {
+			switch iface.CodeOf(r.Err) {
+			case iface.CodeNotLeader, iface.CodeUnavailable, iface.CodeRetry:
+				retry(r.Err)
+				return
+			}
+			if r.Err != nil {
+				done(fmt.Errorf("%s %s: %w", kind, id, r.Err))
+				return
+			}
+			then(r)
+		})
 	}
-	c.net.Crash(id)
-	return fmt.Errorf("join %s: %w", id, err)
+	call(wire.KindReplacePeer, wire.Marshal(&chunkdv1.ReplacePeerRequest{Peer: string(id), RaftId: old, Force: true}), func(iface.Result) {
+		call(wire.KindJoin, wire.Marshal(&chunkdv1.JoinRequest{Peer: string(id)}), func(r iface.Result) {
+			var resp chunkdv1.JoinResponse
+			if err := wire.Decode(r.Body, &resp); err != nil {
+				done(err)
+				return
+			}
+			p.store, p.raftID = sim.NewMetaStore(), resp.GetRaftId()
+			c.net.Restart(id)
+			done(c.startMeta(p))
+		})
+	})
 }
 
 // CutMeta partitions metadata peer id from the other peers, both ways.
