@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## v1.3.0 (2026-10-20)
 
 ### Added
 - `chunkd meta replace <peer>` replaces a metadata peer that lost its log, such as one whose WAL is corrupt: the leader logs its Raft ID as retired, removes it and adds the slot's next generation, and the peer, started over an empty data directory with `-join` (`CHUNKD_JOIN=1`), joins as that member and catches up from a snapshot. Repeating the command is safe. `chunkd meta peers` lists each peer's Raft ID, role, log position and last contact. ADR-0032.

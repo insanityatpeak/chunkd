@@ -1,8 +1,8 @@
 # Status
 
-Current phase: **none open; v1.2.1 is the latest release** (Phase 9 fixed the known limitations and audited the codebase; v1.1.0, v1.2.0 and v1.2.1 are tagged). **v1.0.0 shipped** ([release](https://github.com/insanityatpeak/chunkd/releases/tag/v1.0.0)). Phase 7 was released as [v0.4.0](https://github.com/insanityatpeak/chunkd/releases/tag/v0.4.0), Phase 6 as [v0.3.0](https://github.com/insanityatpeak/chunkd/releases/tag/v0.3.0), Phase 5 as [v0.2.0](https://github.com/insanityatpeak/chunkd/releases/tag/v0.2.0).
+Current phase: **none open; v1.3.0 is the latest release** (Phase 9 fixed the known limitations and audited the codebase; v1.1.0, v1.2.0, v1.2.1 and v1.3.0 are tagged). **v1.0.0 shipped** ([release](https://github.com/insanityatpeak/chunkd/releases/tag/v1.0.0)). Phase 7 was released as [v0.4.0](https://github.com/insanityatpeak/chunkd/releases/tag/v0.4.0), Phase 6 as [v0.3.0](https://github.com/insanityatpeak/chunkd/releases/tag/v0.3.0), Phase 5 as [v0.2.0](https://github.com/insanityatpeak/chunkd/releases/tag/v0.2.0).
 
-## Phase 9 (v1.1.0, with v1.2.0 and v1.2.1 follow-ups on `main`)
+## Phase 9 (v1.1.0, with v1.2.0, v1.2.1 and v1.3.0 follow-ups on `main`)
 
 Fixes for the limitations Phase 8 listed, then an audit of the whole codebase. One additive log op and snapshot field (ADR-0030); data directories from v1.0.0 replay unchanged.
 
@@ -17,8 +17,8 @@ Fixes for the limitations Phase 8 listed, then an audit of the whole codebase. O
 | Quarantine directory capped | `TestQuarantineCapEvictsOldest` (1 GiB, `-quarantine-cap`) |
 | A silently dead metadata leader costs 3 s, not 10 s | `Call.Timeout`, `TestSilentLeaderCostsOneShortAttempt`; the `kill-leader` golden's write goes from 10.5 s to 3.5 s. ADR-0009 amended |
 | A new leader accepts drain for a node it has not heard from | `NodeJoinOp`, `TestDrainBeforeFirstHeartbeatAfterRestart`, `TestNodeJoinIsLoggedAndSnapshotted`. ADR-0030 |
-| An EC put returns at 5 of 6 shards (after v1.2.1) | EC put p50 with one gray node on 7 nodes 4,157 ms to 238 ms (`put-latency.csv`); `TestECPutNotHeldBySlowShard`, `TestECPutShardNeverLands`. ADR-0031 |
-| A metadata peer that lost its log is replaced (after v1.2.1) | `chunkd meta replace`, `-join`; `TestReplacePeer`, `TestReplaceMetaPeerReal` (a corrupt WAL on disk), chaos: 307 replacements in 1,500 `--metas=3` seeds. ADR-0032 |
+| An EC put returns at 5 of 6 shards (v1.3.0) | EC put p50 with one gray node on 7 nodes 4,157 ms to 238 ms (`put-latency.csv`); `TestECPutNotHeldBySlowShard`, `TestECPutShardNeverLands`. ADR-0031 |
+| A metadata peer that lost its log is replaced (v1.3.0) | `chunkd meta replace`, `-join`; `TestReplacePeer`, `TestReplaceMetaPeerReal` (a corrupt WAL on disk), chaos: 307 replacements in 1,500 `--metas=3` seeds. ADR-0032 |
 | A node back from a long outage is reachable within seconds (v1.2.1) | `pool.get` dials `passthrough:///`; real-mode short suite 7 of 7 locally and in CI; bugs-found #35 |
 
 Audit (Part 3):
