@@ -338,8 +338,10 @@ func Generate(seed uint64, sh Shape) Scenario {
 			}
 		}
 	}
-	s.Faults = append(s.Faults, admin(seed, sh, &eps, overlapping, down)...)
+	// Replace before admin: with membership faults off, the schedule is the
+	// same faults minus those (TestAdminKeepsBaseSchedule).
 	s.Faults = append(s.Faults, replace(seed, sh, &eps, overlapping)...)
+	s.Faults = append(s.Faults, admin(seed, sh, &eps, overlapping, down)...)
 	// Stable: a wipe must stay before the restart scheduled at the same time.
 	slices.SortStableFunc(s.Faults, func(a, b Fault) int { return cmp.Compare(a.At, b.At) })
 

@@ -124,7 +124,7 @@ func TestGenerateRespectsSafetyRules(t *testing.T) {
 // With a metadata group: at most one peer impaired at a time, every leader
 // fault ended 10 s before the end, and each new kind drawn by some seed.
 func TestGenerateMetaSafetyRules(t *testing.T) {
-	ends := map[Kind]Kind{KillLeader: ReviveLeader, KillLeaderMidMove: ReviveLeader, FreezeLeader: ThawLeader, CutLeader: HealLeader}
+	ends := map[Kind]Kind{KillLeader: ReviveLeader, KillLeaderMidMove: ReviveLeader, FreezeLeader: ThawLeader, CutLeader: HealLeader, LosePeerLog: ReplacePeer}
 	seen := map[Kind]int{}
 	minority := 0
 	for seed := uint64(0); seed < 2000; seed++ {
@@ -169,7 +169,7 @@ func TestGenerateMetaSafetyRules(t *testing.T) {
 			}
 		}
 	}
-	for _, k := range []Kind{KillLeader, FreezeLeader, CutLeader, elections} {
+	for _, k := range []Kind{KillLeader, FreezeLeader, CutLeader, elections, LosePeerLog} {
 		if seen[k] == 0 {
 			t.Errorf("no seed drew %s", k)
 		}
