@@ -852,3 +852,31 @@ func TestNodeJoinIsLoggedAndSnapshotted(t *testing.T) {
 		t.Fatal("a node with a logged admin state must count as admitted")
 	}
 }
+
+// A retired peer ID is logged once, survives a snapshot, and an empty
+// retirement is refused; a snapshot with none retired encodes as before.
+func TestRetirePeerIsLoggedAndSnapshotted(t *testing.T) {
+	s := New()
+	before := s.Snapshot()
+	retire := func(id uint64) *chunkdv1.Op {
+		return &chunkdv1.Op{Op: &chunkdv1.Op_RetirePeer{RetirePeer: &chunkdv1.RetirePeerOp{RaftId: id}}}
+	}
+	if _, err := s.Apply(retire(0)); iface.CodeOf(err) != iface.CodeInvalid {
+		t.Fatalf("retirement with no ID: %v, want invalid", err)
+	}
+	if !bytes.Equal(s.Snapshot(), before) {
+		t.Fatal("a refused retirement changed the state")
+	}
+	for _, id := range []uint64{5, 2, 5} {
+		if _, err := s.Apply(retire(id)); err != nil {
+			t.Fatal(err)
+		}
+	}
+	r, err := Restore(s.Snapshot())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := r.Retired(); !slices.Equal(got, []uint64{2, 5}) {
+		t.Fatalf("retired after restore %v, want [2 5]", got)
+	}
+}

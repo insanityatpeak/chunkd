@@ -173,6 +173,14 @@ message NodeJoinOp {
   string node = 1;
 }
 
+// RetirePeerOp records that a metadata peer's Raft ID is being removed for
+// good, logged before the membership change that removes it (ADR-0031). A
+// slot's next generation is added only after its predecessor is retired,
+// so no ID is ever added twice. A repeat applies nothing.
+message RetirePeerOp {
+  uint64 raft_id = 1;
+}
+
 message Op {
   oneof op {
     BeginUploadOp begin = 1;
@@ -189,6 +197,7 @@ message Op {
     NodeAdminOp node_admin = 12;
     SetRetentionOp set_retention = 13;
     NodeJoinOp node_join = 14;
+    RetirePeerOp retire_peer = 15;
   }
 }
 
@@ -256,6 +265,8 @@ message MetaSnapshot {
   // Nodes the group has admitted, sorted. Absent in snapshots from before
   // ADR-0030; such a group admits nodes again as they report.
   repeated string admitted = 9;
+  // Metadata peers' retired Raft IDs, sorted (ADR-0031).
+  repeated uint64 retired_peers = 10;
 }
 
 // ---- Client RPCs to the metadata server.
@@ -503,6 +514,32 @@ message NodeAdminResponse {
   string warning = 2;
 }
 
+// ReplacePeerRequest swaps the voter in peer's slot, expected to be raft_id,
+// for the slot's next generation (ADR-0031). Repeating it is safe: once the
+// next generation is the voter it answers again without a change.
+message ReplacePeerRequest {
+  string peer = 1;
+  uint64 raft_id = 2;
+  // Replace the peer although the leader heard from it within the election
+  // timeout.
+  bool force = 3;
+}
+
+message ReplacePeerResponse {
+  uint64 removed = 1;
+  uint64 added = 2;
+}
+
+// JoinRequest: a peer started with an empty store in join mode asks which
+// Raft ID the group added for it.
+message JoinRequest {
+  string peer = 1;
+}
+
+message JoinResponse {
+  uint64 raft_id = 1;
+}
+
 // SuspectRequest: a client received bytes for chunk_id from node that did
 // not match the hash. A hint only: the node re-checks, and its check decides.
 message SuspectRequest {
@@ -563,6 +600,11 @@ message MetaPeer {
   // Milliseconds since the answering peer last heard from it: 0 for
   // itself, -1 if never.
   int64 heard_ago_ms = 3;
+  // Raft ID: slot + group size × generation (ADR-0031).
+  uint64 raft_id = 4;
+  // Leader, follower, candidate or pre-candidate for the answering peer;
+  // voter for the others.
+  string role = 5;
 }
 
 // GCStats are the sweep's counters since the metadata server started.

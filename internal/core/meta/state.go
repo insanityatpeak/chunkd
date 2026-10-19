@@ -145,6 +145,8 @@ type State struct {
 	nodeAdmin map[iface.NodeID]chunkdv1.NodeAdmin
 	// admitted is every node the log has recorded (NodeJoinOp); ADR-0030.
 	admitted map[iface.NodeID]bool
+	// retired is every metadata peer Raft ID removed for good (RetirePeerOp); ADR-0031.
+	retired map[uint64]bool
 	// stripes and shardOf index every stripe a record or pending claim names,
 	// and each of its shards; derived from chunks and uploads.
 	stripes map[iface.ChunkID]*stripe
@@ -177,7 +179,7 @@ type Result struct {
 // New returns empty state.
 func New() *State {
 	return &State{files: map[string]*File{}, chunks: map[iface.ChunkID]*ChunkInfo{}, uploads: map[uint64]*Upload{}, committed: map[uint64]Committed{}, claimed: map[iface.ChunkID]int{},
-		requests: map[string]uint64{}, gcPending: map[iface.ChunkID]map[iface.NodeID]GCTarget{}, trimPending: map[iface.ChunkID]iface.NodeID{}, nodeAdmin: map[iface.NodeID]chunkdv1.NodeAdmin{}, admitted: map[iface.NodeID]bool{},
+		requests: map[string]uint64{}, gcPending: map[iface.ChunkID]map[iface.NodeID]GCTarget{}, trimPending: map[iface.ChunkID]iface.NodeID{}, nodeAdmin: map[iface.NodeID]chunkdv1.NodeAdmin{}, admitted: map[iface.NodeID]bool{}, retired: map[uint64]bool{},
 		stripes: map[iface.ChunkID]*stripe{}, shardOf: map[iface.ChunkID]ShardRef{}, nsBytes: map[string]int64{}}
 }
 
@@ -413,6 +415,10 @@ func (s *State) Validate(op *chunkdv1.Op) error {
 	case *chunkdv1.Op_NodeJoin:
 		if o.NodeJoin.GetNode() == "" {
 			return iface.Errorf(iface.CodeInvalid, "node join with no node")
+		}
+	case *chunkdv1.Op_RetirePeer:
+		if o.RetirePeer.GetRaftId() == 0 {
+			return iface.Errorf(iface.CodeInvalid, "peer retirement with no raft ID")
 		}
 	case *chunkdv1.Op_NodeAdmin:
 		a := o.NodeAdmin
@@ -727,6 +733,9 @@ func (s *State) apply(op *chunkdv1.Op) Result {
 	case *chunkdv1.Op_NodeJoin:
 		s.admitted[iface.NodeID(o.NodeJoin.GetNode())] = true
 		return Result{}
+	case *chunkdv1.Op_RetirePeer:
+		s.retired[o.RetirePeer.GetRaftId()] = true
+		return Result{}
 	case *chunkdv1.Op_NodeAdmin:
 		n, to := iface.NodeID(o.NodeAdmin.GetNode()), o.NodeAdmin.GetState()
 		if to == chunkdv1.NodeAdmin_NODE_ADMIN_ACTIVE {
@@ -748,6 +757,9 @@ func (s *State) Admitted(n iface.NodeID) bool {
 	_, set := s.nodeAdmin[n]
 	return s.admitted[n] || set
 }
+
+// Retired returns the metadata peer Raft IDs the log has retired, ascending.
+func (s *State) Retired() []uint64 { return slices.Sorted(maps.Keys(s.retired)) }
 
 // Leaving reports whether n is draining or decommissioned: it takes no new
 // data and its copies do not count toward RF.
@@ -1162,6 +1174,7 @@ func (s *State) Snapshot() []byte {
 	for _, n := range slices.Sorted(maps.Keys(s.admitted)) {
 		snap.Admitted = append(snap.Admitted, string(n))
 	}
+	snap.RetiredPeers = s.Retired()
 	out, err := proto.MarshalOptions{Deterministic: true}.Marshal(snap)
 	if err != nil {
 		panic(err)
@@ -1251,6 +1264,9 @@ func Restore(data []byte) (*State, error) {
 	}
 	for _, n := range snap.GetAdmitted() {
 		s.admitted[iface.NodeID(n)] = true
+	}
+	for _, id := range snap.GetRetiredPeers() {
+		s.retired[id] = true
 	}
 	s.nsBytes = s.recountNamespaces()
 	return s, nil

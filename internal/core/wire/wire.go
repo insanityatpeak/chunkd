@@ -44,6 +44,8 @@ const (
 	KindNodeAdmin    = "meta.node_admin"
 	KindUploadStatus = "meta.upload_status"
 	KindSetRetention = "meta.set_retention"
+	KindReplacePeer  = "meta.replace_peer"
+	KindJoin         = "meta.join"
 
 	KindPutChunk = "chunk.put"
 	KindGetChunk = "chunk.get"

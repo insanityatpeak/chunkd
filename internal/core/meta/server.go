@@ -282,6 +282,8 @@ func (s *Server) Start() {
 		wire.KindNodeAdmin:    s.nodeAdmin,
 		wire.KindUploadStatus: s.uploadStatus,
 		wire.KindSetRetention: s.setRetention,
+		wire.KindReplacePeer:  s.replacePeer,
+		wire.KindJoin:         s.join,
 	} {
 		s.d.Net.Serve(s.cfg.ID, kind, h, iface.ServeOpts{})
 	}
@@ -1016,7 +1018,11 @@ func (s *Server) ClusterView(eventsAfter uint64) *chunkdv1.ClusterResponse {
 		if p.Heard {
 			heard = int64(p.HeardAgo / time.Millisecond)
 		}
-		resp.MetaPeers = append(resp.MetaPeers, &chunkdv1.MetaPeer{Id: string(p.Node), Match: p.Match, HeardAgoMs: heard})
+		role := "voter"
+		if p.ID == rs.ID {
+			role = rs.Role
+		}
+		resp.MetaPeers = append(resp.MetaPeers, &chunkdv1.MetaPeer{Id: string(p.Node), Match: p.Match, HeardAgoMs: heard, RaftId: p.ID, Role: role})
 	}
 	bal := map[iface.NodeID]repair.NodeBalance{}
 	for _, b := range s.repair.Balance() {
