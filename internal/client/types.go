@@ -272,7 +272,7 @@ type API interface {
 	// (undrain) or "decommissioned", refused while unsafe (ADR-0021).
 	NodeAdmin(ctx context.Context, node, state string) (NodeAdminResult, error)
 	// ReplacePeer replaces metadata peer, now raft ID raftID, by its slot's
-	// next generation, which then joins over an empty store (ADR-0031).
+	// next generation, which then joins over an empty store (ADR-0032).
 	// force allows replacing a peer the leader still hears from.
 	ReplacePeer(ctx context.Context, peer string, raftID uint64, force bool) (ReplacePeerResult, error)
 	// SetRetention sets how many GC epochs path keeps its retired versions

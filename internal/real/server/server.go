@@ -140,7 +140,7 @@ func ParsePeers(s string) (map[iface.NodeID]string, error) {
 
 // ParseGroup parses a metadata group, "id=host:port,id=host:port", or a bare
 // "host:port" for a single server called def. The IDs come back sorted: a
-// peer's slot, and so its Raft IDs, is its position in the list (ADR-0031),
+// peer's slot, and so its Raft IDs, is its position in the list (ADR-0032),
 // so every process must derive the same order from the same text.
 func ParseGroup(s string, def iface.NodeID) ([]iface.NodeID, map[iface.NodeID]string, error) {
 	if !strings.Contains(s, "=") {

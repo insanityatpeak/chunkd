@@ -10,7 +10,7 @@ import (
 // A follower whose log is corrupt cannot restart; replacing it brings the
 // group back to three voters: the new member catches up over an empty store,
 // every peer agrees, and losing another peer afterwards still leaves a
-// quorum that serves reads and writes (ADR-0031).
+// quorum that serves reads and writes (ADR-0032).
 func TestReplaceMetaWithCorruptLog(t *testing.T) {
 	for seed := uint64(1); seed <= 3; seed++ {
 		c := newMetaGroup(t, seed)

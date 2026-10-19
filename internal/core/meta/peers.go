@@ -47,7 +47,7 @@ func (s *Server) peer(id uint64) (consensus.Peer, bool) {
 
 // replacePeer swaps the voter in a slot for the slot's next generation:
 // it logs the old ID as retired, removes it, then adds the next one, one
-// single-server change at a time (ADR-0031). Removal comes first because the
+// single-server change at a time (ADR-0032). Removal comes first because the
 // old peer is usually down: added first, the new voter would make four with
 // two down, and the group would lose its quorum. The logged retirement is
 // what makes a repeat safe: the next generation is added only while the

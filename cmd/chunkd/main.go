@@ -418,7 +418,7 @@ func probe(url string) error {
 }
 
 // replacePeer replaces a metadata peer by its slot's next generation
-// (ADR-0031). Without -raft-id it reads the peer's current ID from the
+// (ADR-0032). Without -raft-id it reads the peer's current ID from the
 // leader's view, which lists it only while it is a voter.
 func replacePeer(ctx context.Context, api client.API, peer string, id uint64, force bool, out printer) error {
 	if id == 0 {

@@ -40,7 +40,7 @@ const (
 	CutLeader    Kind = "cut-leader"  // partition {leader} from the other peers
 	HealLeader   Kind = "heal-leader" // rejoin it
 	// LosePeerLog kills a follower and corrupts its log, so it cannot
-	// restart; ReplacePeer replaces it as an operator would (ADR-0031): the
+	// restart; ReplacePeer replaces it as an operator would (ADR-0032): the
 	// leader swaps its Raft ID and it joins over an empty store.
 	LosePeerLog Kind = "lose-peer-log"
 	ReplacePeer Kind = "replace-peer"
@@ -171,7 +171,7 @@ type Shape struct {
 	// kill, add and kill the leader mid-rebalance); 0 draws none.
 	Admin int
 	// Replace has a follower lose its log and be replaced in some seeds
-	// (ADR-0031); it needs Metas >= 3.
+	// (ADR-0032); it needs Metas >= 3.
 	Replace bool
 	// EC draws about half the puts as erasure-coded, from a stream of their
 	// own.

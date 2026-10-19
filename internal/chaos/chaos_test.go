@@ -412,7 +412,7 @@ func TestSameSeedSameTraceEC(t *testing.T) {
 
 // A follower loses its log and is replaced mid-run in some MetaShape seeds:
 // the first such seed must replace it, and the run passes every invariant,
-// the group's agreement included (ADR-0031).
+// the group's agreement included (ADR-0032).
 func TestChaosReplacesPeerThatLostItsLog(t *testing.T) {
 	for seed := uint64(1); seed <= 50; seed++ {
 		s := Generate(seed, MetaShape())

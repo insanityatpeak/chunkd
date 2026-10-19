@@ -454,7 +454,7 @@ func (s *Store) loadSnapshot() (iface.Index, []byte, error) {
 }
 
 // RaftID returns the Raft ID SetRaftID recorded, or 0 if none: a peer that
-// never joined runs as generation 0 of its slot (ADR-0031).
+// never joined runs as generation 0 of its slot (ADR-0032).
 func (s *Store) RaftID() (uint64, error) {
 	var id uint64
 	err := s.db.View(func(tx *bolt.Tx) error {

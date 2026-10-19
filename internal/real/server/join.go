@@ -13,11 +13,11 @@ import (
 )
 
 // MetaIdentity sets cfg.RaftID and cfg.Join for a metadata peer about to
-// start over store (ADR-0031). A recorded ID wins. Otherwise, with join set,
+// start over store (ADR-0032). A recorded ID wins. Otherwise, with join set,
 // the store must be empty: the peer asks the group for the ID it added for
 // this slot, retrying while no leader answers, and records it before
 // consensus starts. Without join and with no record, the peer is generation
-// 0 of its slot, as every peer was before ADR-0031.
+// 0 of its slot, as every peer was before ADR-0032.
 func MetaIdentity(ctx context.Context, store *metastore.Store, cfg *meta.Config, addrs map[iface.NodeID]string, join bool, log *slog.Logger) error {
 	id, err := store.RaftID()
 	if err != nil {

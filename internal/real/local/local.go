@@ -219,7 +219,7 @@ func (c *Cluster) startMeta(m *MetaProc, l net.Listener, join bool) error {
 
 // RestartMeta starts a killed metadata server again on its address over its
 // directory; with join, over an emptied directory, it joins as the member a
-// replace added (ADR-0031). It fails as chunkd-meta would, e.g. with
+// replace added (ADR-0032). It fails as chunkd-meta would, e.g. with
 // metastore.ErrCorrupt.
 func (c *Cluster) RestartMeta(m *MetaProc, join bool) error {
 	l, err := net.Listen("tcp", m.Addr)

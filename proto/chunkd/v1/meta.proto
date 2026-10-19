@@ -174,7 +174,7 @@ message NodeJoinOp {
 }
 
 // RetirePeerOp records that a metadata peer's Raft ID is being removed for
-// good, logged before the membership change that removes it (ADR-0031). A
+// good, logged before the membership change that removes it (ADR-0032). A
 // slot's next generation is added only after its predecessor is retired,
 // so no ID is ever added twice. A repeat applies nothing.
 message RetirePeerOp {
@@ -265,7 +265,7 @@ message MetaSnapshot {
   // Nodes the group has admitted, sorted. Absent in snapshots from before
   // ADR-0030; such a group admits nodes again as they report.
   repeated string admitted = 9;
-  // Metadata peers' retired Raft IDs, sorted (ADR-0031).
+  // Metadata peers' retired Raft IDs, sorted (ADR-0032).
   repeated uint64 retired_peers = 10;
 }
 
@@ -515,7 +515,7 @@ message NodeAdminResponse {
 }
 
 // ReplacePeerRequest swaps the voter in peer's slot, expected to be raft_id,
-// for the slot's next generation (ADR-0031). Repeating it is safe: once the
+// for the slot's next generation (ADR-0032). Repeating it is safe: once the
 // next generation is the voter it answers again without a change.
 message ReplacePeerRequest {
   string peer = 1;
@@ -600,7 +600,7 @@ message MetaPeer {
   // Milliseconds since the answering peer last heard from it: 0 for
   // itself, -1 if never.
   int64 heard_ago_ms = 3;
-  // Raft ID: slot + group size × generation (ADR-0031).
+  // Raft ID: slot + group size × generation (ADR-0032).
   uint64 raft_id = 4;
   // Leader, follower, candidate or pre-candidate for the answering peer;
   // voter for the others.

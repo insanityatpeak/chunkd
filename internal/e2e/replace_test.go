@@ -22,7 +22,7 @@ import (
 // corrupted before its tail, so it refuses to start (metastore.ErrCorrupt).
 // The operator's replace swaps its Raft ID, its directory is emptied and it
 // starts with -join: it records its new ID, catches up, and the group then
-// survives losing another peer (ADR-0031).
+// survives losing another peer (ADR-0032).
 func TestReplaceMetaPeerReal(t *testing.T) {
 	if testing.Short() {
 		t.Skip("starts three metadata servers and restarts one")

@@ -145,7 +145,7 @@ type State struct {
 	nodeAdmin map[iface.NodeID]chunkdv1.NodeAdmin
 	// admitted is every node the log has recorded (NodeJoinOp); ADR-0030.
 	admitted map[iface.NodeID]bool
-	// retired is every metadata peer Raft ID removed for good (RetirePeerOp); ADR-0031.
+	// retired is every metadata peer Raft ID removed for good (RetirePeerOp); ADR-0032.
 	retired map[uint64]bool
 	// stripes and shardOf index every stripe a record or pending claim names,
 	// and each of its shards; derived from chunks and uploads.

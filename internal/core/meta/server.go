@@ -37,7 +37,7 @@ type Config struct {
 	// Peers are the metadata group's members, this server included. Each
 	// holds a slot, its 1-based position here; Raft ID slot + len(Peers)·g is
 	// generation g of that slot (RaftSlot), so every peer names any ID from
-	// this list and a replaced peer never reuses an ID (ADR-0031). Empty
+	// this list and a replaced peer never reuses an ID (ADR-0032). Empty
 	// means a group of one.
 	Peers []iface.NodeID
 	// RaftID is this peer's Raft ID; 0 means generation 0 of its slot.

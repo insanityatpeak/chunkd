@@ -1176,7 +1176,7 @@ func (x *NodeJoinOp) GetNode() string {
 }
 
 // RetirePeerOp records that a metadata peer's Raft ID is being removed for
-// good, logged before the membership change that removes it (ADR-0031). A
+// good, logged before the membership change that removes it (ADR-0032). A
 // slot's next generation is added only after its predecessor is retired,
 // so no ID is ever added twice. A repeat applies nothing.
 type RetirePeerOp struct {
@@ -1856,7 +1856,7 @@ type MetaSnapshot struct {
 	// Nodes the group has admitted, sorted. Absent in snapshots from before
 	// ADR-0030; such a group admits nodes again as they report.
 	Admitted []string `protobuf:"bytes,9,rep,name=admitted,proto3" json:"admitted,omitempty"`
-	// Metadata peers' retired Raft IDs, sorted (ADR-0031).
+	// Metadata peers' retired Raft IDs, sorted (ADR-0032).
 	RetiredPeers  []uint64 `protobuf:"varint,10,rep,packed,name=retired_peers,json=retiredPeers,proto3" json:"retired_peers,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
@@ -4039,7 +4039,7 @@ func (x *NodeAdminResponse) GetWarning() string {
 }
 
 // ReplacePeerRequest swaps the voter in peer's slot, expected to be raft_id,
-// for the slot's next generation (ADR-0031). Repeating it is safe: once the
+// for the slot's next generation (ADR-0032). Repeating it is safe: once the
 // next generation is the voter it answers again without a change.
 type ReplacePeerRequest struct {
 	state  protoimpl.MessageState `protogen:"open.v1"`
@@ -4607,7 +4607,7 @@ type MetaPeer struct {
 	// Milliseconds since the answering peer last heard from it: 0 for
 	// itself, -1 if never.
 	HeardAgoMs int64 `protobuf:"varint,3,opt,name=heard_ago_ms,json=heardAgoMs,proto3" json:"heard_ago_ms,omitempty"`
-	// Raft ID: slot + group size × generation (ADR-0031).
+	// Raft ID: slot + group size × generation (ADR-0032).
 	RaftId uint64 `protobuf:"varint,4,opt,name=raft_id,json=raftId,proto3" json:"raft_id,omitempty"`
 	// Leader, follower, candidate or pre-candidate for the answering peer;
 	// voter for the others.

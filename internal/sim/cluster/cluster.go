@@ -344,7 +344,7 @@ type metaPeer struct {
 	id    iface.NodeID
 	store *sim.MetaStore
 	srv   *meta.Server
-	// raftID is the ID a join recorded with the store (ADR-0031); 0 is
+	// raftID is the ID a join recorded with the store (ADR-0032); 0 is
 	// generation 0 of the peer's slot.
 	raftID uint64
 }
@@ -428,7 +428,7 @@ func (c *Cluster) ReplaceMeta(id iface.NodeID) error {
 }
 
 // ReplaceMetaAsync replaces metadata peer id, which lost its log, as an
-// operator would (ADR-0031), without blocking, so chaos faults can run it on
+// operator would (ADR-0032), without blocking, so chaos faults can run it on
 // the clock: kill it if running, have the leader swap its Raft ID for the
 // slot's next generation, then start a process over an empty store that
 // joins as that ID. While there is no leader or the leader answers that it
