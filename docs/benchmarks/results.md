@@ -68,6 +68,23 @@ Raw: [data/real-latency.csv](data/real-latency.csv)
 
 Raw: [data/latency.csv](data/latency.csv)
 
+## Put latency by redundancy (sim)
+
+30 puts of 4 MiB per seed, 3 seeds pooled, 7 nodes, no message loss, a new client for every put. Gray node: node-1 adds 2 s to every message. `quorum` returns once the commit quorum is stored (2 of 3 copies, 5 of 6 shards) and a 50 ms grace has passed (ADR-0029, ADR-0031); `wait-all` waits for every copy or shard.
+
+| redundancy | fault | put | samples | p50_ms | p95_ms | p99_ms |
+|---|---|---|---|---|---|---|
+| replicate:3 | none | quorum | 90 | 211.463 | 256.678 | 324.733 |
+| replicate:3 | none | wait-all | 90 | 211.463 | 256.678 | 324.733 |
+| replicate:3 | gray-node | quorum | 90 | 237.818 | 310.303 | 324.150 |
+| replicate:3 | gray-node | wait-all | 90 | 223.053 | 4242.449 | 4272.658 |
+| ec:4+2 | none | quorum | 90 | 194.893 | 247.752 | 278.430 |
+| ec:4+2 | none | wait-all | 90 | 194.893 | 247.752 | 278.430 |
+| ec:4+2 | gray-node | quorum | 90 | 4157.129 | 4219.410 | 4254.764 |
+| ec:4+2 | gray-node | wait-all | 90 | 4157.129 | 4219.410 | 4254.764 |
+
+Raw: [data/put-latency.csv](data/put-latency.csv)
+
 ## Time to repair after a node kill (sim)
 
 RF 3, 5 nodes, 4 MiB files, no message loss (a lost repair message costs a 10 s call timeout, which would swamp the copy time), node-3 killed. The detector (10 s) plus the repair delay (20 s) make a 30 s floor; `past_floor_s` is what the copies add. `mib_s_past_floor` is 0 when that is under one second.

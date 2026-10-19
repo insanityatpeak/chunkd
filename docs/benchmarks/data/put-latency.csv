@@ -1,0 +1,9 @@
+redundancy,fault,put,samples,p50_ms,p95_ms,p99_ms
+replicate:3,none,quorum,90,211.463,256.678,324.733
+replicate:3,none,wait-all,90,211.463,256.678,324.733
+replicate:3,gray-node,quorum,90,237.818,310.303,324.150
+replicate:3,gray-node,wait-all,90,223.053,4242.449,4272.658
+ec:4+2,none,quorum,90,194.893,247.752,278.430
+ec:4+2,none,wait-all,90,194.893,247.752,278.430
+ec:4+2,gray-node,quorum,90,4157.129,4219.410,4254.764
+ec:4+2,gray-node,wait-all,90,4157.129,4219.410,4254.764
