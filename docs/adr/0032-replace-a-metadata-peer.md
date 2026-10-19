@@ -47,7 +47,7 @@ SIMPLIFIED: the acknowledged-entry check reads the leader's match index, and a n
 
 - `TestReplacePeer` (three peers, one dies, replace, join, catch up, a second peer dies and the group still commits), `TestReplacePeerRefusals`, `TestRaftIDMustMatchSlot`, `TestRetirePeerIsLoggedAndSnapshotted`.
 - `TestReplaceMetaWithCorruptLog` (sim) and `TestReplaceMetaPeerReal` (real gRPC and disk: a byte flipped in the WAL gives `ErrCorrupt`, then replace, `-join`, catch-up, and a second peer killed).
-- Chaos: in about a third of `--metas=3` seeds a follower loses its log and is replaced mid-run (`lose-peer-log`, `replace-peer`), drawn from a stream of its own so other faults keep their schedule; 1,500 seeds pass with 279 replacements, every peer byte-identical at the end.
+- Chaos: in about a third of `--metas=3` seeds a follower loses its log and is replaced mid-run (`lose-peer-log`, `replace-peer`), drawn from a stream of its own so other faults keep their schedule; 1,500 seeds pass with 307 replacements, every peer byte-identical at the end.
 - `chunkd meta peers` shows each peer's Raft ID, role, match index and last contact.
 - The group's names and addresses stay fixed by `-peers`: no growing, shrinking or moving a peer. A replacement must come back at the same address.
 - One log op and one snapshot field, both additive: logs and snapshots from before this ADR replay unchanged.

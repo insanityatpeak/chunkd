@@ -18,7 +18,7 @@ Fixes for the limitations Phase 8 listed, then an audit of the whole codebase. O
 | A silently dead metadata leader costs 3 s, not 10 s | `Call.Timeout`, `TestSilentLeaderCostsOneShortAttempt`; the `kill-leader` golden's write goes from 10.5 s to 3.5 s. ADR-0009 amended |
 | A new leader accepts drain for a node it has not heard from | `NodeJoinOp`, `TestDrainBeforeFirstHeartbeatAfterRestart`, `TestNodeJoinIsLoggedAndSnapshotted`. ADR-0030 |
 | An EC put returns at 5 of 6 shards (after v1.2.1) | EC put p50 with one gray node on 7 nodes 4,157 ms to 238 ms (`put-latency.csv`); `TestECPutNotHeldBySlowShard`, `TestECPutShardNeverLands`. ADR-0031 |
-| A metadata peer that lost its log is replaced (after v1.2.1) | `chunkd meta replace`, `-join`; `TestReplacePeer`, `TestReplaceMetaPeerReal` (a corrupt WAL on disk), chaos: 279 replacements in 1,500 `--metas=3` seeds. ADR-0032 |
+| A metadata peer that lost its log is replaced (after v1.2.1) | `chunkd meta replace`, `-join`; `TestReplacePeer`, `TestReplaceMetaPeerReal` (a corrupt WAL on disk), chaos: 307 replacements in 1,500 `--metas=3` seeds. ADR-0032 |
 | A node back from a long outage is reachable within seconds (v1.2.1) | `pool.get` dials `passthrough:///`; real-mode short suite 7 of 7 locally and in CI; bugs-found #35 |
 
 Audit (Part 3):
