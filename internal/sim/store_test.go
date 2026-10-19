@@ -64,3 +64,39 @@ func TestMetaStoreConformance(t *testing.T) {
 func TestBlockStoreConformance(t *testing.T) {
 	ifacetest.BlockStore(t, func(*testing.T) iface.BlockStore { return NewBlockStore() })
 }
+
+func TestBlockStoreHoldsTracksRot(t *testing.T) {
+	ctx := context.Background()
+	s := NewBlockStore()
+	data := []byte("hello")
+	id := iface.ChunkID(sha256.Sum256(data))
+	check := func(step string, present, intact bool) {
+		t.Helper()
+		if p, i := s.Holds(id); p != present || i != intact {
+			t.Fatalf("%s: Holds = %v, %v; want %v, %v", step, p, i, present, intact)
+		}
+	}
+	check("empty", false, false)
+	if err := s.Put(ctx, id, data); err != nil {
+		t.Fatal(err)
+	}
+	check("put", true, true)
+	s.Corrupt(id)
+	check("rotted", true, false)
+	s.Corrupt(id)
+	check("flipped back", true, true)
+	s.Corrupt(id)
+	if err := s.Put(ctx, id, data); err != nil {
+		t.Fatal(err)
+	}
+	check("rewritten", true, true)
+	s.Corrupt(id)
+	if err := s.Quarantine(ctx, id); err != nil {
+		t.Fatal(err)
+	}
+	check("quarantined", false, false)
+	if err := s.Put(ctx, id, data); err != nil {
+		t.Fatal(err)
+	}
+	check("repaired", true, true)
+}

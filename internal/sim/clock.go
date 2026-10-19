@@ -14,9 +14,10 @@ import (
 // (deadline, insertion order), which makes ties deterministic. It is not safe
 // for concurrent use: the sim is single-threaded by design.
 type Clock struct {
-	now iface.Instant
-	seq uint64
-	q   eventQueue
+	now     iface.Instant
+	seq     uint64
+	q       eventQueue
+	observe func()
 }
 
 var _ iface.Clock = (*Clock)(nil)
@@ -38,6 +39,11 @@ func (c *Clock) AfterFunc(d time.Duration, f func()) iface.Timer {
 	heap.Push(&c.q, e)
 	return e
 }
+
+// Observe sets f to run after every event fires, nil to clear it. f is not
+// an event: it adds nothing to the queue, so a run replays the same with or
+// without it as long as f only reads.
+func (c *Clock) Observe(f func()) { c.observe = f }
 
 // Advance moves time forward by d, firing every event due at or before the
 // new time, including events scheduled by callbacks during the advance.
@@ -74,6 +80,9 @@ func (c *Clock) fireNext() {
 	e := heap.Pop(&c.q).(*event)
 	c.now = e.at
 	e.f()
+	if c.observe != nil {
+		c.observe()
+	}
 }
 
 type event struct {

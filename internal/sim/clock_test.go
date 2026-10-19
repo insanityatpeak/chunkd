@@ -99,3 +99,26 @@ func TestStepJumpsToNextEvent(t *testing.T) {
 		t.Fatal("Step = true with no pending events")
 	}
 }
+
+func TestClockObserverRunsAfterEachEvent(t *testing.T) {
+	c := NewClock()
+	var got []string
+	c.Observe(func() { got = append(got, "obs") })
+	c.AfterFunc(time.Millisecond, func() {
+		got = append(got, "a")
+		c.AfterFunc(0, func() { got = append(got, "b") })
+	})
+	c.Advance(time.Second)
+	if want := []string{"a", "obs", "b", "obs"}; !slices.Equal(got, want) {
+		t.Fatalf("calls = %v, want %v", got, want)
+	}
+	if c.Pending() != 0 {
+		t.Fatalf("Pending = %d: the observer must not schedule events", c.Pending())
+	}
+	c.Observe(nil)
+	c.AfterFunc(0, func() {})
+	c.Advance(time.Second)
+	if len(got) != 4 {
+		t.Fatalf("observer ran after Observe(nil): %v", got)
+	}
+}

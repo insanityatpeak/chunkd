@@ -16,6 +16,7 @@ type BlockStore struct {
 	mu          sync.Mutex
 	chunks      map[iface.ChunkID][]byte
 	quarantined map[iface.ChunkID][]byte
+	rotted      map[iface.ChunkID]bool // stored bytes no longer hash to the ID
 	term        uint64
 }
 
@@ -23,7 +24,7 @@ var _ iface.BlockStore = (*BlockStore)(nil)
 
 // NewBlockStore returns an empty store.
 func NewBlockStore() *BlockStore {
-	return &BlockStore{chunks: map[iface.ChunkID][]byte{}, quarantined: map[iface.ChunkID][]byte{}}
+	return &BlockStore{chunks: map[iface.ChunkID][]byte{}, quarantined: map[iface.ChunkID][]byte{}, rotted: map[iface.ChunkID]bool{}}
 }
 
 func (s *BlockStore) Put(_ context.Context, id iface.ChunkID, data []byte) error {
@@ -35,6 +36,7 @@ func (s *BlockStore) Put(_ context.Context, id iface.ChunkID, data []byte) error
 	// Keep an intact copy; replace a missing or rotted one.
 	if old, ok := s.chunks[id]; !ok || sha256.Sum256(old) != id {
 		s.chunks[id] = bytes.Clone(data)
+		delete(s.rotted, id)
 	}
 	return nil
 }
@@ -47,8 +49,23 @@ func (s *BlockStore) Corrupt(id iface.ChunkID) bool {
 	b, ok := s.chunks[id]
 	if ok && len(b) > 0 {
 		b[0] ^= 0xff
+		// A second flip restores the bytes.
+		if sha256.Sum256(b) != id {
+			s.rotted[id] = true
+		} else {
+			delete(s.rotted, id)
+		}
 	}
 	return ok
+}
+
+// Holds reports whether the store holds id and whether those bytes still
+// hash to it, without copying or hashing them.
+func (s *BlockStore) Holds(id iface.ChunkID) (present, intact bool) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	_, present = s.chunks[id]
+	return present, present && !s.rotted[id]
 }
 
 func (s *BlockStore) Term(context.Context) (uint64, error) {
@@ -90,6 +107,7 @@ func (s *BlockStore) Quarantine(_ context.Context, id iface.ChunkID) error {
 	if b, ok := s.chunks[id]; ok {
 		s.quarantined[id] = b
 		delete(s.chunks, id)
+		delete(s.rotted, id)
 	}
 	return nil
 }
@@ -110,6 +128,7 @@ func (s *BlockStore) Delete(_ context.Context, id iface.ChunkID) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	delete(s.chunks, id)
+	delete(s.rotted, id)
 	return nil
 }
 
