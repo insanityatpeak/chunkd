@@ -1,10 +1,13 @@
 # Changelog
 
-## Unreleased
+## v1.2.1 (2026-10-19)
 
 ### Fixed
 - A node back from a long outage stayed unreachable for up to half a minute in compose: gRPC's `dns` resolver backed off for up to 120 s after Docker's DNS stopped answering for the stopped container, so a transient blip right after it caused repairs. Peers are now dialed with `passthrough:///`, resolved on every attempt (bugs-found #35).
 - `go run ./tools/task resume-e2e` on Linux: the CLI's cache directory clashed with the CLI binary's path.
+
+### Testing
+- Chaos runs check safety every 100 ms of simulated time, not only once they settle (`cluster.WatchSafety`): no chunk drops below its copy floor except by wipes and rot, and the leader never keeps counting a copy a running node's disk lacks. About 1.5× the run time per seed.
 
 ### Build
 - The CI compose job also runs `resume-e2e` and `chaos --mode=real --ec`; `upload-artifact` v7; staticcheck v0.8.2 for Go 1.27.2.

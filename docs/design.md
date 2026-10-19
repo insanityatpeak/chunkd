@@ -392,7 +392,7 @@ After each scenario, `cluster.AssertInvariants` checks:
 The chaos runner (`internal/chaos`, `go run ./tools/task chaos`) adds, per seed:
 
 5. After faults and the workload end, replication settles (no chunk under or over RF) within the bound.
-6. At the end, no chunk is without a live copy. (The checker looks at the settled state, not every step: a transient dip below RF that heals itself passes, which is how bug #6 in `docs/bugs-found.md` got past it.)
+6. At the end, no chunk is without a live copy. (A transient dip below RF that heals itself passes this check, which is how bug #6 in `docs/bugs-found.md` got past it; 12 and 14 watch the run itself.)
 7. Repair never exceeds its limits (peak in flight, per source, per target).
 8. The same seed produces the same trace hash.
 9. No successful read, during the run or after it, returns bytes that were never written to that path.
@@ -400,5 +400,6 @@ The chaos runner (`internal/chaos`, `go run ./tools/task chaos`) adds, per seed:
 11. After GC settles, every copy on disk is marked, and refcounts and claims equal a recount.
 12. At every trim delete, the chunk keeps RF intact copies on up nodes, unless a holder failed within the detection window.
 13. With three metadata peers: every live peer's state is byte-identical, and every client history is linearizable (porcupine).
+14. Every 100 ms of simulated time (`cluster.WatchSafety`): every chunk of a live file keeps `min(RF − 1, min_replicas)` intact copies on disk (a stripe, 5 shards with a copy), less the copies wipes and rot destroyed since it was last at its target, so no delete of any kind can take it lower; and the leader never counts a copy on a running node whose disk has none for longer than two full-report intervals plus 6 s. A lost incremental report legitimately leaves such a phantom until the next full report, so this check catches phantoms that never clear (the follower bug fixed in `2fc4980`), not one a single stale report causes (bug #7); the trim check (12) and the floor catch what such a phantom leads to.
 
 Real mode (`--mode=real --short`) runs seven scenarios against the compose cluster, among them: kill a node past the repair delay (RF restored, extras trimmed on return), a 15 s blip (zero copies), a paused container (reads continue, no data loss), `kill-meta-leader`, `add-node` and `drain-node`.

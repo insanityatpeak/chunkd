@@ -1,8 +1,8 @@
 # Status
 
-Current phase: **none open; v1.2.0 is the latest release** (Phase 9 fixed the known limitations and audited the codebase; v1.1.0 and v1.2.0 are tagged). **v1.0.0 shipped** ([release](https://github.com/insanityatpeak/chunkd/releases/tag/v1.0.0)). Phase 7 was released as [v0.4.0](https://github.com/insanityatpeak/chunkd/releases/tag/v0.4.0), Phase 6 as [v0.3.0](https://github.com/insanityatpeak/chunkd/releases/tag/v0.3.0), Phase 5 as [v0.2.0](https://github.com/insanityatpeak/chunkd/releases/tag/v0.2.0).
+Current phase: **none open; v1.2.1 is the latest release** (Phase 9 fixed the known limitations and audited the codebase; v1.1.0, v1.2.0 and v1.2.1 are tagged). **v1.0.0 shipped** ([release](https://github.com/insanityatpeak/chunkd/releases/tag/v1.0.0)). Phase 7 was released as [v0.4.0](https://github.com/insanityatpeak/chunkd/releases/tag/v0.4.0), Phase 6 as [v0.3.0](https://github.com/insanityatpeak/chunkd/releases/tag/v0.3.0), Phase 5 as [v0.2.0](https://github.com/insanityatpeak/chunkd/releases/tag/v0.2.0).
 
-## Phase 9 (v1.1.0, with v1.2.0 follow-ups on `main`)
+## Phase 9 (v1.1.0, with v1.2.0 and v1.2.1 follow-ups on `main`)
 
 Fixes for the limitations Phase 8 listed, then an audit of the whole codebase. One additive log op and snapshot field (ADR-0030); data directories from v1.0.0 replay unchanged.
 
@@ -17,7 +17,7 @@ Fixes for the limitations Phase 8 listed, then an audit of the whole codebase. O
 | Quarantine directory capped | `TestQuarantineCapEvictsOldest` (1 GiB, `-quarantine-cap`) |
 | A silently dead metadata leader costs 3 s, not 10 s | `Call.Timeout`, `TestSilentLeaderCostsOneShortAttempt`; the `kill-leader` golden's write goes from 10.5 s to 3.5 s. ADR-0009 amended |
 | A new leader accepts drain for a node it has not heard from | `NodeJoinOp`, `TestDrainBeforeFirstHeartbeatAfterRestart`, `TestNodeJoinIsLoggedAndSnapshotted`. ADR-0030 |
-| A node back from a long outage is reachable within seconds (after v1.2.0) | `pool.get` dials `passthrough:///`; real-mode short suite 7 of 7 locally and in CI; bugs-found #35 |
+| A node back from a long outage is reachable within seconds (v1.2.1) | `pool.get` dials `passthrough:///`; real-mode short suite 7 of 7 locally and in CI; bugs-found #35 |
 
 Audit (Part 3):
 
@@ -188,7 +188,7 @@ Chunked, replicated upload and download; see ADRs 0005–0009. `TestRoundTrip`, 
 - [ ] Acknowledged incremental block reports (removes the up-to-30 s commit delay after a lost report)
 - [ ] Overlap chunk uploads (window of chunks in flight)
 - [x] (done in v1.2.0, 7-node `ec` profile) A real-mode EC chaos scenario: compose ran 5 nodes and a stripe needs 6 (real processes are covered by `e2e.TestRoundTripEC` on 6 in-process nodes)
-- [ ] Per-step safety check in the chaos harness (real copies never below RF − 1, meta never counts a copy the store lacks); bugs #6 and #7 slipped past the end-state checker
+- [x] Per-step safety check in the chaos harness: the trim check (`checkTrim`, since `2fc4980`) and `cluster.WatchSafety` (copy floor, lasting phantom copies) every 100 ms of every chaos seed. Sweeps of 3,000 seeds, 1,500 with `--metas=3` and 1,500 with `--ec` found no violation; a planted GC bug that deletes two copies of a few referenced chunks, which repair then restores, fails 111 of 200 seeds with the watcher and 3 without
 
 ## Open decisions
 
