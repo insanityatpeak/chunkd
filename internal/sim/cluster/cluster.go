@@ -9,6 +9,7 @@ import (
 	"fmt"
 	"io"
 	"log/slog"
+	"slices"
 	"time"
 
 	"github.com/insanityatpeak/chunkd/internal/client"
@@ -343,6 +344,9 @@ type metaPeer struct {
 	id    iface.NodeID
 	store *sim.MetaStore
 	srv   *meta.Server
+	// raftID is the ID a join recorded with the store (ADR-0031); 0 is
+	// generation 0 of the peer's slot.
+	raftID uint64
 }
 
 // metaName names peer i (from 0): meta-1, meta-2, …
@@ -378,6 +382,7 @@ func (c *Cluster) startMeta(p *metaPeer) error {
 	if len(c.metas) > 1 {
 		cfg.Peers = c.MetaIDs()
 	}
+	cfg.RaftID, cfg.Join = p.raftID, p.raftID > uint64(len(c.metas))
 	srv, err := meta.NewServer(context.Background(), meta.Deps{Clock: c.clock, Net: metaNet{c.net, c}, Store: p.store, Rand: c.rng, Log: c.logger(p.id)}, cfg)
 	if err != nil {
 		return err
@@ -404,6 +409,46 @@ func (c *Cluster) KillMeta(id iface.NodeID) {
 func (c *Cluster) ReviveMeta(id iface.NodeID) error {
 	c.net.Restart(id)
 	return c.startMeta(c.metaPeer(id))
+}
+
+// CorruptMetaLog makes metadata peer id's log unrecoverable, as a WAL record
+// that fails its checksum before the tail does: ReviveMeta then fails.
+func (c *Cluster) CorruptMetaLog(id iface.NodeID) { c.metaPeer(id).store.Corrupt() }
+
+// ReplaceMeta replaces metadata peer id, which lost its log, as an operator
+// would (ADR-0031): kill it if running, have the leader swap its Raft ID for
+// the slot's next generation, then start a process over an empty store that
+// joins as that ID. Client calls advance the clock; call it between Ticks.
+func (c *Cluster) ReplaceMeta(id iface.NodeID) error {
+	p := c.metaPeer(id)
+	if !c.net.Crashed(id) {
+		c.KillMeta(id)
+	}
+	old := p.raftID
+	if old == 0 {
+		old = uint64(slices.Index(c.MetaIDs(), id) + 1)
+	}
+	var err error
+	for range 10 { // the leader may be electing, or the change still in flight
+		if _, err = c.Client().ReplacePeer(context.Background(), string(id), old, true); err == nil {
+			break
+		}
+		c.Tick(time.Second)
+	}
+	if err != nil {
+		return fmt.Errorf("replace %s: %w", id, err)
+	}
+	p.store, p.raftID = sim.NewMetaStore(), 0
+	c.net.Restart(id)
+	caller := c.net.NewCaller(id, c.cfg.CallTimeout)
+	for range 10 {
+		if p.raftID, err = meta.AskJoin(context.Background(), caller, id, c.MetaIDs()); err == nil {
+			return c.startMeta(p)
+		}
+		c.Tick(time.Second)
+	}
+	c.net.Crash(id)
+	return fmt.Errorf("join %s: %w", id, err)
 }
 
 // CutMeta partitions metadata peer id from the other peers, both ways.

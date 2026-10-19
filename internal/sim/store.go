@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"crypto/sha256"
+	"errors"
 	"slices"
 	"sync"
 
@@ -158,9 +159,18 @@ type MetaStore struct {
 	entries [][]byte
 	state   []byte
 	snap    []byte
+	corrupt bool // Replay fails, as a real WAL with a bad record before its tail does
 }
 
 var _ iface.MetaStore = (*MetaStore)(nil)
+
+// Corrupt makes every later Replay fail, as metastore.ErrCorrupt does when a
+// record before the WAL's tail fails its checksum: the peer cannot recover.
+func (s *MetaStore) Corrupt() {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.corrupt = true
+}
 
 // NewMetaStore returns an empty log.
 func NewMetaStore() *MetaStore { return &MetaStore{} }
@@ -189,8 +199,11 @@ func (s *MetaStore) State(context.Context) ([]byte, error) {
 
 func (s *MetaStore) Replay(_ context.Context, from iface.Index, fn func(iface.Index, []byte) error) error {
 	s.mu.Lock()
-	base, entries := s.base, slices.Clone(s.entries)
+	base, entries, corrupt := s.base, slices.Clone(s.entries), s.corrupt
 	s.mu.Unlock()
+	if corrupt {
+		return errors.New("sim: WAL corrupt before tail")
+	}
 	for k, e := range entries {
 		if i := base + iface.Index(k+1); i >= from {
 			if err := fn(i, bytes.Clone(e)); err != nil {
