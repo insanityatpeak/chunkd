@@ -26,7 +26,7 @@ func main() {
 	adminAddr := flag.String("admin", server.Env("CHUNKD_ADMIN", ":9000"), "HTTP address for /metrics, /healthz, /nodes")
 	dataDir := flag.String("data", server.Env("CHUNKD_DATA", "data/meta"), "directory for the WAL and snapshots")
 	group := flag.String("peers", server.Env("CHUNKD_PEERS", ""), "the metadata group as id=host:port,... (this server included); empty runs a group of one")
-	join := flag.Bool("join", server.Env("CHUNKD_JOIN", "") != "", "over an empty data directory, join the running group as the member `chunkd meta replace` added for this peer")
+	join := flag.Bool("join", server.Env("CHUNKD_JOIN", "") != "", "over an empty data directory, join the running group as the member `chunkd meta replace` added for this peer (ignored over a directory that holds a log)")
 	cfg := meta.DefaultConfig("")
 	flag.IntVar(&cfg.Replicas, "replicas", cfg.Replicas, "replicas per chunk")
 	flag.IntVar(&cfg.MinReplicas, "min-replicas", cfg.MinReplicas, "reported replicas required to commit")

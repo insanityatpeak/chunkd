@@ -4,7 +4,6 @@ import (
 	"context"
 	"io"
 	"log/slog"
-	"strings"
 	"testing"
 
 	"github.com/insanityatpeak/chunkd/internal/core/meta"
@@ -44,13 +43,13 @@ func TestMetaIdentityWithoutAsking(t *testing.T) {
 			t.Fatalf("raft ID %d join %v, %v", c.RaftID, c.Join, err)
 		}
 	})
-	t.Run("join over a log is refused", func(t *testing.T) {
+	t.Run("join over a log keeps the peer's identity", func(t *testing.T) {
 		s, c := open(t), cfg()
 		if err := s.Save(context.Background(), 1, [][]byte{[]byte("e")}, nil); err != nil {
 			t.Fatal(err)
 		}
-		if err := MetaIdentity(context.Background(), s, c, nil, true, log); err == nil || !strings.Contains(err.Error(), "holds a log") {
-			t.Fatalf("err = %v, want a refusal", err)
+		if err := MetaIdentity(context.Background(), s, c, nil, true, log); err != nil || c.RaftID != 0 || c.Join {
+			t.Fatalf("raft ID %d join %v, %v", c.RaftID, c.Join, err)
 		}
 	})
 }

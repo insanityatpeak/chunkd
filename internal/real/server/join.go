@@ -13,11 +13,13 @@ import (
 )
 
 // MetaIdentity sets cfg.RaftID and cfg.Join for a metadata peer about to
-// start over store (ADR-0032). A recorded ID wins. Otherwise, with join set,
-// the store must be empty: the peer asks the group for the ID it added for
-// this slot, retrying while no leader answers, and records it before
-// consensus starts. Without join and with no record, the peer is generation
-// 0 of its slot, as every peer was before ADR-0032.
+// start over store (ADR-0032). A recorded ID wins. Otherwise, with join set
+// and an empty store, the peer asks the group for the ID it added for this
+// slot, retrying while no leader answers, and records it before consensus
+// starts. join over a store that holds a log is ignored: that peer still has
+// its votes and entries and keeps its identity, so starting every peer with
+// the flag is harmless. Without a record or a join, the peer is generation 0
+// of its slot, as every peer was before ADR-0032.
 func MetaIdentity(ctx context.Context, store *metastore.Store, cfg *meta.Config, addrs map[iface.NodeID]string, join bool, log *slog.Logger) error {
 	id, err := store.RaftID()
 	if err != nil {
@@ -29,15 +31,17 @@ func MetaIdentity(ctx context.Context, store *metastore.Store, cfg *meta.Config,
 			return err
 		}
 		if !empty {
-			return fmt.Errorf("join: the data directory holds a log; a peer joins only over an empty one")
+			log.Warn("join ignored: the data directory holds a log")
+			join = false
+		} else {
+			if id, err = askJoin(ctx, cfg, addrs, log); err != nil {
+				return err
+			}
+			if err := store.SetRaftID(id); err != nil {
+				return err
+			}
+			log.Info("joined the metadata group", "raft_id", id)
 		}
-		if id, err = askJoin(ctx, cfg, addrs, log); err != nil {
-			return err
-		}
-		if err := store.SetRaftID(id); err != nil {
-			return err
-		}
-		log.Info("joined the metadata group", "raft_id", id)
 	}
 	cfg.RaftID = id
 	// Any generation past 0 joined a running group: it never bootstraps one.

@@ -33,17 +33,17 @@ services:
   meta-1:
     <<: *meta
     profiles: [full, small]
-    environment: { CHUNKD_ID: meta-1, CHUNKD_ADVERTISE: "meta-1:7000", CHUNKD_PEERS: *peers }
+    environment: { CHUNKD_ID: meta-1, CHUNKD_ADVERTISE: "meta-1:7000", CHUNKD_PEERS: *peers, CHUNKD_JOIN: "${CHUNKD_JOIN:-}" }
     volumes: [meta-1:/data]
   meta-2:
     <<: *meta
     profiles: [full]
-    environment: { CHUNKD_ID: meta-2, CHUNKD_ADVERTISE: "meta-2:7000", CHUNKD_PEERS: *peers }
+    environment: { CHUNKD_ID: meta-2, CHUNKD_ADVERTISE: "meta-2:7000", CHUNKD_PEERS: *peers, CHUNKD_JOIN: "${CHUNKD_JOIN:-}" }
     volumes: [meta-2:/data]
   meta-3:
     <<: *meta
     profiles: [full]
-    environment: { CHUNKD_ID: meta-3, CHUNKD_ADVERTISE: "meta-3:7000", CHUNKD_PEERS: *peers }
+    environment: { CHUNKD_ID: meta-3, CHUNKD_ADVERTISE: "meta-3:7000", CHUNKD_PEERS: *peers, CHUNKD_JOIN: "${CHUNKD_JOIN:-}" }
     volumes: [meta-3:/data]
 
   node-1:
