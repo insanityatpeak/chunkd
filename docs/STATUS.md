@@ -1,8 +1,8 @@
 # Status
 
-Current phase: **Phase 9 on branch `phase9`, not merged or tagged** (known limitations fixed, then a whole-codebase audit). **v1.0.0 shipped** ([release](https://github.com/insanityatpeak/chunkd/releases/tag/v1.0.0)). Phase 7 was released as [v0.4.0](https://github.com/insanityatpeak/chunkd/releases/tag/v0.4.0), Phase 6 as [v0.3.0](https://github.com/insanityatpeak/chunkd/releases/tag/v0.3.0), Phase 5 as [v0.2.0](https://github.com/insanityatpeak/chunkd/releases/tag/v0.2.0).
+Current phase: **none open; v1.2.0 is the latest release** (Phase 9 fixed the known limitations and audited the codebase; v1.1.0 and v1.2.0 are tagged). **v1.0.0 shipped** ([release](https://github.com/insanityatpeak/chunkd/releases/tag/v1.0.0)). Phase 7 was released as [v0.4.0](https://github.com/insanityatpeak/chunkd/releases/tag/v0.4.0), Phase 6 as [v0.3.0](https://github.com/insanityatpeak/chunkd/releases/tag/v0.3.0), Phase 5 as [v0.2.0](https://github.com/insanityatpeak/chunkd/releases/tag/v0.2.0).
 
-## Phase 9 (on `phase9`; v1.1.0 not tagged)
+## Phase 9 (v1.1.0, with v1.2.0 follow-ups on `main`)
 
 Fixes for the limitations Phase 8 listed, then an audit of the whole codebase. One additive log op and snapshot field (ADR-0030); data directories from v1.0.0 replay unchanged.
 
@@ -70,11 +70,11 @@ Resumable uploads (B), API keys with quotas (D), and versions and CLI polish (C/
 |---|---|
 | B: resume after a client crash sends no stored chunk again; a wrong offset is refused; resume survives a leader failover | `sim/cluster` `TestResumeAfterClientCrash`, `TestResumeRefusals`, `TestResumeAcrossLeaderFailover`; `TestPutResumeAfterCutOff` (CLI over real disks); gateway tus tests |
 | D: a refused upload reads no bytes; concurrent uploads cannot pass a quota; keys see only their namespace and uploads | `TestQuotaReservesAtBegin` (state), `TestQuotaRefusalReadsNoBytes`, `TestQuotaRefusesBeforeBytesAreSent`, `TestAuthScopesPathsToNamespace`, `TestAuthUploadsBelongToTheirKey` |
-| C: per-path retention, chunk-level diff, restore | `TestRetentionPerPath`, `TestRetentionSurvivesSnapshot`, `TestRetentionIsPerNamespace`, `TestDiffManifests`, `TestDiffAgainstACluster`. The dashboard already lists retained versions with restore; it shows no diff |
+| C: per-path retention, chunk-level diff, restore | `TestRetentionPerPath`, `TestRetentionSurvivesSnapshot`, `TestRetentionIsPerNamespace`, `TestDiffManifests`, `TestDiffAgainstACluster`. The dashboard already lists retained versions with restore; v1.2.0 added a diff view |
 | E: exit codes, completion, bench, progress | `TestExitCodes`; `chunkd completion`, `chunkd bench` |
 | Existing goldens, chaos | The 7 goldens unchanged; `chaos --seeds=1000` and `--seeds=500 --metas=3`: 0 failed |
 
-Not done: a real-mode run of `put -resume` against compose (needs the compose project), and a dashboard diff view.
+Both items later done in v1.2.0: `put -resume` against compose, and the dashboard diff view.
 
 Erasure coding:
 
@@ -186,7 +186,7 @@ Chunked, replicated upload and download; see ADRs 0005–0009. `TestRoundTrip`, 
 - [x] Skip trims of chunks a pending upload has claimed (`trimSafe`, `TestTrimSkipsChunkWithPendingClaim`)
 - [ ] Acknowledged incremental block reports (removes the up-to-30 s commit delay after a lost report)
 - [ ] Overlap chunk uploads (window of chunks in flight)
-- [ ] A real-mode EC chaos scenario: compose runs 5 nodes and a stripe needs 6 (real processes are covered by `e2e.TestRoundTripEC` on 6 in-process nodes)
+- [x] (done in v1.2.0, 7-node `ec` profile) A real-mode EC chaos scenario: compose ran 5 nodes and a stripe needs 6 (real processes are covered by `e2e.TestRoundTripEC` on 6 in-process nodes)
 - [ ] Per-step safety check in the chaos harness (real copies never below RF − 1, meta never counts a copy the store lacks); bugs #6 and #7 slipped past the end-state checker
 
 ## Open decisions
