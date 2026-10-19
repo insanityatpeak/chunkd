@@ -271,6 +271,10 @@ type API interface {
 	// NodeAdmin sets a storage node's admin state: "draining", "active"
 	// (undrain) or "decommissioned", refused while unsafe (ADR-0021).
 	NodeAdmin(ctx context.Context, node, state string) (NodeAdminResult, error)
+	// ReplacePeer replaces metadata peer, now raft ID raftID, by its slot's
+	// next generation, which then joins over an empty store (ADR-0031).
+	// force allows replacing a peer the leader still hears from.
+	ReplacePeer(ctx context.Context, peer string, raftID uint64, force bool) (ReplacePeerResult, error)
 	// SetRetention sets how many GC epochs path keeps its retired versions
 	// for undelete and diff; 0 uses the cluster default (ADR-0026).
 	SetRetention(ctx context.Context, path string, epochs uint32) error
@@ -296,6 +300,16 @@ type MetaPeerInfo struct {
 	ID         string `json:"id"`
 	Match      uint64 `json:"match"`
 	HeardAgoMs int64  `json:"heardAgoMs"`
+	RaftID     uint64 `json:"raftId"`
+	// Role is the answering peer's Raft role, "voter" for the others.
+	Role string `json:"role"`
+}
+
+// ReplacePeerResult names the Raft ID removed and the one added.
+type ReplacePeerResult struct {
+	Peer    string `json:"peer"`
+	Removed uint64 `json:"removed"`
+	Added   uint64 `json:"added"`
 }
 
 // NodeAdminResult is the outcome of a drain, undrain or decommission.

@@ -7,6 +7,8 @@
 //	chunkd rm <path>                        delete
 //	chunkd cluster [status]                 nodes, detector state and replication health
 //	chunkd node drain|undrain|decommission <id>   retire a storage node (decommission -wait 10m polls until safe)
+//	chunkd meta peers                       metadata peers: Raft ID, role, log position, last heard
+//	chunkd meta replace <peer>              replace a metadata peer that lost its log (then start it empty with -join)
 //	chunkd keygen -name alice [-quota N] [-admin]   a new API key and its entry for the gateway's keys file
 //	chunkd diff|restore|retain|bench <path> <from> <to>          chunk-level difference of two versions (what a rewrite would send)
 //	chunkd restore <path> <version>         make an old version the live one again
@@ -73,6 +75,8 @@ func main() {
 	rotN := fs.Int("n", 1, "debug corrupt: number of chunks")
 	pick := fs.Uint64("pick", 0, "debug corrupt: first chunk, as an index into the chunks in ID order")
 	wait := fs.Duration("wait", 0, "node decommission: keep retrying this long while the node's chunks are still short elsewhere")
+	force := fs.Bool("force", false, "meta replace: replace a peer the leader still hears from")
+	raftID := fs.Uint64("raft-id", 0, "meta replace: the peer's current Raft ID (default: read from the cluster view)")
 	benchSize := fs.Int64("size", 16, "bench: MiB per file")
 	benchCount := fs.Int("count", 3, "bench: files to put and get")
 	keyName := fs.String("name", "", "keygen: the key's name; its namespace unless -namespace is set")
@@ -80,7 +84,7 @@ func main() {
 	keyQuota := fs.Int64("quota", 0, "keygen: byte quota of the namespace (0: unlimited)")
 	keyAdmin := fs.Bool("admin", false, "keygen: an admin key (every path, node controls)")
 	fs.Usage = func() {
-		fmt.Fprintln(os.Stderr, "usage: chunkd [flags] put|get|log|ls|stat|rm|undelete|cluster|node|keygen|diff|restore|bench|completion|ping|probe|debug corrupt ...")
+		fmt.Fprintln(os.Stderr, "usage: chunkd [flags] put|get|log|ls|stat|rm|undelete|cluster|node|meta|keygen|diff|restore|bench|completion|ping|probe|debug corrupt ...")
 		fs.PrintDefaults()
 	}
 	// Flags may come before or after the command.
@@ -166,6 +170,13 @@ func main() {
 		}
 	case cmd == "node" && len(args) == 3:
 		err = nodeAdmin(ctx, api, args[1], args[2], *wait, out)
+	case cmd == "meta" && len(args) == 2 && args[1] == "peers":
+		var c client.Cluster
+		if c, err = api.Cluster(ctx, 0); err == nil {
+			out.metaPeers(c)
+		}
+	case cmd == "meta" && len(args) == 3 && args[1] == "replace":
+		err = replacePeer(ctx, api, args[2], *raftID, *force, out)
 	case cmd == "diff" && len(args) == 4:
 		var from, to uint64
 		if from, err = strconv.ParseUint(args[2], 10, 64); err == nil {
@@ -311,6 +322,27 @@ func (p printer) manifest(m client.Manifest) {
 	w.Flush()
 }
 
+func (p printer) metaPeers(c client.Cluster) {
+	if p.json {
+		p.print(c.MetaPeers)
+		return
+	}
+	fmt.Printf("answered by %s (%s), leader %s, term %d\n\n", c.MetaPeer, c.MetaRole, c.MetaLeader, c.MetaTerm)
+	w := tabwriter.NewWriter(os.Stdout, 0, 4, 2, ' ', 0)
+	fmt.Fprintln(w, "PEER\tRAFT ID\tROLE\tMATCH\tLAST HEARD")
+	for _, mp := range c.MetaPeers {
+		heard := "never"
+		if mp.HeardAgoMs >= 0 {
+			heard = (time.Duration(mp.HeardAgoMs) * time.Millisecond).Round(10*time.Millisecond).String() + " ago"
+		}
+		fmt.Fprintf(w, "%s\t%d\t%s\t%d\t%s\n", mp.ID, mp.RaftID, mp.Role, mp.Match, heard)
+	}
+	w.Flush()
+	if c.MetaRole != "leader" {
+		fmt.Println("\nonly the leader lists every peer")
+	}
+}
+
 func (p printer) cluster(c client.Cluster) {
 	if p.json {
 		p.print(c)
@@ -382,6 +414,37 @@ func probe(url string) error {
 	if resp.StatusCode != http.StatusOK {
 		return errors.New(url + ": " + resp.Status)
 	}
+	return nil
+}
+
+// replacePeer replaces a metadata peer by its slot's next generation
+// (ADR-0031). Without -raft-id it reads the peer's current ID from the
+// leader's view, which lists it only while it is a voter.
+func replacePeer(ctx context.Context, api client.API, peer string, id uint64, force bool, out printer) error {
+	if id == 0 {
+		c, err := api.Cluster(ctx, 0)
+		if err != nil {
+			return err
+		}
+		for _, p := range c.MetaPeers {
+			if p.ID == peer {
+				id = p.RaftID
+			}
+		}
+		if id == 0 {
+			return iface.Errorf(iface.CodeNotFound, "%s is not a voter in %s's view; pass -raft-id with its last Raft ID", peer, c.MetaPeer)
+		}
+	}
+	res, err := api.ReplacePeer(ctx, peer, id, force)
+	if err != nil {
+		return err
+	}
+	if out.json {
+		out.print(res)
+		return nil
+	}
+	fmt.Printf("%s: raft ID %d removed, %d added\n", peer, res.Removed, res.Added)
+	fmt.Printf("next: empty %s's data directory, then start it with -join (CHUNKD_JOIN=1); it catches up from a snapshot\n", peer)
 	return nil
 }
 

@@ -635,7 +635,7 @@ func ClusterFromProto(resp *chunkdv1.ClusterResponse) Cluster {
 		MetaLeader: resp.GetMetaLeader(), MetaTerm: resp.GetMetaTerm(), MetaPeer: resp.GetMetaPeer(), MetaRole: resp.GetMetaRole(),
 		MetaCommit: resp.GetMetaCommit(), MetaApplied: resp.GetMetaApplied(), MetaPeers: []MetaPeerInfo{}}
 	for _, p := range resp.GetMetaPeers() {
-		out.MetaPeers = append(out.MetaPeers, MetaPeerInfo{ID: p.GetId(), Match: p.GetMatch(), HeardAgoMs: p.GetHeardAgoMs()})
+		out.MetaPeers = append(out.MetaPeers, MetaPeerInfo{ID: p.GetId(), Match: p.GetMatch(), HeardAgoMs: p.GetHeardAgoMs(), RaftID: p.GetRaftId(), Role: p.GetRole()})
 	}
 	if g := resp.GetGc(); g != nil {
 		out.GC = GCStats{Orphans: g.GetOrphans(), Sent: g.GetSent(), Deleted: g.GetDeleted(), Kept: g.GetKept(), Drift: g.GetDrift(),
@@ -696,4 +696,13 @@ func (c *Direct) NodeAdmin(ctx context.Context, node, state string) (NodeAdminRe
 		return NodeAdminResult{}, err
 	}
 	return NodeAdminResult{Node: node, Admin: state, Warning: resp.GetWarning()}, nil
+}
+
+// ReplacePeer asks the metadata leader to replace a metadata peer.
+func (c *Direct) ReplacePeer(ctx context.Context, peer string, raftID uint64, force bool) (ReplacePeerResult, error) {
+	var resp chunkdv1.ReplacePeerResponse
+	if err := c.meta(ctx, wire.KindReplacePeer, &chunkdv1.ReplacePeerRequest{Peer: peer, RaftId: raftID, Force: force}, &resp); err != nil {
+		return ReplacePeerResult{}, err
+	}
+	return ReplacePeerResult{Peer: peer, Removed: resp.GetRemoved(), Added: resp.GetAdded()}, nil
 }

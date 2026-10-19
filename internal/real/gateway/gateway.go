@@ -49,6 +49,7 @@ func Handler(api client.API, log *slog.Logger, opts ...Option) http.Handler {
 	mux.HandleFunc("GET /cluster", h.cluster)
 	mux.HandleFunc("PUT /retention/{path...}", h.guard(scopePath, h.setRetention))
 	mux.HandleFunc("POST /nodes/{node}/{action}", h.guard(scopeAdmin, h.nodeAdmin))
+	mux.HandleFunc("POST /meta/peers/{peer}/replace", h.guard(scopeAdmin, h.replacePeer))
 	mux.HandleFunc("POST /uploads/{path...}", h.guard(scopePath, h.createUpload))
 	mux.HandleFunc("GET /uploads/{id}", h.guard(scopeUpload, h.uploadStatus))
 	mux.HandleFunc("PATCH /uploads/{id}", h.guard(scopeUpload, h.appendUpload))
@@ -220,6 +221,20 @@ func (h *handler) nodeAdmin(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	res, err := h.api.NodeAdmin(r.Context(), r.PathValue("node"), state)
+	if err != nil {
+		writeError(w, err, 0)
+		return
+	}
+	writeJSON(w, http.StatusOK, res)
+}
+
+func (h *handler) replacePeer(w http.ResponseWriter, r *http.Request) {
+	id, err := strconv.ParseUint(r.URL.Query().Get("raft_id"), 10, 64)
+	if err != nil {
+		writeError(w, iface.Errorf(iface.CodeInvalid, "bad raft_id %q", r.URL.Query().Get("raft_id")), 0)
+		return
+	}
+	res, err := h.api.ReplacePeer(r.Context(), r.PathValue("peer"), id, r.URL.Query().Get("force") == "1")
 	if err != nil {
 		writeError(w, err, 0)
 		return

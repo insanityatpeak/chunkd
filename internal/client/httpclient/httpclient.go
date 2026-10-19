@@ -213,6 +213,17 @@ func (c *Client) NodeAdmin(ctx context.Context, node, state string) (client.Node
 	return out, err
 }
 
+// ReplacePeer replaces a metadata peer through the gateway.
+func (c *Client) ReplacePeer(ctx context.Context, peer string, raftID uint64, force bool) (client.ReplacePeerResult, error) {
+	q := url.Values{"raft_id": {strconv.FormatUint(raftID, 10)}}
+	if force {
+		q.Set("force", "1")
+	}
+	var out client.ReplacePeerResult
+	_, err := c.do(ctx, http.MethodPost, c.url("/meta/peers/"+url.PathEscape(peer)+"/replace", q), nil, 0, &out)
+	return out, err
+}
+
 // Cluster returns the cluster view with events after eventsAfter.
 func (c *Client) Cluster(ctx context.Context, eventsAfter uint64) (client.Cluster, error) {
 	var out client.Cluster

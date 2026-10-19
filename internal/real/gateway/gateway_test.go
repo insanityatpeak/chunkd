@@ -65,6 +65,11 @@ func (l *locked) NodeAdmin(ctx context.Context, node, state string) (client.Node
 	defer l.mu.Unlock()
 	return l.api.NodeAdmin(ctx, node, state)
 }
+func (l *locked) ReplacePeer(ctx context.Context, peer string, id uint64, force bool) (client.ReplacePeerResult, error) {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	return l.api.ReplacePeer(ctx, peer, id, force)
+}
 func (l *locked) SetRetention(ctx context.Context, p string, n uint32) error {
 	l.mu.Lock()
 	defer l.mu.Unlock()
@@ -361,5 +366,32 @@ func TestGatewayRoundTripEC(t *testing.T) {
 	var got bytes.Buffer
 	if _, err := hc.Get(ctx, "/ec/a.bin", &got); err != nil || !bytes.Equal(got.Bytes(), data) {
 		t.Fatalf("get: %d bytes, %v", got.Len(), err)
+	}
+}
+
+// The view names each metadata peer's Raft ID and role, and a replace goes
+// through with the API's codes: a group of one cannot replace its leader
+// (409), and a missing raft_id is a bad request (400).
+func TestGatewayReplacePeer(t *testing.T) {
+	srv, _ := setup(t)
+	api := httpclient.New(srv.URL)
+	ctx := context.Background()
+	view, err := api.Cluster(ctx, 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(view.MetaPeers) != 1 || view.MetaPeers[0].RaftID != 1 || view.MetaPeers[0].Role != "leader" {
+		t.Fatalf("metadata peers %+v", view.MetaPeers)
+	}
+	if _, err := api.ReplacePeer(ctx, view.MetaPeers[0].ID, 1, true); iface.CodeOf(err) != iface.CodeConflict {
+		t.Fatalf("replace the only peer: %v, want conflict", err)
+	}
+	resp, err := http.Post(srv.URL+"/meta/peers/meta-1/replace", "", nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	resp.Body.Close()
+	if resp.StatusCode != http.StatusBadRequest {
+		t.Fatalf("replace without raft_id: %d, want 400", resp.StatusCode)
 	}
 }

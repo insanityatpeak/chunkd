@@ -116,6 +116,9 @@ func TestAuthScopesPathsToNamespace(t *testing.T) {
 	if _, err := alice.NodeAdmin(ctx, "node-1", "draining"); iface.CodeOf(err) != iface.CodeDenied {
 		t.Fatalf("alice drains a node: %v", err)
 	}
+	if _, err := alice.ReplacePeer(ctx, "meta-1", 1, true); iface.CodeOf(err) != iface.CodeDenied {
+		t.Fatalf("alice replaces a metadata peer: %v", err)
+	}
 }
 
 // An upload ID names no path, so another key's ID answers not found.

@@ -181,10 +181,11 @@ func bench(ctx context.Context, api client.API, size int64, count int, opts clie
 const completionBash = `_chunkd() {
   local cur=${COMP_WORDS[COMP_CWORD]}
   if [ "$COMP_CWORD" -eq 1 ]; then
-    COMPREPLY=($(compgen -W "put get log diff restore retain undelete ls stat rm cluster node keygen bench completion ping probe debug" -- "$cur"))
+    COMPREPLY=($(compgen -W "put get log diff restore retain undelete ls stat rm cluster node meta keygen bench completion ping probe debug" -- "$cur"))
   else
     case ${COMP_WORDS[1]} in
       node) COMPREPLY=($(compgen -W "drain undrain decommission" -- "$cur")) ;;
+      meta) COMPREPLY=($(compgen -W "peers replace" -- "$cur")) ;;
       completion) COMPREPLY=($(compgen -W "bash zsh powershell" -- "$cur")) ;;
       *) COMPREPLY=($(compgen -f -- "$cur")) ;;
     esac
@@ -196,11 +197,13 @@ complete -F _chunkd chunkd
 const completionZsh = `#compdef chunkd
 _chunkd() {
   local -a cmds
-  cmds=(put get log diff restore retain undelete ls stat rm cluster node keygen bench completion ping probe debug)
+  cmds=(put get log diff restore retain undelete ls stat rm cluster node meta keygen bench completion ping probe debug)
   if (( CURRENT == 2 )); then
     _describe command cmds
   elif [[ $words[2] == node ]]; then
     _values action drain undrain decommission
+  elif [[ $words[2] == meta ]]; then
+    _values action peers replace
   elif [[ $words[2] == completion ]]; then
     _values shell bash zsh powershell
   else
@@ -212,7 +215,7 @@ compdef _chunkd chunkd
 
 const completionPowerShell = `Register-ArgumentCompleter -Native -CommandName chunkd -ScriptBlock {
   param($word, $ast, $pos)
-  $cmds = 'put','get','log','diff','restore','retain','undelete','ls','stat','rm','cluster','node','keygen','bench','completion','ping','probe','debug'
+  $cmds = 'put','get','log','diff','restore','retain','undelete','ls','stat','rm','cluster','node','meta','keygen','bench','completion','ping','probe','debug'
   $cmds | Where-Object { $_ -like "$word*" } | ForEach-Object { [System.Management.Automation.CompletionResult]::new($_, $_, 'ParameterValue', $_) }
 }
 `
