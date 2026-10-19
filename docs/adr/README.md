@@ -20,7 +20,7 @@ Format: Context, Options considered, Decision, Consequences, At 100× scale ([te
 | [0014](0014-versioned-files-and-cas.md) | Versioned files, compare-and-swap commits, opt-in last writer wins | accepted |  |
 | [0015](0015-claims-and-atomic-commit.md) | Chunk claims: dedup, the GC mark for uploads, atomic commit | accepted |  |
 | [0016](0016-garbage-collection.md) | Garbage collection: logical epochs, mark-and-sweep, fenced deletes | accepted |  |
-| [0017](0017-raft-library-and-log-storage.md) | Raft library, self-driven timers and the log store | accepted |  |
+| [0017](0017-raft-library-and-log-storage.md) | Raft library, self-driven timers and the log store | accepted | [0032](0032-replace-a-metadata-peer.md) (Raft IDs by slot and generation) |
 | [0018](0018-one-raft-in-sim-and-real.md) | One Raft implementation in the sim, the browser and real mode | accepted |  |
 | [0019](0019-metadata-reads-fencing-and-failover.md) | Metadata reads, term fencing and failover | accepted |  |
 | [0020](0020-rebalancing.md) | Rebalancing: a central planner, rack-feasible targets, logged trims | accepted |  |
@@ -35,3 +35,4 @@ Format: Context, Options considered, Decision, Consequences, At 100× scale ([te
 | [0029](0029-quorum-puts.md) | Puts return at the replica quorum | accepted | [0031](0031-ec-quorum-puts.md) (the same for erasure-coded puts) |
 | [0030](0030-log-node-admission.md) | Log node admission | accepted |  |
 | [0031](0031-ec-quorum-puts.md) | Erasure-coded puts return at the commit quorum | accepted |  |
+| [0032](0032-replace-a-metadata-peer.md) | Replace a metadata peer | accepted |  |

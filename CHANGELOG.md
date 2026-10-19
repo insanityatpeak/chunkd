@@ -2,10 +2,15 @@
 
 ## Unreleased
 
+### Added
+- `chunkd meta replace <peer>` replaces a metadata peer that lost its log, such as one whose WAL is corrupt: the leader logs its Raft ID as retired, removes it and adds the slot's next generation, and the peer, started over an empty data directory with `-join` (`CHUNKD_JOIN=1`), joins as that member and catches up from a snapshot. Repeating the command is safe. `chunkd meta peers` lists each peer's Raft ID, role, log position and last contact. ADR-0032.
+- One additive log op (`RetirePeerOp`) and snapshot field (`retired_peers`); data directories from earlier versions start unchanged, as generation 0 of their slot.
+
 ### Changed
 - An erasure-coded put returns once 5 of 6 shards are stored and a 50 ms grace has passed, without cancelling the sixth, as replicated puts do. With one gray node on 7 nodes, EC put p50 falls from 4,157 ms to 238 ms; healthy puts are unchanged. A shard that never lands is rebuilt by repair. ADR-0031.
 
 ### Testing
+- Chaos: in about a third of `--metas=3` seeds a follower loses its log mid-run and is replaced; 1,500 seeds pass with 279 replacements.
 - `TestBenchPutRedundancy` (`docs/benchmarks/results.md`, "Put latency by redundancy"): replicated and EC puts, healthy and with a gray node, at the quorum and waiting for all.
 
 ## v1.2.1 (2026-10-19)

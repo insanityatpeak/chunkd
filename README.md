@@ -49,6 +49,9 @@ go run ./cmd/chunkd cluster status                # detector state, replication,
 go run ./cmd/chunkd node drain node-4             # move its copies away; it takes no new chunks
 go run ./cmd/chunkd node decommission -wait 5m node-4   # once every chunk has 3 copies elsewhere
 go run ./cmd/chunkd node undrain node-4           # back in service; the balancer evens out the bytes
+go run ./cmd/chunkd meta peers                    # metadata peers: Raft ID, role, log position, last contact
+go run ./cmd/chunkd meta replace meta-2           # meta-2 lost its log: swap its Raft ID for a new member
+docker compose rm -sf meta-2 && docker volume rm chunkd_meta-2 && CHUNKD_JOIN=1 docker compose up -d meta-2   # it joins empty and catches up
 docker compose --profile full --profile extra up -d node-6   # a sixth node, empty, on rack r3
 ```
 
@@ -83,6 +86,7 @@ Shared dashboard links replay exactly: [kill a node](https://insanityatpeak.gith
 | An upload is invisible until it commits, and commits only with 2 reported copies | `TestUncommittedInvisible`, `TestCommitRequiresMinReplicas` | go |
 | Commit and delete are safe to repeat when responses are lost or duplicated | `TestCommitAndDeleteAreIdempotent`, `TestUploadsUnderMessageLoss` | go |
 | A crash mid-write never loses an acknowledged metadata op | `TestTornTailRecovers`, `TestCorruptionBeforeTailIsAnError` | go |
+| A metadata peer whose WAL is corrupt is replaced by a new member that catches up, and the group then survives losing another peer | `TestReplacePeer`, `TestReplaceMetaWithCorruptLog` (sim), `TestReplaceMetaPeerReal` (processes and disk); a follower is replaced mid-run in a third of the `--metas=3` chaos seeds | go |
 | A dead node's chunks are back at 3 copies within the stated bound | `TestKillNodeRestoresRF` (sim), `kill-node-restores-rf` (containers) | go, compose |
 | A node that only reboots costs zero copies | `TestTransientBlipNoRepair`, `transient-blip-no-repair` | go, compose |
 | Repair never exceeds its concurrency limits and byte rate | `TestRepairThrottle` | go |
@@ -156,7 +160,7 @@ Charts and every table: [docs/benchmarks/results.md](docs/benchmarks/results.md)
 | A node removes its oldest quarantined files once `quarantine/` passes a byte cap (1 GiB, `-quarantine-cap`), without checking that a good copy exists elsewhere (`TestQuarantineCapEvictsOldest`) | Rot that fills the cap means failing media, and repair has long since replaced those copies; the newest evidence stays | Delete a corrupt copy only after the metadata server confirms a good one, as HDFS does |
 | The scrubber runs on the node's event loop, one chunk per step | A 4 MiB hash takes a few ms, far below the 3 s suspect timeout | A scanner thread per volume, as HDFS does |
 | Client re-check hints are limited per node (1 a second, burst 10), not per client: one noisy client can use a node's whole budget, and a refused client is not told | Each hint costs the node one re-read; the scrubber finds a bad copy a dropped hint pointed at; only the node's check removes a copy (`TestSuspectHintsAreRateLimited`) | Per-client hint budget |
-| A metadata peer whose WAL has a corrupt entry refuses to start, and nothing rebuilds it automatically | The other two peers keep a quorum and serve; the entry is intact on them | Remove the peer and add a fresh one with a membership change, which catches up from a snapshot (single-server changes exist in the consensus layer, with no CLI yet) |
+| A metadata peer that lost its log (a corrupt WAL refuses to start) is replaced by hand: `chunkd meta replace`, then start it over an empty directory with `-join`. The group's names and addresses are fixed by `-peers`: it cannot grow, shrink or move a peer to a new address (ADR-0032) | The other two peers keep a quorum meanwhile; a replacement takes one command and a restart, and is safe to repeat | Random member IDs and the member list in the log, as etcd keeps them; automatic replacement, as CockroachDB's replicate queue does |
 | Directory fsync is a no-op on Windows | Production target is Linux; NTFS journals renames | None |
 | Real-mode chaos has no message-level faults (loss, duplication, delay) | The sim covers them in 1,000 seeds per push; real mode covers process faults (kill, pause, wipe) | `tc netem` in each container, which needs `NET_ADMIN` |
 | Placement does not avoid slow nodes; only reads route around them | Hedged reads bound the read cost; writes need 2 of 3 | Feed client latency reports into placement (HDFS slow-node detection) |
