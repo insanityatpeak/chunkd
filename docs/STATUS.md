@@ -17,6 +17,7 @@ Fixes for the limitations Phase 8 listed, then an audit of the whole codebase. O
 | Quarantine directory capped | `TestQuarantineCapEvictsOldest` (1 GiB, `-quarantine-cap`) |
 | A silently dead metadata leader costs 3 s, not 10 s | `Call.Timeout`, `TestSilentLeaderCostsOneShortAttempt`; the `kill-leader` golden's write goes from 10.5 s to 3.5 s. ADR-0009 amended |
 | A new leader accepts drain for a node it has not heard from | `NodeJoinOp`, `TestDrainBeforeFirstHeartbeatAfterRestart`, `TestNodeJoinIsLoggedAndSnapshotted`. ADR-0030 |
+| A node back from a long outage is reachable within seconds (after v1.2.0) | `pool.get` dials `passthrough:///`; real-mode short suite 7 of 7 locally and in CI; bugs-found #35 |
 
 Audit (Part 3):
 
@@ -58,7 +59,7 @@ Findings from the benchmarks, now in Known limitations: a limited Begin scans ev
 
 Checked from a fresh clone: `docker compose up -d --build --wait` healthy, `docker compose run --rm demo` passes (SHA-256 verified with a node down, extras trimmed on return), and `demo.gif` re-rendered against it.
 
-Possible future work: a per-namespace usage counter for quotas, hedged or latency-aware writes, content-defined chunking, background tiering from copies to erasure coding, a multi-host benchmark run, a compose scenario for `put -resume` and for EC, and a diff view in the dashboard.
+Possible future work at the end of Phase 8: a per-namespace usage counter for quotas (done, ADR-0028), hedged or latency-aware writes (quorum puts done, ADR-0029; latency-aware placement open), content-defined chunking (open), background tiering from copies to erasure coding (open), a multi-host benchmark run (open), a compose scenario for `put -resume` and for EC (done, v1.2.0), and a diff view in the dashboard (done, v1.2.0).
 
 ## Phase 7 (complete)
 

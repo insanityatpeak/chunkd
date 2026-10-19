@@ -1,5 +1,14 @@
 # Changelog
 
+## Unreleased
+
+### Fixed
+- A node back from a long outage stayed unreachable for up to half a minute in compose: gRPC's `dns` resolver backed off for up to 120 s after Docker's DNS stopped answering for the stopped container, so a transient blip right after it caused repairs. Peers are now dialed with `passthrough:///`, resolved on every attempt (bugs-found #35).
+- `go run ./tools/task resume-e2e` on Linux: the CLI's cache directory clashed with the CLI binary's path.
+
+### Build
+- The CI compose job also runs `resume-e2e` and `chaos --mode=real --ec`; `upload-artifact` v7; staticcheck v0.8.2 for Go 1.27.2.
+
 ## v1.2.0 (2026-10-18)
 
 ### Added
