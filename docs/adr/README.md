@@ -36,3 +36,4 @@ Format: Context, Options considered, Decision, Consequences, At 100× scale ([te
 | [0030](0030-log-node-admission.md) | Log node admission | accepted |  |
 | [0031](0031-ec-quorum-puts.md) | Erasure-coded puts return at the commit quorum | accepted |  |
 | [0032](0032-replace-a-metadata-peer.md) | Replace a metadata peer | accepted |  |
+| [0033](0033-confirmed-incremental-reports.md) | Confirmed incremental block reports | accepted |  |

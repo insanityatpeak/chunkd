@@ -18,6 +18,7 @@ Fixes for the limitations Phase 8 listed, then an audit of the whole codebase. O
 | A silently dead metadata leader costs 3 s, not 10 s | `Call.Timeout`, `TestSilentLeaderCostsOneShortAttempt`; the `kill-leader` golden's write goes from 10.5 s to 3.5 s. ADR-0009 amended |
 | A new leader accepts drain for a node it has not heard from | `NodeJoinOp`, `TestDrainBeforeFirstHeartbeatAfterRestart`, `TestNodeJoinIsLoggedAndSnapshotted`. ADR-0030 |
 | An EC put returns at 5 of 6 shards (v1.3.0) | EC put p50 with one gray node on 7 nodes 4,157 ms to 238 ms (`put-latency.csv`); `TestECPutNotHeldBySlowShard`, `TestECPutShardNeverLands`. ADR-0031 |
+| A lost incremental block report is resent within a heartbeat or two (after v1.3.0) | `TestLostIncrementalReportIsResent`: commit 1.2 s after the writes with every report lost (20 s and waiting without the resend). ADR-0033 |
 | A metadata peer that lost its log is replaced (v1.3.0) | `chunkd meta replace`, `-join`; `TestReplacePeer`, `TestReplaceMetaPeerReal` (a corrupt WAL on disk), chaos: 307 replacements in 1,500 `--metas=3` seeds. ADR-0032 |
 | A node back from a long outage is reachable within seconds (v1.2.1) | `pool.get` dials `passthrough:///`; real-mode short suite 7 of 7 locally and in CI; bugs-found #35 |
 
@@ -187,7 +188,7 @@ Chunked, replicated upload and download; see ADRs 0005–0009. `TestRoundTrip`, 
 - [x] A shorter first attempt for metadata RPCs (3 s, doubling); a hedged call to the next peer is still open
 - [x] Membership change from the CLI, to replace a peer whose WAL is corrupt: `chunkd meta replace` and `chunkd-meta -join` (ADR-0032)
 - [x] Skip trims of chunks a pending upload has claimed (`trimSafe`, `TestTrimSkipsChunkWithPendingClaim`)
-- [ ] Acknowledged incremental block reports (removes the up-to-30 s commit delay after a lost report)
+- [x] Confirmed incremental block reports: heartbeats list unconfirmed reports and the missing ones are resent (ADR-0033)
 - [ ] Overlap chunk uploads (window of chunks in flight)
 - [x] (done in v1.2.0, 7-node `ec` profile) A real-mode EC chaos scenario: compose ran 5 nodes and a stripe needs 6 (real processes are covered by `e2e.TestRoundTripEC` on 6 in-process nodes)
 - [x] Per-step safety check in the chaos harness: the trim check (`checkTrim`, since `2fc4980`) and `cluster.WatchSafety` (copy floor, lasting phantom copies) every 100 ms of every chaos seed. Sweeps of 3,000 seeds, 1,500 with `--metas=3` and 1,500 with `--ec` found no violation; a planted GC bug that deletes two copies of a few referenced chunks, which repair then restores, fails 111 of 200 seeds with the watcher and 3 without

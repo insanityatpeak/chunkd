@@ -102,7 +102,7 @@ Client               Meta                  node-A      node-B
 
 - Every node heartbeats each second to every metadata peer: rack, address, bytes and chunks stored. Only the leader acts on them. Whether a node is draining or decommissioned is logged metadata state set by the operator (ADR-0021), not part of the heartbeat.
 - The ack asks for a full block report when the peer has none for the node (first contact, or after a leader change). It also carries the leader and its term, which is how a node learns of a new term (see [fencing](#metadata-group-adr-0017-to-0019)).
-- Nodes send an incremental report after storing each chunk, and a full report every 30 s, which repairs any lost incremental report.
+- Nodes send an incremental report after each store change, and a full report every 30 s. Each heartbeat to a peer lists the incremental reports that peer has not confirmed, and the ack says which it never got; the node resends those, so a lost report costs a heartbeat or two, not 30 s (ADR-0033).
 - Heartbeats and reports carry `(incarnation, seq)`; the incarnation changes on every process start. A report older than one already applied is ignored (bugs-found #7).
 
 ## Failure detection (ADR-0010)

@@ -86,6 +86,7 @@ Shared dashboard links replay exactly: [kill a node](https://insanityatpeak.gith
 | An upload is invisible until it commits, and commits only with 2 reported copies | `TestUncommittedInvisible`, `TestCommitRequiresMinReplicas` | go |
 | Commit and delete are safe to repeat when responses are lost or duplicated | `TestCommitAndDeleteAreIdempotent`, `TestUploadsUnderMessageLoss` | go |
 | A crash mid-write never loses an acknowledged metadata op | `TestTornTailRecovers`, `TestCorruptionBeforeTailIsAnError` | go |
+| A lost incremental block report is sent again within a heartbeat or two, so a commit is not held until the next full report | `TestLostIncrementalReportIsResent` (commit 1.2 s after the writes with every report lost; 20 s and waiting without the resend) | go |
 | A metadata peer whose WAL is corrupt is replaced by a new member that catches up, and the group then survives losing another peer | `TestReplacePeer`, `TestReplaceMetaWithCorruptLog` (sim), `TestReplaceMetaPeerReal` (processes and disk); a follower is replaced mid-run in a third of the `--metas=3` chaos seeds | go |
 | A dead node's chunks are back at 3 copies within the stated bound | `TestKillNodeRestoresRF` (sim), `kill-node-restores-rf` (containers) | go, compose |
 | A node that only reboots costs zero copies | `TestTransientBlipNoRepair`, `transient-blip-no-repair` | go, compose |
@@ -153,7 +154,6 @@ Charts and every table: [docs/benchmarks/results.md](docs/benchmarks/results.md)
 | Upload size must be known up front | Placement is computed per chunk at `BeginUpload` | HDFS-style `addBlock` per chunk |
 | A chunk the cluster already holds is skipped only once it has 2 reported copies; identical chunks written close together can each get 3 | Correct, just extra copies, trimmed on the next report | Count claimed in-flight writes as pending copies |
 | With unbalanced racks, the smallest rack holds a replica of every chunk | Rack spread deliberately outranks load (ADR-0008) | Balanced racks, or capacity-weighted placement |
-| A lost incremental block report delays a commit until the next full report (up to 30 s) | The client retries commit for 45 s | Acknowledged incremental reports |
 | Every copy of a chunk rotting within one scrub window loses it; the read fails with `corrupt` | Needs three independent failures inside one pass interval plus repair time (about q³; ADR-0013) | Shorter passes or erasure coding with parity checks |
 | Correlated corruption (a firmware or driver bug on several disks at once) defeats the independence the math assumes | Rack spread puts copies on different hardware; nothing more | Mixed disk models and firmware per replica set, as large operators do |
 | Corruption in the client's memory before it hashes the data is stored as valid | The hash is computed from what the client holds | End-to-end checksums from the data's source (the application) |
