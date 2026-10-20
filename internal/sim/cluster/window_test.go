@@ -90,3 +90,43 @@ func TestWindowFailedChunkAbortsUpload(t *testing.T) {
 		t.Fatalf("stat after the failed put: %v, want not found", err)
 	}
 }
+
+// A chunk repeated within one wave is put once and the repeats are deduped:
+// the wave's single claim cannot find the first copy present yet.
+func TestWindowDedupsRepeatsInWave(t *testing.T) {
+	const size = 64 << 10
+	for _, policy := range []client.Redundancy{client.Replicated, client.EC42} {
+		t.Run(string(policy), func(t *testing.T) {
+			cfg := DefaultConfig()
+			cfg.Nodes = ec.TotalShards + 1
+			cfg.Faults.DropRate = 0
+			cfg.Meta.ChunkSize = size
+			c := New(3, cfg, io.Discard)
+			c.Tick(3 * time.Second)
+			caller := c.NewCaller("writer")
+			cl := client.New(caller, client.Options{Meta: MetaID, Sleep: caller.Sleep, Window: 4})
+			data := bytes.Repeat(c.RandomData("/r", size), 8)
+			m, err := cl.Put(context.Background(), "/r", bytes.NewReader(data), int64(len(data)), client.PutOptions{Redundancy: policy})
+			if err != nil {
+				t.Fatal(err)
+			}
+			if m.Chunk[0].Deduped {
+				t.Fatal("chunk 0 deduped: nothing held it before the put")
+			}
+			for _, ref := range m.Chunk[1:4] {
+				if !ref.Deduped || ref.ID != m.Chunk[0].ID {
+					t.Fatalf("chunk %d: deduped %v, id %s; want a dedup of chunk 0 (%s)", ref.Index, ref.Deduped, ref.ID, m.Chunk[0].ID)
+				}
+			}
+			if got, _, err := c.Download("/r"); err != nil || !bytes.Equal(got, data) {
+				t.Fatalf("read back: %d bytes, %v", len(got), err)
+			}
+			if _, ok := c.Settle(time.Minute); !ok {
+				t.Fatal("did not settle")
+			}
+			if err := c.AssertInvariants(); err != nil {
+				t.Fatal(err)
+			}
+		})
+	}
+}

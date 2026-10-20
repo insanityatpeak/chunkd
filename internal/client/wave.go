@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"slices"
 
 	"github.com/insanityatpeak/chunkd/internal/core/chunk"
 	"github.com/insanityatpeak/chunkd/internal/core/ec"
@@ -78,6 +79,9 @@ func (c *Direct) storeWave(ctx context.Context, begin *chunkdv1.BeginUploadRespo
 	refs := make([]ChunkRef, len(chs))
 	var puts []*put
 	min := int(begin.GetMinReplicas())
+	// A chunk repeated within the wave is put once: the claim cannot find
+	// the first copy present before it is stored. dup maps it to that copy.
+	first, dup := map[iface.ChunkID]int{}, map[int]int{}
 	for k, ch := range chs {
 		if k < len(claim.GetPresent()) && claim.GetPresent()[k] {
 			ref := ChunkRef{Index: ch.Index, ID: ids[k].String(), Size: int64(len(ch.Data)), Deduped: true}
@@ -87,6 +91,11 @@ func (c *Direct) storeWave(ctx context.Context, begin *chunkdv1.BeginUploadRespo
 			refs[k] = ref
 			continue
 		}
+		if j, ok := first[ids[k]]; ok {
+			dup[k] = j
+			continue
+		}
+		first[ids[k]] = k
 		pl := begin.GetPlacement()[ch.Index]
 		var p *put
 		if stripes {
@@ -106,6 +115,16 @@ func (c *Direct) storeWave(ctx context.Context, begin *chunkdv1.BeginUploadRespo
 			return nil, nil, p.failure()
 		}
 		refs[p.k] = p.ref
+	}
+	for k, j := range dup {
+		ref := refs[j]
+		ref.Index, ref.Deduped = chs[k].Index, true
+		ref.Replicas = slices.Clone(ref.Replicas)
+		ref.Shards = slices.Clone(ref.Shards)
+		for i := range ref.Shards {
+			ref.Shards[i].Replicas = slices.Clone(ref.Shards[i].Replicas)
+		}
+		refs[k] = ref
 	}
 	return ids, refs, nil
 }
