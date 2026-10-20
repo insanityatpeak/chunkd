@@ -91,7 +91,7 @@ jobs:
         run: go run ./tools/task e2e
       - name: put -resume survives a gateway kill mid-upload, hashes match
         run: go run ./tools/task resume-e2e
-      - name: real-mode chaos, short suite (kill, blip, rot, freeze, kill the metadata leader, drain and decommission, add a node), histories checked
+      - name: real-mode chaos, short suite (kill, blip, rot, freeze, kill the metadata leader, drain and decommission, a gray node placed last, add a node), histories checked
         run: go run ./tools/task chaos --mode=real --short --artifacts=real-chaos-artifacts
       - name: demo container kills a node and verifies the repair (only Docker needed)
         run: docker compose run --rm demo

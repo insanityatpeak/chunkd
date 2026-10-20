@@ -137,6 +137,12 @@ type Scenario struct {
 	// WantChunksOn is a node, added during the run, that must hold chunks
 	// before the run counts as settled: balancing reached it.
 	WantChunksOn iface.NodeID
+	// WantSlow is a node a Slow fault grays (ADR-0035). The leader must
+	// judge it slow and, after the Fast fault, fast again; a put issued
+	// after the slow judgment and done before the Fast fault must place
+	// nothing on it. Its puts write Data keyed by the run's own path, so
+	// none dedups against an earlier run. Real mode only.
+	WantSlow iface.NodeID
 }
 
 func (s Scenario) String() string {

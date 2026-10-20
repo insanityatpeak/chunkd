@@ -10,6 +10,7 @@ import (
 	"math/rand/v2"
 	"path/filepath"
 	"slices"
+	"strings"
 	"sync"
 	"time"
 
@@ -38,6 +39,12 @@ type Target interface {
 // with EC ops needs one, and a plain Target stores them replicated.
 type ECPutter interface {
 	PutEC(path string, data []byte) (uint64, error)
+}
+
+// Locator is a Target that reports the nodes holding a file's copies and
+// shards; a scenario with WantSlow needs one.
+type Locator interface {
+	Nodes(path string) ([]string, error)
 }
 
 // Data is the content a scenario writes to path: a pure function of the
@@ -95,6 +102,10 @@ func RunTarget(s Scenario, t Target, bound time.Duration, logf func(string, ...a
 	var last client.Health
 	counts := leaderDeltas{prev: h0, leader: c0.MetaLeader}
 	allAlive, joined := false, false
+	// WantSlow: when the poll first saw the leader judge the node slow, and
+	// fast again after that; seq0 skips earlier scenarios' events.
+	var slowSeen, fastSeen time.Time
+	seq0 := c0.EventSeq
 	stop := make(chan struct{})
 	polled := make(chan struct{})
 	go func() {
@@ -115,6 +126,17 @@ func RunTarget(s Scenario, t Target, bound time.Duration, logf func(string, ...a
 				}
 				allAlive = !slices.ContainsFunc(cl.Nodes, func(n client.NodeInfo) bool { return n.State != "alive" && n.Admin != "decommissioned" })
 				joined = s.WantChunksOn == "" || slices.ContainsFunc(cl.Nodes, func(n client.NodeInfo) bool { return n.ID == string(s.WantChunksOn) && n.Chunks > 0 })
+				for _, e := range cl.Events {
+					if s.WantSlow == "" || e.Seq <= seq0 || e.Node != string(s.WantSlow) {
+						continue
+					}
+					switch {
+					case slowSeen.IsZero() && strings.HasPrefix(e.Text, "slow:"):
+						slowSeen = now
+					case !slowSeen.IsZero() && fastSeen.IsZero() && strings.HasPrefix(e.Text, "fast again:"):
+						fastSeen = now
+					}
+				}
 				switch {
 				case h.UnderReplicated > 0 && underSince.IsZero():
 					underSince = now
@@ -138,6 +160,7 @@ func RunTarget(s Scenario, t Target, bound time.Duration, logf func(string, ...a
 
 	var errs []error
 	killedLeader := false
+	var fastApplied time.Time
 	start := time.Now()
 	faultsDone := make(chan struct{})
 	go func() {
@@ -153,6 +176,9 @@ func RunTarget(s Scenario, t Target, bound time.Duration, logf func(string, ...a
 				errs = append(errs, fmt.Errorf("%v: %w", f, err))
 			default:
 				killedLeader = killedLeader || f.Kind == KillLeader
+				if f.Kind == Fast && f.Node == s.WantSlow {
+					fastApplied = time.Now()
+				}
 				logf("%s: %v", s.Name, f)
 			}
 			mu.Unlock()
@@ -164,6 +190,11 @@ func RunTarget(s Scenario, t Target, bound time.Duration, logf func(string, ...a
 		gone   bool
 	}
 	acked := map[string]*ack{}
+	loc, _ := t.(Locator)
+	if s.WantSlow != "" && loc == nil {
+		errs = append(errs, fmt.Errorf("WantSlow needs a target that locates copies"))
+	}
+	var slowChecked int
 	written := map[string][][32]byte{} // every content sent to a path
 	for _, op := range s.Ops {
 		time.Sleep(time.Until(start.Add(op.At)))
@@ -173,6 +204,11 @@ func RunTarget(s Scenario, t Target, bound time.Duration, logf func(string, ...a
 		switch op.Kind {
 		case Put:
 			data := Data(s.Seed, op.Path, op.Size)
+			if s.WantSlow != "" {
+				// A put that dedups keeps an earlier run's copies, which says
+				// nothing about this run's placement.
+				data = Data(s.Seed, p, op.Size)
+			}
 			sum := sha256.Sum256(data)
 			written[p] = append(written[p], sum)
 			var v uint64
@@ -182,6 +218,22 @@ func RunTarget(s Scenario, t Target, bound time.Duration, logf func(string, ...a
 				v, err = t.Put(p, data)
 			}
 			rec.Put(1, p, sum, call, now(), v, err)
+			mu.Lock()
+			inSlow := s.WantSlow != "" && !slowSeen.IsZero() && time.Unix(0, call).After(slowSeen) && fastApplied.IsZero()
+			mu.Unlock()
+			if inSlow && err == nil && loc != nil {
+				nodes, lerr := loc.Nodes(p)
+				mu.Lock()
+				switch {
+				case lerr != nil:
+					errs = append(errs, fmt.Errorf("locate %s: %w", op.Path, lerr))
+				case slices.Contains(nodes, string(s.WantSlow)):
+					errs = append(errs, fmt.Errorf("put of %s at %v placed a copy on slow %s (copies on %v)", op.Path, op.At, s.WantSlow, nodes))
+				case fastApplied.IsZero():
+					slowChecked++
+				}
+				mu.Unlock()
+			}
 			switch a := acked[p]; {
 			case err == nil:
 				acked[p] = &ack{hashes: [][32]byte{sum}}
@@ -226,12 +278,13 @@ func RunTarget(s Scenario, t Target, bound time.Duration, logf func(string, ...a
 	for {
 		mu.Lock()
 		h, alive, seen, grew := last, allAlive, int(counts.found), joined
+		recovered := s.WantSlow == "" || !fastSeen.IsZero()
 		mu.Unlock()
 		// Settled also means every node is alive: a returning node is
 		// suspect first, and until then its extra copies do not count as
 		// over-replication, so the next scenario would start mid-reconcile. A
 		// decommissioned node may be off for good.
-		if h.UnderReplicated == 0 && h.OverReplicated == 0 && alive && seen >= s.WantCorrupt && grew && time.Since(quiet) > 2*time.Second {
+		if h.UnderReplicated == 0 && h.OverReplicated == 0 && alive && seen >= s.WantCorrupt && grew && recovered && time.Since(quiet) > 2*time.Second {
 			break
 		}
 		if time.Since(quiet) > bound {
@@ -239,6 +292,9 @@ func RunTarget(s Scenario, t Target, bound time.Duration, logf func(string, ...a
 				bound, h.UnderReplicated, h.OverReplicated, alive, seen, s.WantCorrupt)
 			if !grew {
 				err = fmt.Errorf("%w, no chunks on %s", err, s.WantChunksOn)
+			}
+			if !recovered {
+				err = fmt.Errorf("%w, %s not judged fast again", err, s.WantSlow)
 			}
 			errs = append(errs, err)
 			break
@@ -275,6 +331,17 @@ func RunTarget(s Scenario, t Target, bound time.Duration, logf func(string, ...a
 	}
 	if polls == 0 {
 		errs = append(errs, errors.New("health was never readable"))
+	}
+	if s.WantSlow != "" {
+		switch {
+		case slowSeen.IsZero():
+			errs = append(errs, fmt.Errorf("%s was never judged slow", s.WantSlow))
+		case slowChecked < 3:
+			errs = append(errs, fmt.Errorf("only %d puts ran while %s was judged slow; want 3 or more", slowChecked, s.WantSlow))
+		default:
+			logf("%s: %s judged slow %v after the start, fast again %v after the Fast fault; %d puts placed nothing on it",
+				s.Name, s.WantSlow, slowSeen.Sub(start).Round(time.Second), fastSeen.Sub(fastApplied).Round(time.Second), slowChecked)
+		}
 	}
 	if killedLeader && len(r.Leaders) < 2 {
 		errs = append(errs, fmt.Errorf("the metadata leader was killed but no failover was seen (leaders %v)", r.Leaders))
@@ -372,6 +439,17 @@ func ShortSuite() []Scenario {
 			Ops: append(preload(6), reads(8*time.Second, 55*time.Second, 6)...),
 			Faults: []Fault{{At: 6 * time.Second, Kind: Drain, Node: "node-4"}, {At: 8 * time.Second, Kind: Decommission, Node: "node-4"},
 				{At: 30 * time.Second, Kind: Undrain, Node: "node-4"}},
+		},
+		{
+			// TestGrayNodeIsPlacedLast, real mode: netem delays everything
+			// node-1 sends by 500 ms, so its heartbeat acks come back late.
+			// The leader judges it slow, and writes every 2 s place nothing
+			// on it while node-4 shares its rack; with the delay gone its
+			// service time decays and it is judged fast again.
+			Name: "gray-node-placed-last", Seed: 108, Nodes: 5, Length: 60 * time.Second, WantSlow: "node-1",
+			Ops: sorted(append(append(preload(6), reads(8*time.Second, 55*time.Second, 6)...), writes(14*time.Second, 40*time.Second)...)),
+			Faults: []Fault{{At: 4 * time.Second, Kind: Slow, Node: "node-1", Delay: 500 * time.Millisecond},
+				{At: 40 * time.Second, Kind: Fast, Node: "node-1"}},
 		},
 		{
 			// TestAddNodeConverges, real mode: start node-6 (rack r3, empty)

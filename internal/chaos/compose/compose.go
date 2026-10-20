@@ -25,11 +25,13 @@ type Target struct {
 	wiped   map[string]bool
 	added   []string // extra nodes AddNode started, for Cleanup
 	killed  string   // metadata peer KillLeader stopped, until ReviveLeader
+	netem   bool     // the netem image is built
 }
 
 var (
 	_ chaos.Target   = (*Target)(nil)
 	_ chaos.ECPutter = (*Target)(nil)
+	_ chaos.Locator  = (*Target)(nil)
 )
 
 // New returns a target for the compose project whose gateway is at gateway.
@@ -45,10 +47,11 @@ func docker(args ...string) error {
 	return nil
 }
 
-// Apply injects process-level faults. Message-level faults (loss,
-// duplication, per-node delay) need tc netem and NET_ADMIN in every
-// container; they run in the sim only, as do the leader freeze and the
-// leader partition, which need per-link rules between metadata peers.
+// Apply injects process-level faults and a node's delay. The delay is tc
+// netem on the node's egress, run from a sidecar in its network namespace,
+// so the node image stays distroless. Loss and duplication run in the sim
+// only, as do the leader freeze and the leader partition, which need
+// per-link rules between metadata peers.
 func (t *Target) Apply(f chaos.Fault) error {
 	svc := string(f.Node)
 	switch f.Kind {
@@ -89,6 +92,11 @@ func (t *Target) Apply(f chaos.Fault) error {
 		}
 		t.wiped[svc] = true
 		return docker("volume", "rm", t.project+"_"+svc)
+	case chaos.Slow:
+		return t.tc(svc, fmt.Sprintf("tc qdisc replace dev eth0 root netem delay %dms", f.Delay.Milliseconds()))
+	case chaos.Fast:
+		// Deleting a root qdisc that is not there fails; Fast is idempotent.
+		return t.tc(svc, "tc qdisc del dev eth0 root 2>/dev/null || true")
 	case chaos.Freeze:
 		return docker("compose", "pause", svc)
 	case chaos.Thaw:
@@ -108,6 +116,55 @@ func (t *Target) Apply(f chaos.Fault) error {
 		return t.admin(svc, "decommissioned", 3*time.Minute)
 	}
 	return chaos.ErrUnsupported
+}
+
+// netemImage is the deploy/Dockerfile netem stage: alpine with iproute2.
+const netemImage = "chunkd-netem"
+
+// Prepare builds the netem image, so a run does not spend the build's
+// time inside a scenario's schedule.
+func (t *Target) Prepare() error {
+	if t.netem {
+		return nil
+	}
+	if err := docker("build", "-q", "--target", "netem", "-t", netemImage, "-f", "deploy/Dockerfile", "."); err != nil {
+		return err
+	}
+	t.netem = true
+	return nil
+}
+
+// tc runs cmd in a sidecar sharing svc's network namespace. NET_ADMIN is
+// the sidecar's, so the node container keeps no added capability.
+func (t *Target) tc(svc, cmd string) error {
+	if err := t.Prepare(); err != nil {
+		return err
+	}
+	out, err := exec.Command("docker", "compose", "ps", "-q", svc).Output()
+	id := string(bytes.TrimSpace(out))
+	if err != nil || id == "" {
+		return fmt.Errorf("container of %s: %v", svc, err)
+	}
+	return docker("run", "--rm", "--net", "container:"+id, "--cap-add", "NET_ADMIN", netemImage, "sh", "-c", cmd)
+}
+
+// Nodes returns every node holding a copy or shard of path's chunks.
+func (t *Target) Nodes(path string) ([]string, error) {
+	c, cancel := ctx()
+	defer cancel()
+	m, err := t.api.Stat(c, path)
+	if err != nil {
+		return nil, err
+	}
+	var nodes []string
+	for _, ch := range m.Chunk {
+		nodes = append(nodes, ch.Replicas...)
+		for _, sh := range ch.Shards {
+			nodes = append(nodes, sh.Replicas...)
+		}
+	}
+	slices.Sort(nodes)
+	return slices.Compact(nodes), nil
 }
 
 // leader returns the metadata leader the cluster view names (the service

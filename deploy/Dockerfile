@@ -52,3 +52,8 @@ COPY --from=web /web/dist /ui
 ENV CHUNKD_UI=/ui
 EXPOSE 8080
 ENTRYPOINT ["/usr/local/bin/chunkd-gateway"]
+
+# Chaos tooling, not deployed: tc netem run as a sidecar in a node's network
+# namespace (--net container:<id> --cap-add NET_ADMIN) to delay its traffic.
+FROM alpine:3.20 AS netem
+RUN apk add --no-cache iproute2

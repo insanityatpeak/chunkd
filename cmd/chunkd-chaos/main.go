@@ -6,6 +6,7 @@
 //	chunkd-chaos -seeds 500 -metas 3   over a 3-peer metadata group, with leader faults
 //	chunkd-chaos -seeds 500 -ec        7 nodes, about half the puts erasure-coded
 //	chunkd-chaos -mode real -short     the real-mode suite against docker compose
+//	chunkd-chaos -mode real -short -only gray-node-placed-last   one of its scenarios
 //
 // Every failure prints the command that replays it.
 package main
@@ -25,7 +26,7 @@ import (
 
 // runReal runs the short suite against the compose cluster, one scenario at a
 // time, removes any node a scenario added, and returns the exit code.
-func runReal(gateway, project string, bound time.Duration, artifacts string, ec bool) int {
+func runReal(gateway, project string, bound time.Duration, artifacts string, ec bool, only string) int {
 	t := compose.New(gateway, project)
 	logf := func(format string, args ...any) {
 		fmt.Printf("%s  %s\n", time.Now().Format("15:04:05"), fmt.Sprintf(format, args...))
@@ -38,8 +39,15 @@ func runReal(gateway, project string, bound time.Duration, artifacts string, ec 
 			return 1
 		}
 	}
+	if err := t.Prepare(); err != nil {
+		fmt.Fprintln(os.Stderr, "FAIL", err)
+		return 1
+	}
 	code := 0
 	for _, s := range suite {
+		if only != "" && s.Name != only {
+			continue
+		}
 		logf("start %s", s.Name)
 		r := chaos.RunTarget(s, t, bound, logf, chaos.Options{Artifacts: artifacts})
 		for _, f := range r.Skipped {
@@ -73,6 +81,7 @@ func main() {
 	bound := flag.Duration("bound", 90*time.Second, "real mode: longest allowed under-replication, and settle time after quiet")
 	metas := flag.Int("metas", 1, "sim mode: metadata peers; 3 adds leader kills, freezes, partitions and repeated elections")
 	ecPuts := flag.Bool("ec", false, "sim mode: 7 nodes, about half the puts erasure-coded (RS 4+2); real mode: the erasure-coded suite (compose profile ec)")
+	only := flag.String("only", "", "real mode: run only the scenario with this name")
 	artifacts := flag.String("artifacts", "", "directory for the visualization of a history that is not linearizable")
 	flag.Parse()
 
@@ -81,7 +90,7 @@ func main() {
 			fmt.Fprintln(os.Stderr, "chunkd-chaos: real mode runs the -short suite, or with -ec the erasure-coded suite")
 			os.Exit(2)
 		}
-		os.Exit(runReal(*gateway, *project, *bound, *artifacts, *ecPuts))
+		os.Exit(runReal(*gateway, *project, *bound, *artifacts, *ecPuts, *only))
 	}
 
 	shape := chaos.DefaultShape()
