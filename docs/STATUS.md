@@ -189,7 +189,7 @@ Chunked, replicated upload and download; see ADRs 0005–0009. `TestRoundTrip`, 
 - [x] Membership change from the CLI, to replace a peer whose WAL is corrupt: `chunkd meta replace` and `chunkd-meta -join` (ADR-0032)
 - [x] Skip trims of chunks a pending upload has claimed (`trimSafe`, `TestTrimSkipsChunkWithPendingClaim`)
 - [x] Confirmed incremental block reports: heartbeats list unconfirmed reports and the missing ones are resent (ADR-0033)
-- [ ] Overlap chunk uploads (window of chunks in flight)
+- [x] Overlap chunk uploads: waves of 4 chunks, one claim per wave and every chunk's puts in one `Caller.Quorums` batch (ADR-0034); a sliding window is still open
 - [x] (done in v1.2.0, 7-node `ec` profile) A real-mode EC chaos scenario: compose ran 5 nodes and a stripe needs 6 (real processes are covered by `e2e.TestRoundTripEC` on 6 in-process nodes)
 - [x] Per-step safety check in the chaos harness: the trim check (`checkTrim`, since `2fc4980`) and `cluster.WatchSafety` (copy floor, lasting phantom copies) every 100 ms of every chaos seed. Sweeps of 3,000 seeds, 1,500 with `--metas=3` and 1,500 with `--ec` found no violation; a planted GC bug that deletes two copies of a few referenced chunks, which repair then restores, fails 111 of 200 seeds with the watcher and 3 without
 

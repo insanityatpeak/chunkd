@@ -85,6 +85,31 @@ Raw: [data/latency.csv](data/latency.csv)
 
 Raw: [data/put-latency.csv](data/put-latency.csv)
 
+## Put latency by upload window (sim)
+
+5 puts of 32 MiB (8 chunks of 4 MiB) per seed, 3 seeds pooled, 7 nodes, no message loss. A window of W claims and puts W chunks at once (ADR-0034). Sim links charge each message's transfer on its own, so the client's uplink is never shared: these gains are the round trips saved. On one 1 Gbit/s uplink a 32 MiB replicated put cannot go below about 770 ms at any window.
+
+| redundancy | fault | window | samples | p50_ms | p95_ms | p99_ms |
+|---|---|---|---|---|---|---|
+| replicate:3 | none | 1 | 15 | 1102.912 | 1200.361 | 1200.361 |
+| replicate:3 | none | 2 | 15 | 624.242 | 673.117 | 673.117 |
+| replicate:3 | none | 4 | 15 | 358.793 | 411.331 | 411.331 |
+| replicate:3 | none | 8 | 15 | 233.575 | 278.928 | 278.928 |
+| replicate:3 | gray-node | 1 | 15 | 1317.406 | 1396.628 | 1396.628 |
+| replicate:3 | gray-node | 2 | 15 | 759.665 | 840.005 | 840.005 |
+| replicate:3 | gray-node | 4 | 15 | 418.215 | 491.376 | 491.376 |
+| replicate:3 | gray-node | 8 | 15 | 258.416 | 334.362 | 334.362 |
+| ec:4+2 | none | 1 | 15 | 942.739 | 1030.986 | 1030.986 |
+| ec:4+2 | none | 2 | 15 | 549.151 | 590.698 | 590.698 |
+| ec:4+2 | none | 4 | 15 | 317.306 | 375.329 | 375.329 |
+| ec:4+2 | none | 8 | 15 | 200.639 | 236.679 | 236.679 |
+| ec:4+2 | gray-node | 1 | 15 | 1326.366 | 1404.866 | 1404.866 |
+| ec:4+2 | gray-node | 2 | 15 | 743.478 | 779.861 | 779.861 |
+| ec:4+2 | gray-node | 4 | 15 | 386.109 | 458.382 | 458.382 |
+| ec:4+2 | gray-node | 8 | 15 | 256.583 | 314.186 | 314.186 |
+
+Raw: [data/put-window.csv](data/put-window.csv)
+
 ## Time to repair after a node kill (sim)
 
 RF 3, 5 nodes, 4 MiB files, no message loss (a lost repair message costs a 10 s call timeout, which would swamp the copy time), node-3 killed. The detector (10 s) plus the repair delay (20 s) make a 30 s floor; `past_floor_s` is what the copies add. `mib_s_past_floor` is 0 when that is under one second.
