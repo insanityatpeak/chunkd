@@ -82,6 +82,11 @@ func report(out string) error {
 		return err
 	}
 
+	// Put latency by upload window.
+	if _, err = section("Put latency by upload window (sim)", "5 puts of 32 MiB (8 chunks of 4 MiB) per seed, 3 seeds pooled, 7 nodes, no message loss. A window of W claims and puts W chunks at once (ADR-0034). Sim links charge each message's transfer on its own, so the client's uplink is never shared: these gains are the round trips saved. On one 1 Gbit/s uplink a 32 MiB replicated put cannot go below about 770 ms at any window.", "put-window.csv", ""); err != nil {
+		return err
+	}
+
 	// Repair time.
 	t, err = section("Time to repair after a node kill (sim)", "RF 3, 5 nodes, 4 MiB files, no message loss (a lost repair message costs a 10 s call timeout, which would swamp the copy time), node-3 killed. The detector (10 s) plus the repair delay (20 s) make a 30 s floor; `past_floor_s` is what the copies add. `mib_s_past_floor` is 0 when that is under one second.", "repair-time.csv", "repair-time.svg")
 	if err != nil {

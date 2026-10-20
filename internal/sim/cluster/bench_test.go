@@ -308,6 +308,59 @@ func TestBenchPutRedundancy(t *testing.T) {
 	}
 }
 
+// TestBenchPutWindow records put latency of 32 MiB files (8 chunks of 4 MiB)
+// on 7 nodes by upload window, replicated and erasure-coded, healthy and with
+// one gray node (ADR-0034). Sim links charge each message's transfer on its
+// own, so the client's uplink is never shared: the gain here is the round
+// trips saved, an upper bound for a client whose uplink is the limit.
+func TestBenchPutWindow(t *testing.T) {
+	out := benchOut(t, "put-window.csv")
+	tab := &bench.Table{Header: []string{"redundancy", "fault", "window", "samples", "p50_ms", "p95_ms", "p99_ms"}}
+	for _, policy := range []client.Redundancy{client.Replicated, client.EC42} {
+		name := "replicate:3"
+		if policy == client.EC42 {
+			name = "ec:4+2"
+		}
+		for _, fault := range []string{"none", "gray-node"} {
+			for _, window := range []int{1, 2, 4, 8} {
+				var lat []time.Duration
+				for _, seed := range []uint64{51, 52, 53} {
+					cfg := DefaultConfig()
+					cfg.Nodes = 7
+					cfg.Faults.DropRate = 0
+					c := New(seed, cfg, io.Discard)
+					c.Tick(3 * time.Second)
+					if fault == "gray-node" {
+						c.Net().SetSlow("node-1", 2*time.Second)
+					}
+					caller := c.NewCaller("writer")
+					for i := range 5 {
+						cl := client.New(caller, client.Options{Meta: MetaID, Sleep: caller.Sleep, Window: window})
+						p := fmt.Sprintf("/p/%02d", i)
+						data := c.RandomData(p, 32<<20)
+						t0 := c.Now()
+						if _, err := cl.Put(context.Background(), p, bytes.NewReader(data), int64(len(data)), client.PutOptions{Redundancy: policy}); err != nil {
+							t.Fatalf("%s %s window %d seed %d: put: %v", name, fault, window, seed, err)
+						}
+						lat = append(lat, c.Now().Sub(t0))
+					}
+					if _, ok := c.Settle(2 * time.Minute); !ok {
+						t.Fatalf("%s %s window %d seed %d: %d short", name, fault, window, seed, c.UnderReplicated())
+					}
+					if err := c.AssertInvariants(); err != nil {
+						t.Fatal(err)
+					}
+				}
+				slices.Sort(lat)
+				tab.Add(name, fault, window, len(lat), ms(pct(lat, 50)), ms(pct(lat, 95)), ms(pct(lat, 99)))
+			}
+		}
+	}
+	if err := tab.WriteCSV(out); err != nil {
+		t.Fatal(err)
+	}
+}
+
 // TestBenchResume cuts a 32 MiB upload off at 25, 50, 75 and 90% (rounded
 // down to a chunk) and records what the client sends to finish it: by
 // resuming at the stored offset (ADR-0024), and by starting the same Put
