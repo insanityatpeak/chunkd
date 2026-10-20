@@ -50,7 +50,7 @@ func TestLostIncrementalReportIsResent(t *testing.T) {
 		nodes = append(nodes, n)
 	}
 	e.clock.Advance(3 * time.Second) // heartbeats and the first full reports
-	data := []byte("abcd") // one chunk: the env's chunks are 4 bytes
+	data := []byte("abcd")           // one chunk: the env's chunks are 4 bytes
 	body, err := e.rpc(t, "meta", wire.KindBegin, wire.Marshal(&chunkdv1.BeginUploadRequest{Path: "/f", Size: int64(len(data))}))
 	if err != nil {
 		t.Fatal(err)
