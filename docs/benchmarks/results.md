@@ -57,12 +57,12 @@ Raw: [data/real-latency.csv](data/real-latency.csv)
 | gray-node | off | put | 90 | 4111.180 | 4209.087 | 4258.604 |
 | gray-node | off | get | 360 | 138.895 | 4123.965 | 4140.923 |
 | gray-node | off | stat | 360 | 40.012 | 67.555 | 73.592 |
-| loss-1pct | on | put | 90 | 194.378 | 256.083 | 3326.105 |
-| loss-1pct | on | get | 360 | 91.862 | 151.206 | 3159.907 |
-| loss-1pct | on | stat | 360 | 40.058 | 74.822 | 3154.502 |
-| loss-1pct | off | put | 90 | 194.594 | 10175.258 | 20121.313 |
-| loss-1pct | off | get | 360 | 92.983 | 3177.514 | 10090.852 |
-| loss-1pct | off | stat | 360 | 41.612 | 69.105 | 3125.329 |
+| loss-1pct | on | put | 90 | 191.307 | 255.935 | 3349.308 |
+| loss-1pct | on | get | 360 | 91.324 | 140.166 | 3151.072 |
+| loss-1pct | on | stat | 360 | 41.718 | 74.836 | 3148.269 |
+| loss-1pct | off | put | 90 | 194.822 | 10163.598 | 10245.666 |
+| loss-1pct | off | get | 360 | 91.938 | 144.825 | 10096.972 |
+| loss-1pct | off | stat | 360 | 42.449 | 73.340 | 3159.901 |
 
 ![Latency under a gray node and loss (sim)](charts/latency-get-p99.svg)
 
@@ -70,7 +70,7 @@ Raw: [data/latency.csv](data/latency.csv)
 
 ## Put latency by redundancy (sim)
 
-30 puts of 4 MiB per seed, 3 seeds pooled, 7 nodes, no message loss, a new client for every put. Gray node: node-1 adds 2 s to every message. `quorum` returns once the commit quorum is stored (2 of 3 copies, 5 of 6 shards) and a 50 ms grace has passed (ADR-0029, ADR-0031); `wait-all` waits for every copy or shard.
+30 puts of 4 MiB per seed, 3 seeds pooled, 7 nodes, no message loss, a new client for every put. Gray node: node-1 adds 2 s to every message and stays in placement (`Meta.IgnoreSlow`); gray-detected starts the puts 15 s after the fault, once the metadata server judges node-1 slow and places after fast nodes (ADR-0035). `quorum` returns once the commit quorum is stored (2 of 3 copies, 5 of 6 shards) and a 50 ms grace has passed (ADR-0029, ADR-0031); `wait-all` waits for every copy or shard.
 
 | redundancy | fault | put | samples | p50_ms | p95_ms | p99_ms |
 |---|---|---|---|---|---|---|
@@ -78,10 +78,14 @@ Raw: [data/latency.csv](data/latency.csv)
 | replicate:3 | none | wait-all | 90 | 211.463 | 256.678 | 324.733 |
 | replicate:3 | gray-node | quorum | 90 | 237.818 | 310.303 | 324.150 |
 | replicate:3 | gray-node | wait-all | 90 | 223.053 | 4242.449 | 4272.658 |
+| replicate:3 | gray-detected | quorum | 90 | 215.642 | 271.827 | 323.713 |
+| replicate:3 | gray-detected | wait-all | 90 | 215.642 | 271.827 | 323.713 |
 | ec:4+2 | none | quorum | 90 | 194.893 | 247.752 | 278.430 |
 | ec:4+2 | none | wait-all | 90 | 194.893 | 247.752 | 278.430 |
 | ec:4+2 | gray-node | quorum | 90 | 238.307 | 284.315 | 312.606 |
 | ec:4+2 | gray-node | wait-all | 90 | 4157.129 | 4219.410 | 4254.764 |
+| ec:4+2 | gray-detected | quorum | 90 | 189.119 | 236.528 | 275.188 |
+| ec:4+2 | gray-detected | wait-all | 90 | 189.119 | 236.528 | 275.188 |
 
 Raw: [data/put-latency.csv](data/put-latency.csv)
 
@@ -154,11 +158,11 @@ A 32 MiB upload is cut off after N% (whole chunks) and finished. `resume_*`: con
 | replicate:3 | 25 | 32.000 | 24.001 | 72.003 | 72.003 | 96.004 | 96.004 | 24.000 | 32.000 |
 | replicate:3 | 50 | 32.000 | 48.002 | 48.003 | 48.002 | 96.004 | 96.004 | 16.000 | 32.000 |
 | replicate:3 | 75 | 32.000 | 72.002 | 24.002 | 24.002 | 96.005 | 96.004 | 8.000 | 32.000 |
-| replicate:3 | 90 | 32.000 | 84.003 | 12.002 | 12.002 | 96.005 | 96.004 | 4.000 | 32.000 |
+| replicate:3 | 90 | 32.000 | 84.003 | 12.002 | 12.001 | 96.005 | 96.004 | 4.000 | 32.000 |
 | ec:4+2 | 25 | 32.000 | 12.003 | 36.007 | 36.007 | 48.010 | 48.010 | 24.000 | 32.000 |
 | ec:4+2 | 50 | 32.000 | 24.005 | 24.006 | 24.006 | 48.010 | 48.010 | 16.000 | 32.000 |
-| ec:4+2 | 75 | 32.000 | 36.007 | 12.004 | 12.004 | 48.010 | 48.011 | 8.000 | 32.000 |
-| ec:4+2 | 90 | 32.000 | 42.008 | 6.003 | 6.004 | 48.011 | 48.011 | 4.000 | 32.000 |
+| ec:4+2 | 75 | 32.000 | 36.006 | 12.004 | 12.004 | 48.010 | 48.011 | 8.000 | 32.000 |
+| ec:4+2 | 90 | 32.000 | 42.007 | 6.003 | 6.004 | 48.010 | 48.011 | 4.000 | 32.000 |
 
 ![Resumable upload cost (sim)](charts/resume.svg)
 

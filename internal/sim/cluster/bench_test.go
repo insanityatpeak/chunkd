@@ -183,6 +183,7 @@ func TestBenchLatency(t *testing.T) {
 			var put, get, stat []time.Duration
 			for _, seed := range []uint64{31, 32, 33} {
 				cfg := DefaultConfig()
+				cfg.Meta.IgnoreSlow = true // hedging and quorum puts against a gray node still placed (ADR-0035)
 				if fault != "loss-1pct" {
 					cfg.Faults.DropRate = 0
 				}
@@ -255,7 +256,9 @@ func TestBenchLatency(t *testing.T) {
 // TestBenchPutRedundancy records put latency of 4 MiB files on 7 nodes,
 // replicated and erasure-coded, healthy and with one gray node, at the commit
 // quorum and waiting for every copy or shard. A stripe spans 6 of the 7 nodes,
-// so most EC puts place a shard on the gray node (ADR-0031).
+// so most EC puts place a shard on the gray node (ADR-0031) until the
+// metadata server judges it slow; gray-detected starts the puts 15 s after
+// the fault, once it has (ADR-0035).
 func TestBenchPutRedundancy(t *testing.T) {
 	out := benchOut(t, "put-latency.csv")
 	tab := &bench.Table{Header: []string{"redundancy", "fault", "put", "samples", "p50_ms", "p95_ms", "p99_ms"}}
@@ -264,17 +267,21 @@ func TestBenchPutRedundancy(t *testing.T) {
 		if policy == client.EC42 {
 			name = "ec:4+2"
 		}
-		for _, fault := range []string{"none", "gray-node"} {
+		for _, fault := range []string{"none", "gray-node", "gray-detected"} {
 			for _, grace := range []time.Duration{0, -1} {
 				var lat []time.Duration
 				for _, seed := range []uint64{41, 42, 43} {
 					cfg := DefaultConfig()
+					cfg.Meta.IgnoreSlow = fault == "gray-node" // gray-detected measures ADR-0035
 					cfg.Nodes = 7
 					cfg.Faults.DropRate = 0
 					c := New(seed, cfg, io.Discard)
 					c.Tick(3 * time.Second)
-					if fault == "gray-node" {
+					if fault != "none" {
 						c.Net().SetSlow("node-1", 2*time.Second)
+					}
+					if fault == "gray-detected" {
+						c.Tick(15 * time.Second)
 					}
 					caller := c.NewCaller("writer")
 					for i := range 30 {
@@ -326,6 +333,7 @@ func TestBenchPutWindow(t *testing.T) {
 				var lat []time.Duration
 				for _, seed := range []uint64{51, 52, 53} {
 					cfg := DefaultConfig()
+					cfg.Meta.IgnoreSlow = true // the gray node stays in placement, as before ADR-0035
 					cfg.Nodes = 7
 					cfg.Faults.DropRate = 0
 					c := New(seed, cfg, io.Discard)

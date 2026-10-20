@@ -78,7 +78,7 @@ func report(out string) error {
 	}
 
 	// Put latency by redundancy.
-	if _, err = section("Put latency by redundancy (sim)", "30 puts of 4 MiB per seed, 3 seeds pooled, 7 nodes, no message loss, a new client for every put. Gray node: node-1 adds 2 s to every message. `quorum` returns once the commit quorum is stored (2 of 3 copies, 5 of 6 shards) and a 50 ms grace has passed (ADR-0029, ADR-0031); `wait-all` waits for every copy or shard.", "put-latency.csv", ""); err != nil {
+	if _, err = section("Put latency by redundancy (sim)", "30 puts of 4 MiB per seed, 3 seeds pooled, 7 nodes, no message loss, a new client for every put. Gray node: node-1 adds 2 s to every message and stays in placement (`Meta.IgnoreSlow`); gray-detected starts the puts 15 s after the fault, once the metadata server judges node-1 slow and places after fast nodes (ADR-0035). `quorum` returns once the commit quorum is stored (2 of 3 copies, 5 of 6 shards) and a 50 ms grace has passed (ADR-0029, ADR-0031); `wait-all` waits for every copy or shard.", "put-latency.csv", ""); err != nil {
 		return err
 	}
 
