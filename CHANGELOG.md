@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## v1.5.0 (2026-10-20)
 
 ### Added
 - Latency-aware placement: nodes report their heartbeat-ack round trip and store write time, and a node whose service time stays well above the cluster median is placed after fast nodes on the racks a chunk needs and read after them. Rack spread still comes first. With a gray node detected, wait-all put p99 in the sim falls from 4,273 to 324 ms replicated and from 4,255 to 275 ms EC. `meta.Config.IgnoreSlow` turns it off. ADR-0035.
