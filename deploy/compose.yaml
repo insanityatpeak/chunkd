@@ -94,7 +94,8 @@ services:
     build: { context: .., dockerfile: deploy/Dockerfile, target: gateway }
     image: chunkd-gateway:dev
     profiles: [full, small]
-    environment: { CHUNKD_METAS: *peers }
+    # CHUNKD_WINDOW: upload window; unset or 0 uses the client default.
+    environment: { CHUNKD_METAS: *peers, CHUNKD_WINDOW: "${CHUNKD_WINDOW:-0}" }
     ports: ["8080:8080"]
     healthcheck:
       <<: *health

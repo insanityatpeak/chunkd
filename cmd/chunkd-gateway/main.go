@@ -8,6 +8,7 @@ import (
 	"flag"
 	"fmt"
 	"os"
+	"strconv"
 	"time"
 
 	"github.com/insanityatpeak/chunkd/internal/client"
@@ -26,6 +27,7 @@ func main() {
 	metas := flag.String("metas", server.Env("CHUNKD_METAS", ""), "the metadata group as id=host:port,...; overrides -meta")
 	keysFile := flag.String("keys", server.Env("CHUNKD_KEYS", ""), "API keys file (JSON); empty leaves the gateway open")
 	uiDir := flag.String("ui", server.Env("CHUNKD_UI", ""), "serve the dashboard's static build from this directory at /")
+	window := flag.Int("window", envInt("CHUNKD_WINDOW", 0), "chunks an upload claims and puts at once; 0 uses the client default")
 	flag.Parse()
 
 	var gwOpts []gateway.Option
@@ -48,7 +50,7 @@ func main() {
 	}
 	caller := grpcnet.NewCaller(addrs, 30*time.Second)
 	defer caller.Close()
-	opts := client.Options{Rand: runtime.NewRand()}
+	opts := client.Options{Rand: runtime.NewRand(), Window: *window}
 	for _, id := range ids {
 		opts.Peers = append(opts.Peers, client.MetaPeer{ID: id, Addr: addrs[id]})
 	}
@@ -74,4 +76,11 @@ func main() {
 		fmt.Fprintln(os.Stderr, "chunkd-gateway:", err)
 		os.Exit(1)
 	}
+}
+
+func envInt(key string, def int) int {
+	if n, err := strconv.Atoi(os.Getenv(key)); err == nil {
+		return n
+	}
+	return def
 }
