@@ -4,6 +4,7 @@ import (
 	"cmp"
 	"maps"
 	"slices"
+	"time"
 
 	"github.com/insanityatpeak/chunkd/internal/core/detector"
 	"github.com/insanityatpeak/chunkd/internal/core/placement"
@@ -29,6 +30,12 @@ type NodeState struct {
 	DeadSince iface.Instant
 	// Incarnation is the node process's, from its heartbeats.
 	Incarnation uint64
+	// Service time from heartbeats (ADR-0035): the round trip of this
+	// server's acks and the node's store writes. Slow nodes are placed
+	// after fast ones; slowRun counts beats toward flipping Slow.
+	RTT, PutLat time.Duration
+	Slow        bool
+	slowRun     int
 	// reported is false until a full block report arrives; until then the
 	// node's locations are unknown, not empty.
 	reported bool
@@ -134,7 +141,65 @@ func (c *Cluster) apply(tr detector.Transition) {
 	}
 	if tr.To == detector.Dead || tr.Restarted {
 		n.reported = false
+		// A new process is measured afresh.
+		n.RTT, n.PutLat, n.Slow, n.slowRun = 0, 0, false, 0
 	}
+}
+
+// A node turns slow once its service time stays above both slowFactor
+// times the median of the alive nodes and the median plus slowMargin for
+// slowBeats heartbeats in a row, and fast once it stays below clearFactor
+// times the median (and the median plus half the margin) as long. The
+// margin keeps link jitter on a fast LAN from counting; the median, not a
+// fixed bound, keeps one rule for sim, LAN and WAN (ADR-0035).
+const (
+	slowFactor  = 3
+	clearFactor = 2
+	slowMargin  = 100 * time.Millisecond
+	slowBeats   = 3
+	minSampled  = 3 // alive nodes with a service time before any is slow
+)
+
+// Service records a node's service time from its heartbeat and reports
+// whether its Slow flag flipped, with the median it was judged against.
+// SIMPLIFIED: the median is recomputed per heartbeat. At 100x nodes it
+// would be refreshed once per heartbeat interval.
+func (c *Cluster) Service(id iface.NodeID, rtt, put time.Duration) (flipped bool, median time.Duration) {
+	n := c.nodes[id]
+	if n == nil {
+		return false, 0
+	}
+	n.RTT, n.PutLat = rtt, put
+	var all []time.Duration
+	for _, o := range c.nodes {
+		if o.State == detector.Alive && o.RTT+o.PutLat > 0 {
+			all = append(all, o.RTT+o.PutLat)
+		}
+	}
+	score := rtt + put
+	if score == 0 || len(all) < minSampled {
+		n.slowRun = 0
+		if !n.Slow {
+			return false, 0
+		}
+		n.Slow = false
+		return true, 0
+	}
+	slices.Sort(all)
+	median = all[len(all)/2]
+	slow := score > max(slowFactor*median, median+slowMargin)
+	if n.Slow {
+		slow = score >= max(clearFactor*median, median+slowMargin/2)
+	}
+	if slow == n.Slow {
+		n.slowRun = 0
+		return false, median
+	}
+	if n.slowRun++; n.slowRun < slowBeats {
+		return false, median
+	}
+	n.Slow, n.slowRun = slow, 0
+	return true, median
 }
 
 // Report applies a block report and returns the location changes it made.
@@ -287,6 +352,14 @@ func (c *Cluster) Readable(id iface.NodeID) bool {
 
 func (c *Cluster) state(id iface.NodeID) detector.State { return c.det.State(id) }
 
+// slow is 1 for a node judged slow (ADR-0035), else 0, for ordering.
+func (c *Cluster) slow(id iface.NodeID) int {
+	if n := c.nodes[id]; n != nil && n.Slow {
+		return 1
+	}
+	return 0
+}
+
 // Detector exposes the detector's thresholds and counters.
 func (c *Cluster) Detector() *detector.Detector { return c.det }
 
@@ -341,7 +414,7 @@ func (c *Cluster) Nodes() []NodeState {
 func (c *Cluster) PlacementView(leaving func(iface.NodeID) bool) []placement.Node {
 	var out []placement.Node
 	for _, n := range c.Nodes() {
-		out = append(out, placement.Node{ID: n.ID, Rack: n.Rack, Used: n.Used, Alive: c.Alive(n.ID), Draining: leaving(n.ID)})
+		out = append(out, placement.Node{ID: n.ID, Rack: n.Rack, Used: n.Used, Alive: c.Alive(n.ID), Draining: leaving(n.ID), Slow: n.Slow})
 	}
 	return out
 }

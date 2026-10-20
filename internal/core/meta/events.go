@@ -69,6 +69,17 @@ func (s *Server) nodeEvent(tr detector.Transition) {
 	}
 }
 
+// slowEvent records a node turning slow or fast again (ADR-0035).
+func (s *Server) slowEvent(id iface.NodeID, score, median time.Duration) {
+	if n, ok := s.cluster.Node(id); ok && n.Slow {
+		s.event("node", id, "slow: service time %v, median %v; placed after faster nodes", score.Round(time.Millisecond), median.Round(time.Millisecond))
+		s.d.Log.Info("node slow", "node", id, "service", score, "median", median)
+		return
+	}
+	s.event("node", id, "fast again: service time %v, median %v", score.Round(time.Millisecond), median.Round(time.Millisecond))
+	s.d.Log.Info("node fast", "node", id, "service", score, "median", median)
+}
+
 func (s *Server) copyStarted(c repair.Copy) {
 	tag := ""
 	if c.Class != repair.Repair {

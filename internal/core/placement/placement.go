@@ -19,6 +19,10 @@ type Node struct {
 	Used     int64 // bytes stored, from heartbeats
 	Alive    bool
 	Draining bool
+	// Slow is a node whose service time stands out from the cluster's
+	// (ADR-0035): it takes a replica only when no fast node on the racks
+	// the chunk needs is left.
+	Slow bool
 }
 
 // Place returns replica nodes for each chunk, in preference order.
@@ -26,7 +30,8 @@ type Node struct {
 // Per chunk: the first replica is the least-loaded eligible node; each next
 // replica is the least-loaded node on the racks this chunk uses least, so
 // racks fill round-robin (6 EC shards on 3 racks: 2 each), and nodes never
-// repeat. Load is bytes used plus bytes placed earlier in this call, so one
+// repeat. Among the nodes on those racks, fast ones go before slow ones:
+// rack spread outranks latency, latency outranks load. Load is bytes used plus bytes placed earlier in this call, so one
 // large upload spreads out instead of piling onto the emptiest nodes. Ties
 // break through rng.
 //
@@ -95,7 +100,8 @@ func Extend(nodes []Node, held []string, busy []iface.NodeID, wait bool, rng ifa
 	return nd.ID, ok
 }
 
-// pick returns the least-loaded unchosen node on the least-used racks.
+// pick returns the least-loaded unchosen node on the least-used racks,
+// preferring nodes that are not slow.
 func pick(nodes []Node, chosen map[iface.NodeID]bool, racks map[string]int, load func(Node) int64, rng iface.Rand) (Node, bool) {
 	var pool []Node
 	least := -1
@@ -112,6 +118,9 @@ func pick(nodes []Node, chosen map[iface.NodeID]bool, racks map[string]int, load
 	}
 	if len(pool) == 0 {
 		return Node{}, false
+	}
+	if fast := slices.DeleteFunc(slices.Clone(pool), func(nd Node) bool { return nd.Slow }); len(fast) > 0 {
+		pool = fast
 	}
 	best := slices.MinFunc(pool, func(a, b Node) int { return cmp.Compare(load(a), load(b)) })
 	var ties []Node

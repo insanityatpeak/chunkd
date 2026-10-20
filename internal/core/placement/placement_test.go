@@ -230,3 +230,48 @@ func TestExtend(t *testing.T) {
 		})
 	}
 }
+
+// A slow node takes no replica while a fast node on the racks the chunk
+// needs is left, even when it is the emptiest; when it is the only node on
+// a rack, rack spread wins and it takes one on every chunk (ADR-0035).
+func TestSlowNodePlacedLast(t *testing.T) {
+	t.Run("a rack with fast peers", func(t *testing.T) {
+		nodes := cluster(3, 2)
+		for i := range nodes {
+			nodes[i].Used = 100 << 30
+		}
+		nodes[0].Used, nodes[0].Slow = 0, true
+		out, err := Place(nodes, sizes(50), 3, 2, sim.NewRand(1))
+		if err != nil {
+			t.Fatal(err)
+		}
+		racks := rackOf(nodes)
+		for i, reps := range out {
+			if slices.Contains(reps, nodes[0].ID) {
+				t.Fatalf("chunk %d placed on the slow node: %v", i, reps)
+			}
+			seen := map[string]bool{}
+			for _, r := range reps {
+				seen[racks[r]] = true
+			}
+			if len(seen) != 3 {
+				t.Fatalf("chunk %d on %d racks: %v", i, len(seen), reps)
+			}
+		}
+		if id, ok := Extend(nodes, []string{"r2", "r3"}, nil, true, sim.NewRand(2)); !ok || id == nodes[0].ID {
+			t.Fatalf("repair onto rack r1 chose %s, %v; want its fast node", id, ok)
+		}
+	})
+	t.Run("the only node on its rack", func(t *testing.T) {
+		nodes := append(cluster(2, 2), Node{ID: "r3-n1", Rack: "r3", Alive: true, Slow: true})
+		out, err := Place(nodes, sizes(20), 3, 2, sim.NewRand(1))
+		if err != nil {
+			t.Fatal(err)
+		}
+		for i, reps := range out {
+			if !slices.Contains(reps, "r3-n1") {
+				t.Fatalf("chunk %d skipped rack r3: %v", i, reps)
+			}
+		}
+	})
+}

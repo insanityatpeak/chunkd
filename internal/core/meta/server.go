@@ -71,6 +71,10 @@ type Config struct {
 	// HintRate and HintBurst bound the client re-check hints one node is asked
 	// to act on, per second and at once; HintRate <= 0 is unlimited.
 	HintRate, HintBurst int64
+	// IgnoreSlow never judges a node slow, so placement and reads ignore
+	// service time (ADR-0035): benchmarks use it to measure quorum puts and
+	// hedged reads against a gray node that stays in placement.
+	IgnoreSlow bool
 }
 
 // DefaultConfig is N=3, commit at 2 (ADR-0007), 4 MiB chunks (ADR-0005),
@@ -460,6 +464,12 @@ func (s *Server) handle(m iface.Message) {
 			s.transition(tr)
 			s.repair.Scan()
 		}
+		if !s.cfg.IgnoreSlow {
+			rtt, put := time.Duration(hb.GetAckRttUs())*time.Microsecond, time.Duration(hb.GetPutUs())*time.Microsecond
+			if flipped, median := s.cluster.Service(id, rtt, put); flipped {
+				s.slowEvent(id, rtt+put, median)
+			}
+		}
 		s.admit(id)
 		// Every peer acks: each keeps its own view of the node. The leader's
 		// ack also announces the term, the fencing token for its commands.
@@ -775,11 +785,12 @@ func (s *Server) liveShards(shards []iface.ChunkID) int {
 	return n
 }
 
-// readLocations are replicas a reader may try: alive first, then suspect.
+// readLocations are replicas a reader may try: alive first, then suspect,
+// and within each fast nodes before slow ones (ADR-0035).
 func (s *Server) readLocations(id iface.ChunkID) []iface.NodeID {
 	locs := slices.DeleteFunc(s.cluster.Locations(id), func(n iface.NodeID) bool { return !s.cluster.Readable(n) })
 	slices.SortStableFunc(locs, func(a, b iface.NodeID) int {
-		return cmp.Compare(s.cluster.state(a), s.cluster.state(b))
+		return cmp.Or(cmp.Compare(s.cluster.state(a), s.cluster.state(b)), cmp.Compare(s.cluster.slow(a), s.cluster.slow(b)))
 	})
 	return locs
 }
