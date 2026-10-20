@@ -13,8 +13,10 @@ import (
 	chunkdv1 "github.com/insanityatpeak/chunkd/proto/gen/chunkd/v1"
 )
 
-// DefaultWindow is how many chunks an upload claims and puts at once.
-const DefaultWindow = 1
+// DefaultWindow is how many chunks an upload claims and puts at once: 16 MiB
+// of 4 MiB chunks in flight (24 MiB for EC 4+2). Past it a client on one
+// 1 Gbit/s uplink gains little (put-window.csv, ADR-0034).
+const DefaultWindow = 4
 
 func (c *Direct) window() int {
 	if c.opts.Window > 0 {

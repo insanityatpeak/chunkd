@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"io"
+	"strings"
 	"testing"
 	"time"
 
@@ -110,7 +111,13 @@ func TestMinorityPartitionRejectsWrites(t *testing.T) {
 	}
 	// Later: it knows, and says so.
 	c.Tick(3 * time.Second)
-	r = probe.Do(context.Background(), []iface.Call{{To: old, Kind: wire.KindBegin, Body: begin}})
+	// A timeout is a lost message (1% loss), not an answer: ask again.
+	for range 3 {
+		r = probe.Do(context.Background(), []iface.Call{{To: old, Kind: wire.KindBegin, Body: begin}})
+		if !strings.Contains(fmt.Sprint(r[0].Err), "timed out") {
+			break
+		}
+	}
 	if iface.CodeOf(r[0].Err) != iface.CodeNotLeader {
 		t.Fatalf("the deposed leader answered %v, want NotLeader", r[0].Err)
 	}

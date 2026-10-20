@@ -54,28 +54,14 @@
     },
     {
       "seq": 8,
-      "atMs": 30000,
-      "kind": "copy",
-      "node": "node-5",
-      "text": "copy 1 started: chunk c489568f3e5c from node-1, 4194304 bytes"
-    },
-    {
-      "seq": 9,
-      "atMs": 30104,
-      "kind": "copy",
-      "node": "node-5",
-      "text": "copy 1 completed after 105ms"
-    },
-    {
-      "seq": 10,
-      "atMs": 90006,
+      "atMs": 90020,
       "kind": "gc",
       "node": "",
       "text": "epoch 3: 2 versions past retention dropped"
     },
     {
-      "seq": 11,
-      "atMs": 150066,
+      "seq": 9,
+      "atMs": 150091,
       "kind": "gc",
       "node": "",
       "text": "deleting 9 unreferenced copies"
@@ -84,14 +70,14 @@
   "reads": [
     {
       "seq": 1,
-      "atMs": 17792,
+      "atMs": 16541,
       "kind": "write",
       "node": "client",
       "text": "write /demo/file-0.bin v2, last byte changed: 1 of 2 chunks already stored, 1 sent"
     },
     {
       "seq": 2,
-      "atMs": 22247,
+      "atMs": 21200,
       "kind": "write",
       "node": "client",
       "text": "delete /demo/file-7.bin: a delete marker; the old version can be undeleted until it expires"
