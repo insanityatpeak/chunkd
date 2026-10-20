@@ -87,6 +87,15 @@ func report(out string) error {
 		return err
 	}
 
+	// Put latency by upload window on compose: only when that stage has run.
+	if _, err := read("put-window-compose.csv"); err == nil {
+		hwPW, _ := os.ReadFile(filepath.Join(data, "put-window-compose-hardware.txt"))
+		note := fmt.Sprintf("%d puts of 32 MiB of fresh random bytes per row through the gateway at 127.0.0.1:8080: %d rounds over the windows in rotated order, %d puts per window and round after one warm-up. The window is the gateway's (`CHUNKD_WINDOW`), so each window recreates its container. Interleaving matters: two back-to-back single passes on this host differed 2 to 3x, by more than the windows did. Replicated on 5 nodes, EC on 7 (compose profile ec). Real containers on one machine (%s): gateway, nodes and disks share its CPU and the Docker bridge, so this measures one host's contention, not a NIC limit.", pwRounds*pwPerRun, pwRounds, pwPerRun, strings.TrimSpace(string(hwPW)))
+		if _, err = section("Put latency by upload window (compose)", note, "put-window-compose.csv", ""); err != nil {
+			return err
+		}
+	}
+
 	// Repair time.
 	t, err = section("Time to repair after a node kill (sim)", "RF 3, 5 nodes, 4 MiB files, no message loss (a lost repair message costs a 10 s call timeout, which would swamp the copy time), node-3 killed. The detector (10 s) plus the repair delay (20 s) make a 30 s floor; `past_floor_s` is what the copies add. `mib_s_past_floor` is 0 when that is under one second.", "repair-time.csv", "repair-time.svg")
 	if err != nil {

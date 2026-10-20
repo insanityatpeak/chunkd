@@ -6,7 +6,9 @@
 //
 // compose is not in the default stages: it kills a node of a running compose
 // cluster (docker compose up -d --wait) and measures read latency while repair
-// runs, writing data/repair-read.csv.
+// runs, writing data/repair-read.csv. Nor is put-window-compose: it recreates
+// the compose gateway at upload windows 1, 2, 4 and 8 and times 32 MiB puts,
+// writing data/put-window-compose.csv.
 //
 // sim runs the TestBench* tests in internal/sim/cluster (simulated time,
 // exact on any machine). meta runs the quota Go benchmark. real starts a
@@ -56,6 +58,8 @@ func main() {
 			err = runReal(data, *scratch)
 		case "compose":
 			err = runRepairRead(data, *gateway)
+		case "put-window-compose":
+			err = runPutWindow(data, *gateway)
 		case "report":
 			err = report(*out)
 		default:

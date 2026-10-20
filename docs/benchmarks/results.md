@@ -114,6 +114,23 @@ Raw: [data/put-latency.csv](data/put-latency.csv)
 
 Raw: [data/put-window.csv](data/put-window.csv)
 
+## Put latency by upload window (compose)
+
+12 puts of 32 MiB of fresh random bytes per row through the gateway at 127.0.0.1:8080: 3 rounds over the windows in rotated order, 4 puts per window and round after one warm-up. The window is the gateway's (`CHUNKD_WINDOW`), so each window recreates its container. Interleaving matters: two back-to-back single passes on this host differed 2 to 3x, by more than the windows did. Replicated on 5 nodes, EC on 7 (compose profile ec). Real containers on one machine (AMD Ryzen 7 7840HS w/ Radeon 780M Graphics; 16 logical CPUs; 15 GiB RAM; go1.27.2 windows/amd64): gateway, nodes and disks share its CPU and the Docker bridge, so this measures one host's contention, not a NIC limit.
+
+| redundancy | window | samples | p50_ms | p95_ms | p99_ms | mib_s_p50 |
+|---|---|---|---|---|---|---|
+| replicate:3 | 1 | 12 | 1656.754 | 2304.406 | 2304.406 | 19.315 |
+| replicate:3 | 2 | 12 | 1036.850 | 1529.454 | 1529.454 | 30.863 |
+| replicate:3 | 4 | 12 | 834.531 | 1265.010 | 1265.010 | 38.345 |
+| replicate:3 | 8 | 12 | 1014.270 | 11039.097 | 11039.097 | 31.550 |
+| ec:4+2 | 1 | 12 | 1504.036 | 2355.390 | 2355.390 | 21.276 |
+| ec:4+2 | 2 | 12 | 994.216 | 1431.634 | 1431.634 | 32.186 |
+| ec:4+2 | 4 | 12 | 946.955 | 1081.478 | 1081.478 | 33.793 |
+| ec:4+2 | 8 | 12 | 971.509 | 8901.768 | 8901.768 | 32.938 |
+
+Raw: [data/put-window-compose.csv](data/put-window-compose.csv)
+
 ## Time to repair after a node kill (sim)
 
 RF 3, 5 nodes, 4 MiB files, no message loss (a lost repair message costs a 10 s call timeout, which would swamp the copy time), node-3 killed. The detector (10 s) plus the repair delay (20 s) make a 30 s floor; `past_floor_s` is what the copies add. `mib_s_past_floor` is 0 when that is under one second.
