@@ -20,6 +20,7 @@ Fixes for the limitations Phase 8 listed, then an audit of the whole codebase. O
 | An EC put returns at 5 of 6 shards (v1.3.0) | EC put p50 with one gray node on 7 nodes 4,157 ms to 238 ms (`put-latency.csv`); `TestECPutNotHeldBySlowShard`, `TestECPutShardNeverLands`. ADR-0031 |
 | A lost incremental block report is resent within a heartbeat or two (v1.4.0) | `TestLostIncrementalReportIsResent`: commit 1.2 s after the writes with every report lost (20 s and waiting without the resend); real-mode short suite 7 of 7 against compose with it, `transient-blip-no-repair` at 0 repair copies. ADR-0033 |
 | A metadata peer that lost its log is replaced (v1.3.0) | `chunkd meta replace`, `-join`; `TestReplacePeer`, `TestReplaceMetaPeerReal` (a corrupt WAL on disk), chaos: 307 replacements in 1,500 `--metas=3` seeds. ADR-0032 |
+| A gray node is placed after fast nodes (after v1.4.0) | `Cluster.Service`, `placement` fast-before-slow; `TestGrayNodeIsPlacedLast` (judged slow in 10 s, no copy on it after), `TestSlowNodePlacedLast`; wait-all put p99 with the gray node detected 4,273 to 324 ms replicated, 4,255 to 275 ms EC (`put-latency.csv`). ADR-0035 |
 | A chunk repeated within one upload wave is stored once (v1.4.0) | `storeWave` reuses the wave's first put for repeats; `TestWindowDedupsRepeatsInWave`; bugs-found #36 |
 | A node back from a long outage is reachable within seconds (v1.2.1) | `pool.get` dials `passthrough:///`; real-mode short suite 7 of 7 locally and in CI; bugs-found #35 |
 
@@ -63,7 +64,7 @@ Findings from the benchmarks, now in Known limitations: a limited Begin scans ev
 
 Checked from a fresh clone: `docker compose up -d --build --wait` healthy, `docker compose run --rm demo` passes (SHA-256 verified with a node down, extras trimmed on return), and `demo.gif` re-rendered against it.
 
-Possible future work at the end of Phase 8: a per-namespace usage counter for quotas (done, ADR-0028), hedged or latency-aware writes (quorum puts done, ADR-0029; latency-aware placement open), content-defined chunking (open), background tiering from copies to erasure coding (open), a multi-host benchmark run (open), a compose scenario for `put -resume` and for EC (done, v1.2.0), and a diff view in the dashboard (done, v1.2.0).
+Possible future work at the end of Phase 8: a per-namespace usage counter for quotas (done, ADR-0028), hedged or latency-aware writes (quorum puts done, ADR-0029; latency-aware placement done, ADR-0035), content-defined chunking (open), background tiering from copies to erasure coding (open), a multi-host benchmark run (open), a compose scenario for `put -resume` and for EC (done, v1.2.0), and a diff view in the dashboard (done, v1.2.0).
 
 ## Phase 7 (complete)
 

@@ -37,3 +37,5 @@ Format: Context, Options considered, Decision, Consequences, At 100× scale ([te
 | [0031](0031-ec-quorum-puts.md) | Erasure-coded puts return at the commit quorum | accepted |  |
 | [0032](0032-replace-a-metadata-peer.md) | Replace a metadata peer | accepted |  |
 | [0033](0033-confirmed-incremental-reports.md) | Confirmed incremental block reports | accepted |  |
+| [0034](0034-overlapped-chunk-uploads.md) | Overlapped chunk uploads | accepted |  |
+| [0035](0035-latency-aware-placement.md) | Latency-aware placement | accepted |  |
