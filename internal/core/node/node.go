@@ -131,6 +131,29 @@ type Node struct {
 	unconfirmedMu sync.Mutex
 	unconfirmed   map[iface.NodeID]map[uint64]sentReport
 	beat          atomic.Uint64
+
+	// Service time reported in heartbeats (ADR-0035). sent rings the last
+	// heartbeats' send times, so an ack up to len(sent) beats late still
+	// gives its round trip; ackRTT is smoothed per metadata peer. Both
+	// loop-owned. putLat smooths store writes, which run off the loop.
+	sent   [8]sentBeat
+	ackRTT map[iface.NodeID]time.Duration
+	putMu  sync.Mutex
+	putLat time.Duration
+}
+
+type sentBeat struct {
+	seq uint64
+	at  iface.Instant
+}
+
+// smooth is an EWMA with weight 1/4 on the new sample; the first sample
+// sets it.
+func smooth(old, x time.Duration) time.Duration {
+	if old == 0 {
+		return x
+	}
+	return old + (x-old)/4
 }
 
 // write stores a chunk through f and records the change's seq as the
@@ -259,7 +282,7 @@ func New(d Deps, cfg Config) (*Node, error) {
 		return nil, fmt.Errorf("node %s: read term: %w", cfg.ID, err)
 	}
 	n := &Node{d: d, cfg: cfg, incarnation: d.Rand.Uint64(), lastWrite: map[iface.ChunkID]uint64{}, maxTerm: term,
-		unconfirmed: map[iface.NodeID]map[uint64]sentReport{}}
+		unconfirmed: map[iface.NodeID]map[uint64]sentReport{}, ackRTT: map[iface.NodeID]time.Duration{}}
 	n.scrub = scrub.New(cfg.Scrub, d.Clock, d.Store, n.quarantine)
 	return n, nil
 }
@@ -305,11 +328,16 @@ func (n *Node) putChunk(m iface.Message, respond iface.Responder) {
 	}
 	// The store rejects data that does not hash to id, so a corrupted
 	// transfer is never acknowledged.
+	t0 := n.d.Clock.Now()
 	seq, err := n.write(id, func() error { return n.d.Store.Put(context.Background(), id, req.GetData()) })
 	if err != nil {
 		respond(nil, err)
 		return
 	}
+	took := n.d.Clock.Now().Sub(t0)
+	n.putMu.Lock()
+	n.putLat = smooth(n.putLat, took)
+	n.putMu.Unlock()
 	// Incremental block report before the ack: by the time the client
 	// commits, the report is usually already in (if not, commit retries).
 	n.report(seq, []iface.ChunkID{id}, nil, nil)
@@ -521,6 +549,9 @@ func (n *Node) heartbeatAck(m iface.Message) {
 		return
 	}
 	n.stats.Acks++
+	if b := n.sent[ack.GetSeq()%uint64(len(n.sent))]; b.seq != 0 && b.seq == ack.GetSeq() {
+		n.ackRTT[m.From] = smooth(n.ackRTT[m.From], n.d.Clock.Now().Sub(b.at))
+	}
 	// The leader's ack announces the current term, so a deposed leader's
 	// commands are refused from the first heartbeat after an election, not
 	// only after the new leader's first command.
@@ -561,11 +592,15 @@ func (n *Node) heartbeat() {
 	n.stats.Heartbeats++
 	beat := n.beat.Add(1)
 	sc := n.scrub.Stats()
+	n.sent[n.stats.Heartbeats%uint64(len(n.sent))] = sentBeat{seq: n.stats.Heartbeats, at: n.d.Clock.Now()}
+	n.putMu.Lock()
+	putUs := uint64(n.putLat.Microseconds())
+	n.putMu.Unlock()
 	for _, m := range n.cfg.Metas {
 		hb := &chunkdv1.Heartbeat{Node: string(n.cfg.ID), Rack: n.cfg.Rack, Addr: n.cfg.Addr,
 			UsedBytes: u.Bytes, ChunkCount: u.Chunks, Seq: n.stats.Heartbeats, Incarnation: n.incarnation,
 			Corrupt: n.corrupt.Load(), ScrubDone: int64(sc.Done), ScrubTotal: int64(sc.Total), ScrubPasses: sc.Passes,
-			UnconfirmedReports: n.overdue(m, beat)}
+			UnconfirmedReports: n.overdue(m, beat), AckRttUs: uint64(n.ackRTT[m].Microseconds()), PutUs: putUs}
 		n.d.Net.Send(m, iface.Message{From: n.cfg.ID, Kind: wire.KindHeartbeat, Body: wire.Marshal(hb)})
 	}
 	n.d.Clock.AfterFunc(n.cfg.Heartbeat, n.heartbeat)

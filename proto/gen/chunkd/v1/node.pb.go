@@ -42,8 +42,13 @@ type Heartbeat struct {
 	// Seqs of incremental block reports sent to this metadata peer at least a
 	// heartbeat ago that it has not confirmed (ADR-0033), at most 64.
 	UnconfirmedReports []uint64 `protobuf:"varint,13,rep,packed,name=unconfirmed_reports,json=unconfirmedReports,proto3" json:"unconfirmed_reports,omitempty"`
-	unknownFields      protoimpl.UnknownFields
-	sizeCache          protoimpl.SizeCache
+	// Service time, for latency-aware placement (ADR-0035): the smoothed
+	// round trip of this peer's heartbeat acks, and of this node's chunk
+	// writes to its store, in microseconds. 0 until measured.
+	AckRttUs      uint64 `protobuf:"varint,14,opt,name=ack_rtt_us,json=ackRttUs,proto3" json:"ack_rtt_us,omitempty"`
+	PutUs         uint64 `protobuf:"varint,15,opt,name=put_us,json=putUs,proto3" json:"put_us,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
 }
 
 func (x *Heartbeat) Reset() {
@@ -158,6 +163,20 @@ func (x *Heartbeat) GetUnconfirmedReports() []uint64 {
 		return x.UnconfirmedReports
 	}
 	return nil
+}
+
+func (x *Heartbeat) GetAckRttUs() uint64 {
+	if x != nil {
+		return x.AckRttUs
+	}
+	return 0
+}
+
+func (x *Heartbeat) GetPutUs() uint64 {
+	if x != nil {
+		return x.PutUs
+	}
+	return 0
 }
 
 type HeartbeatAck struct {
@@ -1007,7 +1026,7 @@ var File_chunkd_v1_node_proto protoreflect.FileDescriptor
 
 const file_chunkd_v1_node_proto_rawDesc = "" +
 	"\n" +
-	"\x14chunkd/v1/node.proto\x12\tchunkd.v1\"\xf9\x02\n" +
+	"\x14chunkd/v1/node.proto\x12\tchunkd.v1\"\xae\x03\n" +
 	"\tHeartbeat\x12\x12\n" +
 	"\x04node\x18\x01 \x01(\tR\x04node\x12\x12\n" +
 	"\x04rack\x18\x02 \x01(\tR\x04rack\x12\x12\n" +
@@ -1025,7 +1044,10 @@ const file_chunkd_v1_node_proto_rawDesc = "" +
 	"\vscrub_total\x18\v \x01(\x03R\n" +
 	"scrubTotal\x12!\n" +
 	"\fscrub_passes\x18\f \x01(\x04R\vscrubPasses\x12/\n" +
-	"\x13unconfirmed_reports\x18\r \x03(\x04R\x12unconfirmedReportsJ\x04\b\x06\x10\aR\bdraining\"\xca\x01\n" +
+	"\x13unconfirmed_reports\x18\r \x03(\x04R\x12unconfirmedReports\x12\x1c\n" +
+	"\n" +
+	"ack_rtt_us\x18\x0e \x01(\x04R\backRttUs\x12\x15\n" +
+	"\x06put_us\x18\x0f \x01(\x04R\x05putUsJ\x04\b\x06\x10\aR\bdraining\"\xca\x01\n" +
 	"\fHeartbeatAck\x12\x10\n" +
 	"\x03seq\x18\x01 \x01(\x04R\x03seq\x12(\n" +
 	"\x10need_full_report\x18\x02 \x01(\bR\x0eneedFullReport\x12\x12\n" +

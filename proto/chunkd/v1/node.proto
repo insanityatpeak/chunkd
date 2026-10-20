@@ -26,6 +26,11 @@ message Heartbeat {
   // Seqs of incremental block reports sent to this metadata peer at least a
   // heartbeat ago that it has not confirmed (ADR-0033), at most 64.
   repeated uint64 unconfirmed_reports = 13;
+  // Service time, for latency-aware placement (ADR-0035): the smoothed
+  // round trip of this peer's heartbeat acks, and of this node's chunk
+  // writes to its store, in microseconds. 0 until measured.
+  uint64 ack_rtt_us = 14;
+  uint64 put_us = 15;
 }
 
 message HeartbeatAck {
