@@ -648,47 +648,91 @@ func stream(ctx context.Context, client rpcv1.TransportServiceClient, env *chunk
 // Quorum implements iface.Caller. Calls left running use the caller's ctx, not
 // one cancelled on return, so a slow replica still receives its copy.
 func (c *Caller) Quorum(ctx context.Context, calls []iface.Call, need int, grace time.Duration) []iface.Result {
-	out := make([]iface.Result, len(calls))
+	return c.Quorums(ctx, []iface.QuorumGroup{{Calls: calls, Need: need}}, grace)[0]
+}
+
+// Quorums implements iface.Caller. A group past its grace still records
+// results that land while other groups wait.
+func (c *Caller) Quorums(ctx context.Context, groups []iface.QuorumGroup, grace time.Duration) [][]iface.Result {
 	type done struct {
-		i int
-		r iface.Result
+		g, i int
+		r    iface.Result
 	}
-	ch := make(chan done, len(calls)) // buffered: stragglers finish after we return
-	starts := make([]time.Time, len(calls))
-	for i, call := range calls {
-		starts[i] = time.Now()
-		go func() {
-			r := c.one(ctx, call)
-			r.Latency = time.Since(starts[i])
-			ch <- done{i, r}
-		}()
+	n := 0
+	for _, gr := range groups {
+		n += len(gr.Calls)
 	}
-	settled := make([]bool, len(calls))
-	finished, ok := 0, 0
-	var graceC <-chan time.Time
-	for finished < len(calls) {
+	ch := make(chan done, n) // buffered: stragglers finish after we return
+	out := make([][]iface.Result, len(groups))
+	starts := make([][]time.Time, len(groups))
+	settled := make([][]bool, len(groups))
+	for g, gr := range groups {
+		out[g], starts[g], settled[g] = make([]iface.Result, len(gr.Calls)), make([]time.Time, len(gr.Calls)), make([]bool, len(gr.Calls))
+		for i, call := range gr.Calls {
+			starts[g][i] = time.Now()
+			go func() {
+				r := c.one(ctx, call)
+				r.Latency = time.Since(starts[g][i])
+				ch <- done{g, i, r}
+			}()
+		}
+	}
+	finished, ok := make([]int, len(groups)), make([]int, len(groups))
+	graceAt := make([]time.Time, len(groups)) // zero until the group's need-th success
+	for {
+		now := time.Now()
+		var next time.Time
+		waiting := false
+		for g, gr := range groups {
+			if finished[g] == len(gr.Calls) {
+				continue
+			}
+			if !graceAt[g].IsZero() {
+				if !now.Before(graceAt[g]) {
+					continue
+				}
+				if next.IsZero() || graceAt[g].Before(next) {
+					next = graceAt[g]
+				}
+			}
+			waiting = true
+		}
+		if !waiting {
+			break
+		}
+		var timer *time.Timer
+		var graceC <-chan time.Time
+		if !next.IsZero() {
+			timer = time.NewTimer(next.Sub(now))
+			graceC = timer.C
+		}
 		select {
 		case d := <-ch:
-			out[d.i], settled[d.i] = d.r, true
-			finished++
+			out[d.g][d.i], settled[d.g][d.i] = d.r, true
+			finished[d.g]++
 			if d.r.Err == nil {
-				if ok++; ok == need {
-					t := time.NewTimer(grace)
-					defer t.Stop()
-					graceC = t.C
+				if ok[d.g]++; ok[d.g] == groups[d.g].Need {
+					graceAt[d.g] = time.Now().Add(grace)
 				}
 			}
 		case <-graceC:
-			goto abandon
 		case <-ctx.Done():
+			if timer != nil {
+				timer.Stop()
+			}
 			goto abandon
+		}
+		if timer != nil {
+			timer.Stop()
 		}
 	}
 abandon:
-	for i := range calls {
-		if !settled[i] {
-			out[i] = iface.Result{Err: iface.Errorf(iface.CodeUnavailable, "%s to %s: abandoned", calls[i].Kind, calls[i].To),
-				Latency: time.Since(starts[i]), Pending: true}
+	for g, gr := range groups {
+		for i := range gr.Calls {
+			if !settled[g][i] {
+				out[g][i] = iface.Result{Err: iface.Errorf(iface.CodeUnavailable, "%s to %s: abandoned", gr.Calls[i].Kind, gr.Calls[i].To),
+					Latency: time.Since(starts[g][i]), Pending: true}
+			}
 		}
 	}
 	return out

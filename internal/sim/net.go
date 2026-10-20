@@ -584,36 +584,57 @@ func (n *Net) Crashed(id iface.NodeID) bool { return n.down[id] }
 // Quorum implements iface.Caller. A call left running keeps going: its
 // request is already on the network and the node still stores the chunk.
 func (c *Caller) Quorum(ctx context.Context, calls []iface.Call, need int, grace time.Duration) []iface.Result {
-	results := make([]iface.Result, len(calls))
-	ids := make([]uint64, len(calls))
-	for i, ic := range calls {
-		ids[i] = c.send(ic, &results[i])
+	return c.Quorums(ctx, []iface.QuorumGroup{{Calls: calls, Need: need}}, grace)[0]
+}
+
+// Quorums implements iface.Caller. Calls go out group by group in order, so
+// one group sends exactly what Quorum always did.
+func (c *Caller) Quorums(ctx context.Context, groups []iface.QuorumGroup, grace time.Duration) [][]iface.Result {
+	out := make([][]iface.Result, len(groups))
+	ids := make([][]uint64, len(groups))
+	var all []uint64
+	for g, gr := range groups {
+		out[g] = make([]iface.Result, len(gr.Calls))
+		ids[g] = make([]uint64, len(gr.Calls))
+		for i, ic := range gr.Calls {
+			ids[g][i] = c.send(ic, &out[g][i])
+		}
+		all = append(all, ids[g]...)
 	}
-	deadline := c.latest(ids)
-	var quorumAt iface.Instant = -1
+	deadline := c.latest(all)
+	quorumAt := make([]iface.Instant, len(groups))
+	for g := range quorumAt {
+		quorumAt[g] = -1
+	}
 	timedOut := false
 	for ctx.Err() == nil {
-		open, ok := 0, 0
-		for i, id := range ids {
-			if _, pending := c.pending[id]; pending {
-				open++
-			} else if results[i].Err == nil {
-				ok++
-			}
-		}
-		if open == 0 {
-			break
-		}
 		now := c.net.clock.Now()
-		if ok >= need && quorumAt < 0 {
-			quorumAt = now
-		}
-		wake := deadline
-		if quorumAt >= 0 {
-			if now >= quorumAt.Add(grace) {
-				break
+		wake, waiting := deadline, false
+		for g, gr := range groups {
+			open, ok := 0, 0
+			for i, id := range ids[g] {
+				if _, pending := c.pending[id]; pending {
+					open++
+				} else if out[g][i].Err == nil {
+					ok++
+				}
 			}
-			wake = min(wake, quorumAt.Add(grace))
+			if open == 0 {
+				continue
+			}
+			if ok >= gr.Need && quorumAt[g] < 0 {
+				quorumAt[g] = now
+			}
+			if quorumAt[g] >= 0 {
+				if now >= quorumAt[g].Add(grace) {
+					continue
+				}
+				wake = min(wake, quorumAt[g].Add(grace))
+			}
+			waiting = true
+		}
+		if !waiting {
+			break
 		}
 		if next, has := c.net.clock.Next(); has && next <= wake {
 			c.net.clock.Step()
@@ -626,18 +647,20 @@ func (c *Caller) Quorum(ctx context.Context, calls []iface.Call, need int, grace
 		}
 	}
 	now := c.net.clock.Now()
-	for i, id := range ids {
-		p, open := c.pending[id]
-		if !open {
-			continue
+	for g, gr := range groups {
+		for i, id := range ids[g] {
+			p, open := c.pending[id]
+			if !open {
+				continue
+			}
+			if timedOut && ctx.Err() == nil {
+				c.expire(id, gr.Calls[i], ctx) // out of time, not abandoned: a failure, as Do reports it
+				continue
+			}
+			delete(c.pending, id)
+			out[g][i] = iface.Result{Err: iface.Errorf(iface.CodeUnavailable, "%s to %s: abandoned", gr.Calls[i].Kind, gr.Calls[i].To),
+				Latency: now.Sub(p.sent), Pending: true}
 		}
-		if timedOut && ctx.Err() == nil {
-			c.expire(id, calls[i], ctx) // out of time, not abandoned: a failure, as Do reports it
-			continue
-		}
-		delete(c.pending, id)
-		results[i] = iface.Result{Err: iface.Errorf(iface.CodeUnavailable, "%s to %s: abandoned", calls[i].Kind, calls[i].To),
-			Latency: now.Sub(p.sent), Pending: true}
 	}
-	return results
+	return out
 }

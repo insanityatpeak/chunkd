@@ -126,6 +126,16 @@ type Caller interface {
 	// need-th. Calls still running are not cancelled: they finish in the
 	// background, and are reported Pending in the results.
 	Quorum(ctx context.Context, calls []Call, need int, grace time.Duration) []Result
+	// Quorums is Quorum over several groups at once: every call is sent at
+	// once, each group settles as Quorum would on its own, and it returns when
+	// every group has. Results are per group, in call order.
+	Quorums(ctx context.Context, groups []QuorumGroup, grace time.Duration) [][]Result
+}
+
+// QuorumGroup is one group of calls in Caller.Quorums with its own need.
+type QuorumGroup struct {
+	Calls []Call
+	Need  int
 }
 
 // GatherResult is the outcome of Caller.Gather.

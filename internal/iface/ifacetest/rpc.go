@@ -332,6 +332,37 @@ func RPC(t *testing.T, newEnv func(t *testing.T) RPCEnv) {
 				}
 			})
 		}
+		t.Run("groups settle on their own need", func(t *testing.T) {
+			res := env.Caller().Quorums(ctx, []iface.QuorumGroup{
+				{Calls: mk("fast1", "slow"), Need: 1},
+				{Calls: mk("down", "fast2"), Need: 1},
+				{Calls: mk("down"), Need: 1},
+			}, 50*time.Millisecond)
+			if len(res) != 3 || len(res[0]) != 2 || len(res[1]) != 2 || len(res[2]) != 1 {
+				t.Fatalf("result shape %+v", res)
+			}
+			if res[0][0].Err != nil || !res[0][1].Pending {
+				t.Fatalf("group 0: fast1 %+v, slow %+v; want ok and pending", res[0][0], res[0][1])
+			}
+			if res[1][0].Err == nil || res[1][0].Pending || res[1][1].Err != nil {
+				t.Fatalf("group 1: %+v; want down failed, fast2 ok", res[1])
+			}
+			if res[2][0].Err == nil || res[2][0].Pending {
+				t.Fatalf("group 2: %+v; want a settled failure", res[2])
+			}
+			if res[0][1].Latency >= 400*time.Millisecond {
+				t.Fatalf("returned after %v: it waited for the slow call", res[0][1].Latency)
+			}
+		})
+		t.Run("a group that needs the slow call holds the batch", func(t *testing.T) {
+			res := env.Caller().Quorums(ctx, []iface.QuorumGroup{
+				{Calls: mk("fast1"), Need: 1},
+				{Calls: mk("slow"), Need: 1},
+			}, 50*time.Millisecond)
+			if res[0][0].Err != nil || res[1][0].Err != nil || res[1][0].Pending {
+				t.Fatalf("%+v; want both ok", res)
+			}
+		})
 		t.Run("an abandoned call still reaches its node", func(t *testing.T) {
 			landed.Store(0)
 			env.Caller().Quorum(ctx, mk("fast1", "fast2", "slow"), 2, 0)
