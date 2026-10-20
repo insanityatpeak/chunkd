@@ -37,6 +37,8 @@ SIMPLIFIED: the median is recomputed on every heartbeat. HDFS's NameNode collect
 - While a node is slow it takes no new data, so its share of bytes lags. Balancing (ADR-0020) evens it out once the node is fast again.
 - The signal is self-reported. A node cannot steer placement toward itself, only away. The ack RTT measures the link to the metadata peer, not to clients: a node slow only toward clients is not detected.
 - Chaos with the change: 1,000 default, 500 `--metas=3` and 500 `--ec` seeds.
+- Real mode, `gray-node-placed-last` in the short suite (CI compose job): `tc netem` adds 500 ms to everything node-1 sends, from a sidecar in its network namespace, so the node image stays distroless. On Docker Desktop the leader judged it slow 5 to 7 s after the delay in four runs (service time 307 to 334 ms against a median of 22 to 24 ms), logged `node slow`, and the timeline showed `slow: service time 334ms, median 22ms; placed after faster nodes`. 13 puts in the next 26 s placed no copy on it while node-4 shared its rack. It was judged fast again 9 to 12 s after the delay was removed. The full short suite passed 8 of 8 with it.
+- `put_us` is a store write EWMA that only moves when a write lands. A node slowed by its disk takes no new copies once it is judged slow, so its `put_us` stays high and it may never be judged fast again (bugs-found #37, open). The real-mode check slows the link, which `ack_rtt_us` tracks on every heartbeat.
 
 ## At 100x scale
 

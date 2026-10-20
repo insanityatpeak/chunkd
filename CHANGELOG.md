@@ -5,6 +5,7 @@
 ### Added
 - Latency-aware placement: nodes report their heartbeat-ack round trip and store write time, and a node whose service time stays well above the cluster median is placed after fast nodes on the racks a chunk needs and read after them. Rack spread still comes first. With a gray node detected, wait-all put p99 in the sim falls from 4,273 to 324 ms replicated and from 4,255 to 275 ms EC. `meta.Config.IgnoreSlow` turns it off. ADR-0035.
 - Two additive heartbeat fields, `ack_rtt_us` and `put_us`.
+- Real-mode chaos scenario `gray-node-placed-last` in the short suite: `tc netem` delays one node from a sidecar container (`deploy/Dockerfile` target `netem`), and the run checks it is judged slow, takes no new copy while its rack has another node, and is judged fast again. `chunkd-chaos -only <name>` runs one scenario of a real-mode suite.
 
 ## v1.4.0 (2026-10-20)
 

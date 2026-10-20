@@ -363,3 +363,13 @@ Related: with 1% message loss a copy command or its completion report can be los
 | Root cause | ADR-0034 claims a whole wave in one request. The claim reports a chunk present only once enough copies are reported, so two chunks with the same ID in one wave were both absent, and `storeWave` built a put for each. One chunk at a time, the second claim could find the first copy stored. |
 | Fix | `storeWave` puts the first chunk of each ID in a wave and gives later repeats its ref, with their own index and `Deduped` set. Their claims still go to the metadata server, so GC protection and commit validation are unchanged. |
 | Regression test | `cluster.TestWindowDedupsRepeatsInWave` (replicated and EC). |
+
+## 37. A node judged slow by its store writes may never be judged fast again
+
+| | |
+|---|---|
+| Symptom | Found by reading the code while designing the real-mode check of ADR-0035; not yet reproduced. A node whose disk turns slow is judged slow on `put_us`. It then takes no new copies while its rack has a fast node, so no store write lands, its `put_us` never moves, and it stays slow after the disk recovers. Its share of bytes keeps lagging and balancing (ADR-0020) has nothing to even out. |
+| Repro | Not yet written. Planned: slow node-1's store writes in the sim until it is judged slow, restore them, and require it judged fast within a bound while node-4 shares its rack. |
+| Root cause | `node.putLat` is an EWMA updated only in the put path (`internal/core/node/node.go`). `ack_rtt_us` is refreshed by every heartbeat, so a slow link clears; a slow disk has no sample once placement avoids it. |
+| Fix | Open. |
+| Regression test | Open. |
