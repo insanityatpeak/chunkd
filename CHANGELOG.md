@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## v1.4.0 (2026-10-20)
 
 ### Changed
 - A lost incremental block report is sent again within a heartbeat or two instead of waiting for the next full report (up to 30 s): each heartbeat lists the reports a metadata peer has not confirmed, and its ack names the ones it never got. ADR-0033.
