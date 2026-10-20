@@ -353,3 +353,13 @@ Related: with 1% message loss a copy command or its completion report can be los
 | Root cause | `grpcnet` dialed through gRPC's default `dns` resolver. While node-3 was stopped, Docker's DNS answered "no such host"; grpc-go turns that into an empty address list, which drops the connection and re-resolves on a backoff that grows from 1 s to 120 s (about 27 s, then 43 s, within an 85 s outage). The 2 s dial backoff cap in `pool.get` never applied: there was no address to dial. The metadata server, hearing node-3's heartbeats, placed the new chunks on it; the gateway could not reach it, each put returned at the replica quorum (ADR-0029) with node-3's copy pending, and the next repair scan copied all six. Whether the next lookup fell before or after the puts depended on jitter and on when the gateway first failed to reach node-3, hence the flake. |
 | Fix | `pool.get` dials `passthrough:///addr`: every connection attempt resolves the name through the OS, so the 2 s redial cap covers a node whose name disappears and comes back. Each node has one address, so the `dns` resolver's balancing bought nothing. |
 | Regression test | `transient-blip-no-repair` in the real-mode short suite (CI compose job). Locally, before the fix: 2 of 2 runs failed it; after: 2 of 2 runs passed all seven scenarios, 0 repair copies in the blip. No unit test: the failure needs a name that stops resolving and resolves again, which the in-process tests on 127.0.0.1 never see. |
+
+## 36. A chunk repeated within one upload wave was stored once per repeat
+
+| | |
+|---|---|
+| Symptom | A file whose content repeats within a wave of 4 chunks, such as a zero-filled region, sent every repeat to its own placement: up to 3 extra chunk puts per repeated chunk per wave (3 copies each replicated, 6 shards each EC), none marked `Deduped`. The extra copies showed as over-replicated until trimmed; no data was lost and reads were correct. |
+| Repro | `TestWindowDedupsRepeatsInWave`: 8 identical 64 KiB chunks with `Window: 4`, replicated and EC 4+2. Before the fix: `chunk 1: deduped false`. |
+| Root cause | ADR-0034 claims a whole wave in one request. The claim reports a chunk present only once enough copies are reported, so two chunks with the same ID in one wave were both absent, and `storeWave` built a put for each. One chunk at a time, the second claim could find the first copy stored. |
+| Fix | `storeWave` puts the first chunk of each ID in a wave and gives later repeats its ref, with their own index and `Deduped` set. Their claims still go to the metadata server, so GC protection and commit validation are unchanged. |
+| Regression test | `cluster.TestWindowDedupsRepeatsInWave` (replicated and EC). |

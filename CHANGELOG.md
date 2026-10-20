@@ -7,6 +7,9 @@
 - Uploads claim and put chunks in waves of 4 (`client.Options.Window`; 1 restores one at a time): one claim request per wave, and every chunk's puts go out together. A 32 MiB put of 4 MiB chunks in the sim falls from 1,103 ms to 359 ms p50 replicated and from 943 to 317 ms EC; sim links do not share the client's uplink, so a LAN client limited by its NIC gains less. `Put` and resumable `Append` share the path. ADR-0034.
 - `iface.Caller.Quorums` settles several quorum groups in one batch; `Quorum` is its one-group case.
 
+### Fixed
+- A chunk repeated within one upload wave is stored once; the repeats are deduped instead of each being put to its own placement (bugs-found #36).
+
 ### Testing
 - `TestBenchPutWindow` (`docs/benchmarks/results.md`, "Put latency by upload window"): window 1, 2, 4 and 8, replicated and EC, healthy and with a gray node.
 - `TestMinorityPartitionRejectsWrites` resends a probe that timed out: at 1% loss a single lost message had read as the deposed leader's answer.

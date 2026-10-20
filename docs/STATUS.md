@@ -20,6 +20,7 @@ Fixes for the limitations Phase 8 listed, then an audit of the whole codebase. O
 | An EC put returns at 5 of 6 shards (v1.3.0) | EC put p50 with one gray node on 7 nodes 4,157 ms to 238 ms (`put-latency.csv`); `TestECPutNotHeldBySlowShard`, `TestECPutShardNeverLands`. ADR-0031 |
 | A lost incremental block report is resent within a heartbeat or two (after v1.3.0) | `TestLostIncrementalReportIsResent`: commit 1.2 s after the writes with every report lost (20 s and waiting without the resend); real-mode short suite 7 of 7 against compose with it, `transient-blip-no-repair` at 0 repair copies. ADR-0033 |
 | A metadata peer that lost its log is replaced (v1.3.0) | `chunkd meta replace`, `-join`; `TestReplacePeer`, `TestReplaceMetaPeerReal` (a corrupt WAL on disk), chaos: 307 replacements in 1,500 `--metas=3` seeds. ADR-0032 |
+| A chunk repeated within one upload wave is stored once (after v1.3.0) | `storeWave` reuses the wave's first put for repeats; `TestWindowDedupsRepeatsInWave`; bugs-found #36 |
 | A node back from a long outage is reachable within seconds (v1.2.1) | `pool.get` dials `passthrough:///`; real-mode short suite 7 of 7 locally and in CI; bugs-found #35 |
 
 Audit (Part 3):
