@@ -111,20 +111,24 @@ func (c *Direct) Append(ctx context.Context, id uint64, offset int64, r io.Reade
 	split := chunk.NewSplitter(io.LimitReader(r, n), info.ChunkSize)
 	base := int(offset / cs)
 	for {
-		ch, err := split.Next()
+		wave, err := nextWave(split, c.window())
 		if err == io.EOF {
 			break
 		}
 		if err != nil {
 			return info, err
 		}
-		ch.Index += base
-		cid, _, err := c.storeChunk(ctx, st.GetBegin(), ch)
+		for k := range wave {
+			wave[k].Index += base
+		}
+		wids, _, err := c.storeWave(ctx, st.GetBegin(), wave)
 		if err != nil {
 			return info, err
 		}
-		ids[ch.Index] = cid[:]
-		info.Offset = min(int64(ch.Index+1)*cs, info.Size)
+		for k, ch := range wave {
+			ids[ch.Index] = wids[k][:]
+		}
+		info.Offset = min(int64(wave[len(wave)-1].Index+1)*cs, info.Size)
 		info.Claimed = max(info.Claimed, info.Offset)
 	}
 	if split.Total() != n {

@@ -9,62 +9,11 @@ import (
 	"fmt"
 	"slices"
 
-	"github.com/insanityatpeak/chunkd/internal/core/chunk"
 	"github.com/insanityatpeak/chunkd/internal/core/ec"
 	"github.com/insanityatpeak/chunkd/internal/core/wire"
 	"github.com/insanityatpeak/chunkd/internal/iface"
 	chunkdv1 "github.com/insanityatpeak/chunkd/proto/gen/chunkd/v1"
 )
-
-// putStripe encodes one chunk and sends shard i to placement node i, all in
-// one batch, retrying failed puts once. Like putChunk it returns once min
-// shards are stored and PutGrace has passed: a shard still in flight is left
-// to land late or to repair (ADR-0031). It fails if fewer than min shards
-// are stored (ADR-0022).
-// SIMPLIFIED: shards go in one parallel batch. HDFS-EC streams cells to the
-// shard writers in a pipeline as the client produces them.
-func (c *Direct) putStripe(ctx context.Context, ch chunk.Chunk, shards []ec.Shard, pl *chunkdv1.ChunkPlacement, min int) (ChunkRef, error) {
-	reps := pl.GetReplicas()
-	if len(reps) != len(shards) {
-		return ChunkRef{}, iface.Errorf(iface.CodeInternal, "chunk %d: %d nodes placed for %d shards", ch.Index, len(reps), len(shards))
-	}
-	logical := ec.LogicalID(ch.ID)
-	ref := ChunkRef{Index: ch.Index, ID: logical.String(), Size: int64(len(ch.Data))}
-	todo := make([]int, len(shards))
-	for i := range todo {
-		todo[i] = i
-		ref.Shards = append(ref.Shards, ShardRef{Index: i, ID: shards[i].ID.String(), Replicas: []string{}})
-	}
-	var errs []error
-	stored := 0
-	for round := 0; round < 2 && len(todo) > 0; round++ {
-		errs = errs[:0]
-		calls := make([]iface.Call, len(todo))
-		for k, i := range todo {
-			calls[k] = iface.Call{To: iface.NodeID(reps[i].GetNode()), Addr: reps[i].GetAddr(), Kind: wire.KindPutChunk,
-				Body: wire.Marshal(&chunkdv1.PutChunkRequest{Id: shards[i].ID[:], Data: shards[i].Block})}
-		}
-		var failed []int
-		for k, res := range c.putRound(ctx, calls, min-stored) {
-			i := todo[k]
-			switch {
-			case res.Pending:
-				// Still in flight: not a failure, and not retried.
-			case res.Err != nil:
-				errs = append(errs, fmt.Errorf("shard %d on %s: %w", i, calls[k].To, res.Err))
-				failed = append(failed, i)
-			default:
-				ref.Shards[i].Replicas = []string{string(calls[k].To)}
-				stored++
-			}
-		}
-		todo = failed
-	}
-	if stored < min {
-		return ChunkRef{}, iface.Errorf(iface.CodeUnavailable, "chunk %d: %d of %d required shards stored: %v", ch.Index, stored, min, errors.Join(errs...))
-	}
-	return ref, nil
-}
 
 // fetchStripe reads one erasure-coded chunk: any 4 shards, data shards on
 // alive nodes first, then parity, then shards only a suspect node holds. A

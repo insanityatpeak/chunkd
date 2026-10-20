@@ -54,6 +54,9 @@ type Options struct {
 	// PutGrace is how long a put waits for the remaining replicas once min_replicas
 	// have stored a chunk: 0 uses DefaultPutGrace, negative waits for all of them.
 	PutGrace time.Duration
+	// Window is how many chunks an upload claims and puts at once: 0 uses
+	// DefaultWindow, 1 sends one chunk at a time.
+	Window int
 }
 
 // DefaultPutGrace lets a healthy third replica finish, so a healthy put still
@@ -180,12 +183,13 @@ func (c *Direct) expectedVersion(ctx context.Context, path string, opts PutOptio
 
 // Put uploads r (exactly size bytes) as a new version of path.
 //
-// Protocol: Begin (placement per chunk) → for each chunk, Claim it, then
-// put it to every placed replica in parallel unless the claim found it
-// present → Commit, retried while block reports are in flight. Any failure
-// aborts the upload so nothing becomes visible.
-// SIMPLIFIED: chunks go one at a time, with one claim round trip each. HDFS
-// keeps a window of packets in flight so disk and network overlap.
+// Protocol: Begin (placement per chunk) → for each wave of up to Window
+// chunks, Claim them in one request, then put every chunk the claim did not
+// find present to all its placed replicas in one batch → Commit, retried
+// while block reports are in flight. Any failure aborts the upload so nothing
+// becomes visible.
+// SIMPLIFIED: waves run in lockstep, so a wave waits for its slowest chunk.
+// HDFS slides a window of packets and acks each one (ADR-0034).
 func (c *Direct) Put(ctx context.Context, path string, r io.Reader, size int64, opts PutOptions) (Manifest, error) {
 	expected, err := c.expectedVersion(ctx, path, opts)
 	if err != nil {
@@ -218,22 +222,24 @@ func (c *Direct) upload(ctx context.Context, path string, r io.Reader, size int6
 	m := Manifest{FileInfo: FileInfo{Path: path, Size: size, Redundancy: redundancy(begin.GetRedundancy())}, ChunkSize: chunkSize}
 	var ids [][]byte
 	for {
-		ch, err := split.Next()
+		wave, err := nextWave(split, c.window())
 		if errors.Is(err, io.EOF) {
 			break
 		}
 		if err != nil {
 			return Manifest{}, err
 		}
-		if ch.Index >= len(begin.GetPlacement()) {
+		if wave[len(wave)-1].Index >= len(begin.GetPlacement()) {
 			return Manifest{}, iface.Errorf(iface.CodeInvalid, "input longer than the declared %d bytes", size)
 		}
-		id, ref, err := c.storeChunk(ctx, begin, ch)
+		wids, refs, err := c.storeWave(ctx, begin, wave)
 		if err != nil {
 			return Manifest{}, err
 		}
-		m.Chunk = append(m.Chunk, ref)
-		ids = append(ids, id[:])
+		m.Chunk = append(m.Chunk, refs...)
+		for _, id := range wids {
+			ids = append(ids, id[:])
+		}
 	}
 	if split.Total() != size {
 		return Manifest{}, iface.Errorf(iface.CodeInvalid, "read %d bytes, declared %d", split.Total(), size)
@@ -245,46 +251,6 @@ func (c *Direct) upload(ctx context.Context, path string, r io.Reader, size int6
 	}
 	m.Version, m.SHA256, m.Chunks = version, hex.EncodeToString(sum[:]), len(ids)
 	return m, nil
-}
-
-// storeChunk claims chunk ch of an upload and stores it, unless the claim
-// finds it present. It returns the ID the commit names: the chunk's, or
-// its stripe's.
-func (c *Direct) storeChunk(ctx context.Context, begin *chunkdv1.BeginUploadResponse, ch chunk.Chunk) (iface.ChunkID, ChunkRef, error) {
-	stripes := begin.GetRedundancy() == chunkdv1.Redundancy_REDUNDANCY_EC_4_2
-	id := ch.ID
-	cl := &chunkdv1.ChunkClaim{Index: int32(ch.Index), Id: id[:]}
-	var shards []ec.Shard
-	if stripes {
-		// The claim names the stripe and its shards, so it is encoded first.
-		var err error
-		if shards, err = c.codec.Encode(ch.Data); err != nil {
-			return id, ChunkRef{}, err
-		}
-		id = ec.LogicalID(ch.ID)
-		cl.Id = id[:]
-		for _, s := range shards {
-			cl.Shards = append(cl.Shards, s.ID[:])
-		}
-	}
-	var claim chunkdv1.ClaimChunksResponse
-	if err := c.meta(ctx, wire.KindClaim, &chunkdv1.ClaimChunksRequest{UploadId: begin.GetUploadId(), Claims: []*chunkdv1.ChunkClaim{cl}}, &claim); err != nil {
-		return id, ChunkRef{}, err
-	}
-	switch {
-	case len(claim.GetPresent()) == 1 && claim.GetPresent()[0]:
-		ref := ChunkRef{Index: ch.Index, ID: id.String(), Size: int64(len(ch.Data)), Deduped: true}
-		for _, r := range claim.GetLocations()[0].GetReplicas() {
-			ref.Replicas = append(ref.Replicas, r.GetNode())
-		}
-		return id, ref, nil
-	case stripes:
-		ref, err := c.putStripe(ctx, ch, shards, begin.GetPlacement()[ch.Index], int(begin.GetMinReplicas()))
-		return id, ref, err
-	default:
-		ref, err := c.putChunk(ctx, ch, begin.GetPlacement()[ch.Index], int(begin.GetMinReplicas()))
-		return id, ref, err
-	}
 }
 
 // commit publishes an upload, retried while block reports are in flight or
@@ -304,55 +270,6 @@ func (c *Direct) commit(ctx context.Context, req *chunkdv1.CommitUploadRequest) 
 		waited += backoff
 		backoff = min(backoff*2, 2*time.Second)
 	}
-}
-
-// putChunk sends one chunk to all its replicas at once and returns once min
-// have stored it and PutGrace has passed for the rest: a replica that is slow
-// no longer sets the put's latency. Replicas still in flight keep going; if one
-// never lands, repair tops the chunk up from the others.
-func (c *Direct) putChunk(ctx context.Context, ch chunk.Chunk, pl *chunkdv1.ChunkPlacement, min int) (ChunkRef, error) {
-	body := wire.Marshal(&chunkdv1.PutChunkRequest{Id: ch.ID[:], Data: ch.Data})
-	calls := make([]iface.Call, len(pl.GetReplicas()))
-	for i, rep := range pl.GetReplicas() {
-		calls[i] = iface.Call{To: iface.NodeID(rep.GetNode()), Addr: rep.GetAddr(), Kind: wire.KindPutChunk, Body: body}
-	}
-	ref := ChunkRef{Index: ch.Index, ID: ch.ID.String(), Size: int64(len(ch.Data))}
-	var errs []error
-	// Two rounds: a put lost in transit is retried once (puts are
-	// idempotent), so one dropped message does not cost a replica.
-	for round := 0; round < 2 && len(calls) > 0; round++ {
-		errs = errs[:0]
-		var failed []iface.Call
-		for i, res := range c.putRound(ctx, calls, min-len(ref.Replicas)) {
-			switch {
-			case res.Pending:
-				// Still in flight: not a failure, and not retried.
-			case res.Err != nil:
-				errs = append(errs, fmt.Errorf("%s: %w", calls[i].To, res.Err))
-				failed = append(failed, calls[i])
-			default:
-				ref.Replicas = append(ref.Replicas, string(calls[i].To))
-			}
-		}
-		calls = failed
-	}
-	if len(ref.Replicas) < min {
-		return ChunkRef{}, iface.Errorf(iface.CodeUnavailable, "chunk %d: %d of %d required replicas stored: %v", ch.Index, len(ref.Replicas), min, errors.Join(errs...))
-	}
-	return ref, nil
-}
-
-// putRound sends calls and waits for need of them plus the grace period; a
-// negative PutGrace waits for every call, as before ADR-0029.
-func (c *Direct) putRound(ctx context.Context, calls []iface.Call, need int) []iface.Result {
-	if c.opts.PutGrace < 0 {
-		return c.caller.Do(ctx, calls)
-	}
-	grace := c.opts.PutGrace
-	if grace == 0 {
-		grace = DefaultPutGrace
-	}
-	return c.caller.Quorum(ctx, calls, max(need, 1), grace)
 }
 
 // Stat returns the live version of path and where its chunks are.
