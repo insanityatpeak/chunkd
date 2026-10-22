@@ -238,6 +238,10 @@ func (c *Cluster) Thaw(id iface.NodeID)   { c.net.Thaw(id) }
 // SetSlow adds d to every message to or from id; 0 clears it.
 func (c *Cluster) SetSlow(id iface.NodeID, d time.Duration) { c.net.SetSlow(id, d) }
 
+// SetDiskSlow makes each store write on id take d as the node times it; 0
+// clears it. Messages are not delayed.
+func (c *Cluster) SetDiskSlow(id iface.NodeID, d time.Duration) { c.node(id).disk.slow = d }
+
 // Partition cuts id off from the metadata servers in both directions, or
 // heals that cut. Clients can still reach the node: it looks dead to the
 // metadata servers but keeps serving reads.

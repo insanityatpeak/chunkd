@@ -136,11 +136,18 @@ type Node struct {
 	// heartbeats' send times, so an ack up to len(sent) beats late still
 	// gives its round trip; ackRTT is smoothed per metadata peer. Both
 	// loop-owned. putLat smooths store writes, which run off the loop.
-	sent   [8]sentBeat
-	ackRTT map[iface.NodeID]time.Duration
-	putMu  sync.Mutex
-	putLat time.Duration
+	sent    [8]sentBeat
+	ackRTT  map[iface.NodeID]time.Duration
+	putMu   sync.Mutex
+	putLat  time.Duration
+	putIdle int // heartbeats since the last store write
 }
+
+// putIdleBeats is how many heartbeats without a store write leave putLat as
+// is; after that it halves each beat to 0. A node judged slow by its disk gets
+// no writes, so without this its putLat would never move (bug #37). Decayed,
+// it takes writes again, and a still-slow disk is judged slow again.
+const putIdleBeats = 3
 
 type sentBeat struct {
 	seq uint64
@@ -337,6 +344,7 @@ func (n *Node) putChunk(m iface.Message, respond iface.Responder) {
 	took := n.d.Clock.Now().Sub(t0)
 	n.putMu.Lock()
 	n.putLat = smooth(n.putLat, took)
+	n.putIdle = 0
 	n.putMu.Unlock()
 	// Incremental block report before the ack: by the time the client
 	// commits, the report is usually already in (if not, commit retries).
@@ -594,6 +602,11 @@ func (n *Node) heartbeat() {
 	sc := n.scrub.Stats()
 	n.sent[n.stats.Heartbeats%uint64(len(n.sent))] = sentBeat{seq: n.stats.Heartbeats, at: n.d.Clock.Now()}
 	n.putMu.Lock()
+	if n.putIdle++; n.putIdle > putIdleBeats {
+		if n.putLat /= 2; n.putLat < time.Millisecond {
+			n.putLat = 0
+		}
+	}
 	putUs := uint64(n.putLat.Microseconds())
 	n.putMu.Unlock()
 	for _, m := range n.cfg.Metas {

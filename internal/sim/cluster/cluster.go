@@ -104,6 +104,28 @@ type Node struct {
 	*node.Node
 	Rack  string
 	Store *sim.BlockStore
+	disk  diskClock
+}
+
+// diskClock is a node's view of the shared clock. Each store put on a slow
+// disk (SetDiskSlow) moves it ahead by the delay, so the node times the put
+// at that delay while the single-threaded sim runs it instantly.
+type diskClock struct {
+	*sim.Clock
+	ahead, slow time.Duration
+}
+
+func (c *diskClock) Now() iface.Instant { return c.Clock.Now().Add(c.ahead) }
+
+// diskStore charges every put to its node's diskClock.
+type diskStore struct {
+	*sim.BlockStore
+	clock *diskClock
+}
+
+func (s diskStore) Put(ctx context.Context, id iface.ChunkID, data []byte) error {
+	s.clock.ahead += s.clock.slow
+	return s.BlockStore.Put(ctx, id, data)
 }
 
 // New builds and starts a cluster whose every choice derives from seed. Logs
@@ -134,7 +156,8 @@ func (c *Cluster) startNode(id iface.NodeID, nd *Node) {
 	cfg := node.DefaultConfig(id, MetaID, nd.Rack)
 	cfg.Metas = c.MetaIDs()
 	cfg.Scrub = c.cfg.Scrub
-	n, err := node.New(node.Deps{Clock: c.clock, Net: nodeNet{c.net, c}, Async: c.net.AsyncCaller(id, c.cfg.CallTimeout), Store: nd.Store, Rand: c.rng, Log: c.logger(id)}, cfg)
+	nd.disk.Clock = c.clock
+	n, err := node.New(node.Deps{Clock: &nd.disk, Net: nodeNet{c.net, c}, Async: c.net.AsyncCaller(id, c.cfg.CallTimeout), Store: diskStore{nd.Store, &nd.disk}, Rand: c.rng, Log: c.logger(id)}, cfg)
 	if err != nil {
 		panic(err) // an in-memory disk cannot fail to read its term
 	}
