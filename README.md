@@ -92,6 +92,7 @@ Shared dashboard links replay exactly: [kill a node](https://insanityatpeak.gith
 | A node that only reboots costs zero copies | `TestTransientBlipNoRepair`, `transient-blip-no-repair` | go, compose |
 | Repair never exceeds its concurrency limits and byte rate | `TestRepairThrottle` | go |
 | A slow replica does not slow reads | `TestSlowNodeHedgedRead` (hedged p99 under 200 ms against 4–10 s) | go |
+| A gray node is judged slow and placed after fast nodes, and judged fast again once it recovers, whether its link or its disk was slow | `TestGrayNodeIsPlacedLast` (judged slow in 10 s, no copy on it after), `TestSlowDiskNodeJudgedFastAfterRecovery` (fast 8 to 11 s after the disk recovers), `TestStillSlowDiskJudgedSlowAgain`; real mode `gray-node-placed-last` (netem) | go, compose |
 | A corrupt copy is caught on read, quarantined and replaced | `TestCorruptChunkDetectedOnRead`, `corrupt-replicas` | go, compose |
 | Rot that nobody reads is found within one scrub pass | `TestScrubberFindsCorruption` | go |
 | When every copy is bad, the read fails loudly instead of returning bad bytes | `TestAllReplicasCorrupt` | go |
@@ -183,7 +184,7 @@ Charts and every table: [docs/benchmarks/results.md](docs/benchmarks/results.md)
 | An erasure-coded upload needs 6 placeable nodes, and the begin is refused with fewer | Two shards on one node would turn one failure into two | Wider clusters, or a narrower code for small ones |
 | A small file still takes 6 shards (a 1-byte file stores 6 × 34 bytes) | Negligible at 4 MiB chunks | Keep small objects replicated or inline, as S3 and MinIO do |
 | The balancer leaves shards where they are; a joining node gets shards only from rebuilds | A shard is a quarter of a chunk, and upload placement already spreads stripes | A planner that keeps a stripe on distinct nodes, as Ceph's balancer moves EC placement groups |
-| A put returns once the commit quorum holds each chunk (2 of 3 copies, 5 of 6 shards, plus a 50 ms grace); the last copy or shard is not retried if it is abandoned or lost, and repair fills it in, at 4× the read cost for a shard. Placement avoids a slow node only after heartbeats judge it slow (10 s in the sim), and only by its round trip to the metadata servers and its own store writes (ADR-0035) | With one gray node put p50 is 214 ms against 4,111 ms waiting for all three copies (ADR-0029), and EC put p50 238 ms against 4,157 ms waiting for all six shards (ADR-0031); commit needs the same quorum either way | Feed the latency clients and peers see into placement, as HDFS's slow peer tracker does from datanode reports |
+| A put returns once the commit quorum holds each chunk (2 of 3 copies, 5 of 6 shards, plus a 50 ms grace); the last copy or shard is not retried if it is abandoned or lost, and repair fills it in, at 4× the read cost for a shard. Until heartbeats judge a gray node slow (10 s in the sim), placement still sends it copies and shards | With one gray node put p50 is 214 ms against 4,111 ms waiting for all three copies (ADR-0029), and EC put p50 238 ms against 4,157 ms waiting for all six shards (ADR-0031); commit needs the same quorum either way | Replace a lagging pipeline member during the write, as HDFS pipeline recovery does |
 | Repair's cost to readers was measured once: during the copying window, read p99 was 241.6 ms against 212.6 ms with no repair (p50 148.1 against 145.0 ms) | One run, 4 readers, 5 containers sharing one machine's CPU, disk and Docker network ([results](docs/benchmarks/results.md)); the sim shares no capacity, so it is flat by construction | Repeated runs on separate hosts with real NICs |
 | Benchmarks use one client, sequential operations, and a 5-node cluster in one process on loopback | They show what the code costs on one machine, not what a cluster delivers ([docs/benchmarks](docs/benchmarks/README.md)) | Many clients across hosts, warp-style |
 | The client encodes stripes, and the cluster trusts the shard IDs it claims | A wrong claim fails its read-time check against the stripe ID, as a wrong chunk ID already does | Encode on a server, as Ceph's primary OSD does |
@@ -220,6 +221,7 @@ Every command runs through `go run ./tools/task <name>`, the same on Windows, Li
 - [x] Reproducible benchmarks, a design document, interview notes and a write-up
 - [ ] Moving cold data from copies to erasure coding in the background
 - [x] A per-namespace usage counter for quotas, and puts that return at the replica quorum
+- [x] Latency-aware placement: a gray node, slow link or slow disk, is placed and read after fast nodes
 - [ ] Content-defined chunking
 
 ## License
