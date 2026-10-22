@@ -369,7 +369,7 @@ Related: with 1% message loss a copy command or its completion report can be los
 | | |
 |---|---|
 | Symptom | Found by reading the code while designing the real-mode check of ADR-0035; not yet reproduced. A node whose disk turns slow is judged slow on `put_us`. It then takes no new copies while its rack has a fast node, so no store write lands, its `put_us` never moves, and it stays slow after the disk recovers. Its share of bytes keeps lagging and balancing (ADR-0020) has nothing to even out. |
-| Repro | Not yet written. Planned: slow node-1's store writes in the sim until it is judged slow, restore them, and require it judged fast within a bound while node-4 shares its rack. |
+| Repro | `TestSlowDiskNodeJudgedFastAfterRecovery`: 7 sim nodes, node-1's store writes take 2 s (`Cluster.SetDiskSlow`) until it is judged slow (3.6 s), then they are restored. node-1 was still slow 30 s later, for both replicated and EC puts. |
 | Root cause | `node.putLat` is an EWMA updated only in the put path (`internal/core/node/node.go`). `ack_rtt_us` is refreshed by every heartbeat, so a slow link clears; a slow disk has no sample once placement avoids it. |
-| Fix | Open. |
-| Regression test | Open. |
+| Fix | After `putIdleBeats` (3) heartbeats with no store write, the node halves `putLat` on each beat, down to 0. A recovered disk is judged fast 8 to 11 s after it recovers. A disk that is still slow takes writes again once it decays, and they get it judged slow again: in `TestStillSlowDiskJudgedSlowAgain` it is judged slow for 85 of 120 s and flips about every 11 s. The writes it takes while judged fast cost little, since a put returns at its commit quorum (ADR-0029, ADR-0031). |
+| Regression test | `TestSlowDiskNodeJudgedFastAfterRecovery` (replicated and EC), `TestStillSlowDiskJudgedSlowAgain` in `internal/sim/cluster/slow_test.go`. |

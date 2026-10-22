@@ -1,5 +1,10 @@
 # Changelog
 
+## Unreleased
+
+### Fixed
+- A node judged slow because of its store writes is judged fast again once its disk recovers. With no store write for 3 heartbeats, the node halves its reported `put_us` on each beat, so placement tries it again. A disk that is still slow is judged slow again by those writes. Bugs-found #37.
+
 ## v1.5.0 (2026-10-20)
 
 ### Added
